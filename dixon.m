@@ -1,10 +1,69 @@
-function dixon(ps, vars, pars)
+function Lagrange1D(nodes, values, X)
+    k := #nodes;
+    L := Parent(values[1])!0;
+    for j in [1..k] do
+        num := Parent(values[1])!1;
+        den := Parent(nodes[1])!1;
+        for m in [1..k] do
+            if m ne j then
+                num *:= (X - nodes[m]);
+                den *:= (nodes[j] - nodes[m]);
+            end if;
+        end for;
+        L +:= values[j] * num * den^-1;
+    end for;
+    return L;
+end function;
+
+function TensorInterpolation(Vars, Grids, Vals, P)
+    d := #Vars;
+    if d eq 1 then
+        return Lagrange1D(Grids[1], Vals, Vars[1]); 
+    end if;
+    blockSize := &* [ #Grids[i] : i in [1..d-1] ];
+    Hd := [];
+    for j in [1..#Grids[d]] do
+        subVals := Vals[(j-1)*blockSize + 1 .. j*blockSize];
+        H_j := TensorInterpolation(
+                   Vars[1..d-1],
+                   Grids[1..d-1],
+                   subVals,
+                   P
+               );
+        Append(~Hd, H_j);
+    end for;
+
+    Xd := Vars[d]; 
+    deg_d := Max([ Degree(h, Xd) : h in Hd ]);
+
+    C := [];
+    for k in [0..deg_d] do
+        seq := [ Coefficient(Hd[j], Xd, k) : j in [1..#Grids[d]] ];
+        Ck := Lagrange1D(Grids[d], seq, Xd);
+        Append(~C, Ck);
+    end for;
+
+    R := P!0;
+    for k in [0..deg_d] do
+        R +:= C[k+1] * Xd^k;
+    end for;
+    return R;
+end function;
+
+
+function dixon(ps, vars, pars, is_interpolation)
 
 print(1);
 
     R0 := Universe(ps);
     K := CoefficientRing(R0);
-    
+    ds := &*[Degree(p) : p in ps];
+    print ds, #K;
+    if ds gt #K then
+        ds := #K-2;
+    end if;
+
+
     allGens := [ R0.i : i in [1..Ngens(R0)] ];
 
     varIdx := [ Type(v) eq RngMPolElt select Index(allGens, v) else v : v in vars ];
@@ -83,7 +142,7 @@ print(3);
 print(4);
 
     if np eq 1 then
-        S := PolynomialRing(K);
+        S<x> := PolynomialRing(K);
         images := [ i eq nv+1 select S.1 else K!0 : i in [1..2*nv+np] ];
     else
         S := PolynomialRing(K, np);
@@ -139,51 +198,80 @@ print(5);
 
 print(6);
 
-    time d1 := Determinant(dix2);
-
-print(7);
-
-    if np eq 1 then
-        //return d1;
-        inv_images := R0.parIdx[1];
+    if is_interpolation eq 0 then
+        time d1 := Determinant(dix2);
+        if np eq 1 then
+            return d1/LeadingCoefficient(d1);
+            inv_images := R0.parIdx[1];
+        else
+            inv_images := [R0.parIdx[k]: k in [1..np]];
+        end if;
+        d2 := Evaluate(d1, inv_images);
+        d2 := d2/LeadingCoefficient(d2);
+        return d2;
     else
-        inv_images := [R0.parIdx[k]: k in [1..np]];
+        pe := PrimitiveElement(K);
+        if np eq 1 then 
+            points := [ pe^i : i in [0..ds] ];
+            values := [ ];
+            ii := 0;
+            time for a in points do
+                ii := ii + 1;
+                print ii, a;
+                N := Evaluate(dix2, a); 
+                Append(~values, Determinant(N)); 
+            end for;
+            time d2 := Interpolation(points, values);
+            d2 := d2/LeadingCoefficient(d2);
+            return d2;
+        else
+            uppers := [ds : _ in [1..np]];
+            grids := [];
+            for u in uppers do
+                Append(~grids, [ pe^i : i in [0..u]]);
+            end for;
+            vals := [];
+            for point in CartesianProduct([ grids[k] : k in [1..np] ]) do
+                reversed_point := [ point[np - i + 1] : i in [1..np] ];
+                 M_eval := Matrix(K, Nrows(dix2), Ncols(dix2), 
+                          [Evaluate(elt, reversed_point) : elt in Eltseq(dix2)]);
+                Append(~vals, Determinant(M_eval)); 
+            end for;
+
+            vars :=  [ S.i : i in [1..Ngens(S)] ];
+            time d1 := TensorInterpolation(vars, grids, vals, S);
+            // time d1 := Determinant(dix2);
+            if np eq 1 then
+                return d1;
+                inv_images := R0.parIdx[1];
+            else
+                inv_images := [R0.parIdx[k]: k in [1..np]];
+            end if;
+            d2 := Evaluate(d1, inv_images);
+            d2 := d2/LeadingCoefficient(d2);
+            return d2;
+        end if;
     end if;
-    d2 := Evaluate(d1, inv_images);
-    d2 := d2/LeadingCoefficient(d2);
-    return d2;
+print(7);
 end function;
 
+K := GF(65537);
+R< x0, x1, x2 >  := PolynomialRing(K, 3);
+ps := [5772*x0^3 - 7175*x0^2*x1 - 10624*x0*x1^2 + 11290*x1^3 - 19348*x0^2*x2 - 17179*x0*x1*x2 + 26711*x1^2*x2 - 29117*x0*x2^2 + 2909*x1*x2^2 - 31941*x2^3 + 6176*x0^2 - 25584*x0*x1 + 445*x1^2 + 19873*x0*x2 - 1617*x1*x2 + 29544*x2^2 + 11167*x0 - 25730*x1 + 19977*x2 + 22688,
+ -9270*x0^3 - 10033*x0^2*x1 + 20435*x0*x1^2 - 4556*x1^3 - 23678*x0^2*x2 - 20624*x0*x1*x2 + 7510*x1^2*x2 + 12862*x0*x2^2 - 18101*x1*x2^2 - 24472*x2^3 + 15656*x0^2 + 7872*x0*x1 + 20425*x1^2 - 19358*x0*x2 - 30017*x1*x2 + 18744*x2^2 - 19*x0 - 13006*x1 + 14675*x2 - 23126];
+vars := [x0];
+pars := [x1,x2];
 
-GF2:=FiniteField(2);
-GF2_polyring<z8>:=PolynomialRing(GF2);
-irr_poly:=z8^8 + z8^4 + z8^3 + z8 + 1;
-GF2_n<z8>:=ext<GF2|irr_poly>;
-GF2_n_poly_ring<x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10>:=PolynomialRing(GF2_n,11);
+time d := dixon(ps,vars,pars,1);
 
-p0 := x1^4*x3^4*z8^7 + x2^4*x3^4*z8^7 + x2^4*x3^4*z8^6 + x2^4*x3^2*z8^7 + x2^2*x3^4*z8^7 + x1^4*x3^4*z8^4 + x1^4*x3^2*z8^6 + x1^4*x3*z8^7 + x1^2*x3^4*z8^6 + x1*x3^4*z8^7 + x2^4*x3^4*z8^4 + x2^4*x3^2*z8^6 + x2^4*x3*z8^7 + x2^2*x3^4*z8^6 + x2*x3^4*z8^7 + x1^4*x3^4*z8^3 + x1^4*x3*z8^6 + x1^2*x3^2*z8^7 + x1*x3^4*z8^6 + x2^4*x3^2*z8^5 + x2^2*x3^4*z8^5 + x3^4*z8^7 + x1^2*x3*z8^7 + x1*x3^2*z8^7 + x2^4*x3^4*z8^2 + x2^4*x3*z8^5 + x2^2*x3^2*z8^6 + x2^2*x3*z8^7 + x2*x3^4*z8^5 + x2*x3^2*z8^7 + x1^4*x3^2*z8^3 + x1^4*x3*z8^4 + x1^2*x3^4*z8^3 + x1^2*x3^2*z8^5 + x1^2*x3*z8^6 + x1*x3^4*z8^4 + x1*x3^2*z8^6 + x1*x3*z8^7 + x2^4*x3*z8^4 + x2^2*x3^2*z8^5 + x2*x3^4*z8^4 + x2*x3*z8^7 + x1^2*x3^2*z8^4 + x1^2*x3*z8^5 + x1*x3^2*z8^5 + x2^4*x3*z8^3 + x2*x3^4*z8^3 + x2*x3*z8^6 + x3^4*z8^4 + x3*z8^7 + x1^4*x3^2*z8 + x1^4*x3*z8^2 + x1^2*x3^4*z8 + x1*x3^4*z8^2 + x1*x3*z8^5 + x2^4*x3*z8^2 + x2^2*x3*z8^4 + x2*x3^4*z8^2 + x2*x3^2*z8^4 + x2*x3*z8^5 + x3*z8^6 + x1^4*x3^2 + x1^2*x3^4 + x1*x3*z8^4 + x2^4*x3*z8 + x2^2*x3^2*z8^2 + x2*x3^4*z8 + x3^4*z8^2 + x3^2*z8^4 + x1*x3*z8^3 + x2^2*x3^2*z8 + x3^2*z8^3 + x3*z8^4 + x1^2*x3^2 + x1*x3*z8^2 + x2^2*x3^2 + x3^2*z8^2 + x3*z8^3 + x1*x3*z8 + x3*z8^2 + x2*x3 + x3*z8 + 1;
-p1 :=  x1^4*x4^4*z8^7 + x2^4*x4^4*z8^7 + x2^4*x4^4*z8^6 + x1^4*x4^4*z8^5 + x1^4*x4^2*z8^7 + x1^2*x4^4*z8^7 + x2^4*x4^4*z8^5 + x1^4*x4^4*z8^4 + x1^4*x4^2*z8^6 + x1^2*x4^4*z8^6 + x2^4*x4^4*z8^4 + x2^4*x4^2*z8^6 + x2^2*x4^4*z8^6 + x1^4*x4*z8^6 + x1^2*x4^2*z8^7 + x1*x4^4*z8^6 + x2^4*x4^4*z8^3 + x2^4*x4^2*z8^5 + x2^2*x4^4*z8^5 + x1^4*x4^4*z8^2 + x1^4*x4^2*z8^4 + x1^4*x4*z8^5 + x1^2*x4^4*z8^4 + x1^2*x4^2*z8^6 + x1*x4^4*z8^5 + x2^4*x4^2*z8^4 + x2^2*x4^4*z8^4 + x1^4*x4^2*z8^3 + x1^2*x4^4*z8^3 + x1*x4*z8^7 + x2^2*x4*z8^6 + x2*x4^2*z8^6 + x2*x4*z8^7 + x4^2*z8^7 + x1^4*x4^4 + x1^4*x4^2*z8^2 + x1^2*x4^4*z8^2 + x1^2*x4*z8^5 + x1*x4^2*z8^5 + x1*x4*z8^6 + x2^4*x4^4 + x2^4*x4^2*z8^2 + x2^4*x4*z8^3 + x2^2*x4^4*z8^2 + x2^2*x4^2*z8^4 + x2*x4^4*z8^3 + x1^2*x4^2*z8^3 + x1^2*x4*z8^4 + x1*x4^2*z8^4 + x2^4*x4^2*z8 + x2^2*x4^4*z8 + x2^2*x4^2*z8^3 + x4^2*z8^5 + x1^4*x4^2 + x1^2*x4^4 + x1^2*x4^2*z8^2 + x1^2*x4*z8^3 + x1*x4^2*z8^3 + x1*x4*z8^4 + x2^4*x4*z8 + x2^2*x4*z8^3 + x2*x4^4*z8 + x2*x4^2*z8^3 + x4^4*z8^2 + x1^4*x4 + x1^2*x4^2*z8 + x1^2*x4*z8^2 + x1*x4^4 + x1*x4^2*z8^2 + x1*x4*z8^3 + x2^4*x4 + x2^2*x4*z8^2 + x2*x4^4 + x2*x4^2*z8^2 + x4^4*z8 + x1*x4*z8^2 + x4^2*z8^2 + x1^2*x4 + x1*x4^2 + x1*x4*z8 + x2^2*x4 + x2*x4^2 + x4*z8^2 + x1*x4 + x4^2 + x4 + 1;
-p2 :=  x5^4*x7^4*z8^7 + x6^4*x7^4*z8^7 + x6^4*x7^4*z8^6 + x6^4*x7^2*z8^7 + x6^2*x7^4*z8^7 + x5^4*x7^4*z8^4 + x5^4*x7^2*z8^6 + x5^4*x7*z8^7 + x5^2*x7^4*z8^6 + x5*x7^4*z8^7 + x6^4*x7^4*z8^4 + x6^4*x7^2*z8^6 + x6^4*x7*z8^7 + x6^2*x7^4*z8^6 + x6*x7^4*z8^7 + x5^4*x7^4*z8^3 + x5^4*x7*z8^6 + x5^2*x7^2*z8^7 + x5*x7^4*z8^6 + x6^4*x7^2*z8^5 + x6^2*x7^4*z8^5 + x5^2*x7*z8^7 + x5*x7^2*z8^7 + x6^4*x7^4*z8^2 + x6^4*x7*z8^5 + x6^2*x7^2*z8^6 + x6^2*x7*z8^7 + x6*x7^4*z8^5 + x6*x7^2*z8^7 + x5^4*x7^2*z8^3 + x5^4*x7*z8^4 + x5^2*x7^4*z8^3 + x5^2*x7^2*z8^5 + x5^2*x7*z8^6 + x5*x7^4*z8^4 + x5*x7^2*z8^6 + x5*x7*z8^7 + x6^4*x7*z8^4 + x6^2*x7^2*z8^5 + x6*x7^4*z8^4 + x6*x7*z8^7 + x7^4*z8^5 + x7^2*z8^7 + x5^2*x7^2*z8^4 + x5^2*x7*z8^5 + x5*x7^2*z8^5 + x6^4*x7*z8^3 + x6*x7^4*z8^3 + x6*x7*z8^6 + x7^4*z8^4 + x7^2*z8^6 + x5^4*x7^2*z8 + x5^4*x7*z8^2 + x5^2*x7^4*z8 + x5*x7^4*z8^2 + x5*x7*z8^5 + x6^4*x7*z8^2 + x6^2*x7*z8^4 + x6*x7^4*z8^2 + x6*x7^2*z8^4 + x6*x7*z8^5 + x7^4*z8^3 + x5^4*x7^2 + x5^2*x7^4 + x5*x7*z8^4 + x6^4*x7*z8 + x6^2*x7^2*z8^2 + x6*x7^4*z8 + x7^2*z8^4 + x7*z8^5 + x5*x7*z8^3 + x6^2*x7^2*z8 + x5^2*x7^2 + x5*x7*z8^2 + x6^2*x7^2 + x5*x7*z8 + x7*z8^2 + x6*x7 + 1;
-p3 :=  x5^4*x8^4*z8^7 + x6^4*x8^4*z8^7 + x6^4*x8^4*z8^6 + x5^4*x8^4*z8^5 + x5^4*x8^2*z8^7 + x5^2*x8^4*z8^7 + x6^4*x8^4*z8^5 + x5^4*x8^4*z8^4 + x5^4*x8^2*z8^6 + x5^2*x8^4*z8^6 + x6^4*x8^4*z8^4 + x6^4*x8^2*z8^6 + x6^2*x8^4*z8^6 + x5^4*x8*z8^6 + x5^2*x8^2*z8^7 + x5*x8^4*z8^6 + x6^4*x8^4*z8^3 + x6^4*x8^2*z8^5 + x6^2*x8^4*z8^5 + x5^4*x8^4*z8^2 + x5^4*x8^2*z8^4 + x5^4*x8*z8^5 + x5^2*x8^4*z8^4 + x5^2*x8^2*z8^6 + x5*x8^4*z8^5 + x6^4*x8^2*z8^4 + x6^2*x8^4*z8^4 + x5^4*x8^2*z8^3 + x5^2*x8^4*z8^3 + x5*x8*z8^7 + x6^2*x8*z8^6 + x6*x8^2*z8^6 + x6*x8*z8^7 + x8^2*z8^7 + x5^4*x8^4 + x5^4*x8^2*z8^2 + x5^2*x8^4*z8^2 + x5^2*x8*z8^5 + x5*x8^2*z8^5 + x5*x8*z8^6 + x6^4*x8^4 + x6^4*x8^2*z8^2 + x6^4*x8*z8^3 + x6^2*x8^4*z8^2 + x6^2*x8^2*z8^4 + x6*x8^4*z8^3 + x5^2*x8^2*z8^3 + x5^2*x8*z8^4 + x5*x8^2*z8^4 + x6^4*x8^2*z8 + x6^2*x8^4*z8 + x6^2*x8^2*z8^3 + x8^2*z8^5 + x5^4*x8^2 + x5^2*x8^4 + x5^2*x8^2*z8^2 + x5^2*x8*z8^3 + x5*x8^2*z8^3 + x5*x8*z8^4 + x6^4*x8*z8 + x6^2*x8*z8^3 + x6*x8^4*z8 + x6*x8^2*z8^3 + x8^4*z8^2 + x5^4*x8 + x5^2*x8^2*z8 + x5^2*x8*z8^2 + x5*x8^4 + x5*x8^2*z8^2 + x5*x8*z8^3 + x6^4*x8 + x6^2*x8*z8^2 + x6*x8^4 + x6*x8^2*z8^2 + x8^4*z8 + x5*x8*z8^2 + x8^2*z8^2 + x5^2*x8 + x5*x8^2 + x5*x8*z8 + x6^2*x8 + x6*x8^2 + x8*z8^2 + x5*x8 + x8^2 + x8 + 1;
-p4 :=  x1*z8^7 + x1*z8^4 + x1*z8^3 + x0*x1*z8 + x1*z8^2 + 1;
-p5 :=  x2*z8^6 + x0*x2*z8^2 + x0*x2*z8 + x2*z8 + 1;
-p6 :=  x5*z8^7 + x5*z8^4 + x3*x5*z8 + x4*x5*z8 + x4*x5 + x5*z8 + x5 + 1;
-p7 :=  x6*z8^5 + x3*x6*z8^2 + x4*x6*z8^2 + x6*z8^3 + x3*x6*z8 + x4*x6*z8 + x4*x6 + x6 + 1;
-p8 :=  x9*z8^6 + x9*z8^3 + x7*x9*z8 + x8*x9*z8 + x9*z8^2 + x8*x9 + x9 + 1;
-p9 :=  x10*z8^7 + x10*z8^5 + x7*x10*z8^2 + x8*x10*z8^2 + x10*z8^3 + x7*x10*z8 + x8*x10*z8 + x8*x10 + x10 + 1;
-p10 :=  x9^4*z8^5 + x9^2*z8^7 + x10^4*z8^5 + x9^4*z8^4 + x10^2*z8^6 + x10*z8^7 + x9^4*z8^3 + x9^2*z8^5 + x10^2*z8^5 + z8^7 + x9^2*z8^4 + x9*z8^5 + x10^4*z8^2 + x10*z8^5 + z8^6 + x9^4*z8 + x10^4*z8 + x10*z8^4 + x10^4 + x10^2*z8^2 + x10*z8^3 + z8^4 + x9^2*z8 + x9*z8^2 + x9^2 + x9*z8 + x10*z8 + x9;
+//rs := Roots(d);
 
-time d1 := dixon([p4,p5],[x0],[x1,x2]);
-time r1 := Resultant(d1,p0,x1);
-time r2 := Resultant(d1,p1,x1);
-time r3 := Resultant(r1,r2,x2);
-time r4 := Resultant(r3,p6,x3);
-time r5 := Resultant(r3,p7,x3);
-//time r6 := Resultant(r4,r5,x4);
-time d2 := dixon([r3,p6,p7],[x3,x4],[x5,x6]);
-time r7 := Resultant(p10,p9,x10);
-time r8 := Resultant(r7,p8,x9);
-time r9 := Resultant(r8,p3,x8);
-time r10 := Resultant(r9,p2,x7);
-//time r11 := Resultant(d2,r10,x5);
-time d3 := dixon([d2,r10],[x5],[x6]);
+I := ideal<R|ps>;
+//SetVerbose("Groebner", 1);
+IsZeroDimensional(I);
+Dimension(I);
+time G := GroebnerBasis(I);
+g := G[#G];
+// v := Variety(I);
+time r := Resultant(ps[2],ps[1],x0);
+r := r/LeadingCoefficient(r);
