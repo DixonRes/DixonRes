@@ -33,12 +33,14 @@ function TensorInterpolation(Vars, Grids, Vals, P)
         Append(~Hd, H_j);
     end for;
 
-    Xd := Vars[d]; 
+    Xd := Vars[d];
+
     deg_d := Max([ Degree(h, Xd) : h in Hd ]);
 
     C := [];
     for k in [0..deg_d] do
         seq := [ Coefficient(Hd[j], Xd, k) : j in [1..#Grids[d]] ];
+print Grids;
         Ck := Lagrange1D(Grids[d], seq, Xd);
         Append(~C, Ck);
     end for;
@@ -50,6 +52,61 @@ function TensorInterpolation(Vars, Grids, Vals, P)
     return R;
 end function;
 
+function GetLinearIndex(exponent, dims)
+    index := 0;
+    stride := 1;
+    for k in [#dims..1 by -1] do
+        index +:= exponent[k] * stride;
+        stride *:= dims[k];
+    end for;
+    return index + 1; 
+end function;
+
+function BuildCoefficientMatrix(DM, d0, d1, nv, np, gens)
+    S := Parent(DM);
+    K := BaseRing(BaseRing(S));
+    R := CoefficientRing(K);
+    nrows := &*d0;
+    ncols := &*d1;
+    dix := ZeroMatrix(K, nrows, ncols);
+    dixR := ZeroMatrix(R, nrows, ncols);
+    terms := Monomials(DM);
+    coeffs := Coefficients(DM);
+
+    p := 3;
+    primes := [];
+    for i in [1..np] do
+        Append(~primes, R!p);
+        p := NextPrime(p);
+    end for;
+    psi := hom< K -> R | primes >;
+
+    for i in [1..#terms] do
+        term := terms[i];
+        coeff := coeffs[i];
+        ncoeff := K!Numerator(coeff);
+        exponents := Exponents(term);
+        e0 := [exponents[k] : k in [1..nv]];
+        e1 := [exponents[k] : k in [nv + 1..nv + nv]];
+        
+        valid := true;
+        for k in [1..nv] do
+            if e0[k] ge d0[k] or e1[k] ge d1[k] then
+                valid := false;
+                break;
+            end if;
+        end for;
+        
+        if valid then
+            row := GetLinearIndex(e0, d0);
+            col := GetLinearIndex(e1, d1);
+            dix[row, col] := ncoeff;
+            dixR[row, col] := psi(ncoeff);
+        end if;
+    end for;
+    
+    return dix, dixR;
+end function;
 
 function dixon(ps, vars, pars, is_interpolation)
 
@@ -59,10 +116,9 @@ print(1);
     K := CoefficientRing(R0);
     ds := &*[Degree(p) : p in ps];
     print ds, #K;
-    if ds gt #K then
-        ds := #K-2;
+    if ds gt #K-1 then
+        ds := #K-1;
     end if;
-
 
     allGens := [ R0.i : i in [1..Ngens(R0)] ];
 
@@ -71,11 +127,18 @@ print(1);
 
     nv := #varIdx;
     np := #parIdx;
+    if np eq 1 then
+        P<x> := PolynomialRing(K);
+    else
+        P := PolynomialRing(K, np);
+    end if;
+    FR := FunctionField(P);
+    R := PolynomialRing(FR, 2*nv);
 
-    R  := PolynomialRing(K, 2*nv + np);
-    gens := [ R.i : i in [1..2*nv+np] ];
-    x := gens[1..nv];
-    p := gens[nv+1..nv+np];
+    gensR := [ R.i : i in [1..2*nv] ];
+    gensP := [ P.i : i in [1..np] ];
+    x := gensR[1..2*nv];
+    p := gensP[1..np];
 
     images := [];
     for i in [1..Ngens(R0)] do
@@ -84,7 +147,7 @@ print(1);
             Append(~images, x[k]);
         elif i in parIdx then
             k := Index(parIdx, i);
-            Append(~images, p[k]);
+            Append(~images, R!(p[k]));
         else
             Append(~images, R!0);
         end if;
@@ -95,7 +158,7 @@ print(1);
 
     M := ZeroMatrix(R, nv+1, nv+1);
     for i in [1..nv+1] do
-        subst := [ k le i-1 select gens[nv+np+k] else gens[k] : k in [1..2*nv+np] ];
+        subst := [ k le i-1 select gensR[nv+k] else gensR[k] : k in [1..2*nv] ];
         for j in [1..nv+1] do
             M[i,j] := Evaluate(psd[j], subst);
         end for;
@@ -103,99 +166,53 @@ print(1);
 
 print(2);
 
-    DM := Determinant(M);
-    factors := [ gens[i] - gens[nv+np+i] : i in [1..nv] ];
+    time DM := Determinant(M);
+    factors := [ gensR[i] - gensR[nv+i] : i in [1..nv] ];
     
-    for f in factors do
+    time for f in factors do
         Q := DM div f;
         DM := Q;
     end for;
 
 print(3);
 
-    d0 := [ Degree(DM, gens[i])    + 1 : i in [1..nv] ];
-    d1 := [ Degree(DM, gens[nv+np+i]) + 1 : i in [1..nv] ];
-
-    cs := [];
-    for ex1 in CartesianProduct([ [0..d1[k]-1] : k in [1..nv] ]) do
-        poly := DM;
-        for k in [1..nv] do
-            poly := Coefficient(poly, gens[nv+np+k], ex1[k]);
-        end for;
-        Append(~cs, poly);
-    end for;
-
-    Drows := [];
-    for ex0 in CartesianProduct([ [0..d0[k]-1] : k in [1..nv] ]) do
-        row := [];
-        for poly in cs do
-            tmp := poly;
-            for k in [1..nv] do
-                tmp := Coefficient(tmp, gens[k], ex0[k]);
-            end for;
-            Append(~row, tmp);
-        end for;
-        Append(~Drows, row);
-    end for;
-    dix := Matrix(Drows);
-
+    d0 := [Degree(DM, gensR[i]) + 1 : i in [1..nv]];
+    d1 := [Degree(DM, gensR[nv + i]) + 1 : i in [1..nv]];
+    
+    time dix, dixM := BuildCoefficientMatrix(DM, d0, d1, nv, np, gensR);
+    print Parent(dixM[1,1]);
+    print NumberOfRows(dixM), NumberOfColumns(dixM);
 print(4);
 
-    if np eq 1 then
-        S<x> := PolynomialRing(K);
-        images := [ i eq nv+1 select S.1 else K!0 : i in [1..2*nv+np] ];
-    else
-        S := PolynomialRing(K, np);
-        images := [
-        i ge nv+1 and i le nv+np
-          select S.(i - nv)
-          else K!0
-          : i in [1..2*nv+np]
-        ];
-    end if;
-
-    phi := hom< R -> S | images >;
-    dix1 := Matrix(S,
-        [ [ phi(dix[i,j]) : j in [1..Ncols(dix)] ]
-          : i in [1..Nrows(dix)] ]);
-
-    p := 47;
-    primes := [];
-    for i in [1..np] do
-        Append(~primes, K!p);
-        p := NextPrime(p);
-    end for;
-    psi := hom< S -> K | primes >;
-    dixM := Matrix(K,
-        [ [ psi(dix1[i,j]) : j in [1..Ncols(dix1)] ]
-          : i in [1..Nrows(dix1)] ]);
-
-print(5);
-
-    E := EchelonForm(dixM);
+    time E := EchelonForm(dixM);
     rowPivots := [];
-    for i in [1..Nrows(E)] do
-        for j in [1..Ncols(E)] do
-            if E[i,j] ne 0 then
+    time for i in [1..Nrows(E)] do
+        row := Eltseq(E[i]);
+        for j in [1..#row] do
+            if row[j] ne 0 then
                 Append(~rowPivots, j);
                 break;
             end if;
         end for;
     end for;
+    rowPivots := [pos : pos in rowPivots | pos ne 0];
     
-    ET := EchelonForm(Transpose(dixM));
+    time ET := EchelonForm(Transpose(dixM));
     colPivots := [];
     for i in [1..Nrows(ET)] do
-        for j in [1..Ncols(ET)] do
-            if ET[i,j] ne 0 then
+        row := Eltseq(ET[i]);
+        for j in [1..#row] do
+            if row[j] ne 0 then
                 Append(~colPivots, j);
                 break;
             end if;
         end for;
     end for;
+    colPivots := [pos : pos in colPivots | pos ne 0];
     
-    dix2 := Submatrix(dix1, colPivots, rowPivots);
+    dix2 := Submatrix(dix, colPivots, rowPivots);
 
+    print NumberOfRows(dix2), NumberOfColumns(dix2);
 print(6);
 
     if is_interpolation eq 0 then
@@ -208,11 +225,12 @@ print(6);
         end if;
         d2 := Evaluate(d1, inv_images);
         d2 := d2/LeadingCoefficient(d2);
+
         return d2;
     else
         pe := PrimitiveElement(K);
         if np eq 1 then 
-            points := [ pe^i : i in [0..ds] ];
+            points := [ pe^i : i in [1..ds] ] cat [K!0];
             values := [ ];
             ii := 0;
             time for a in points do
@@ -228,18 +246,22 @@ print(6);
             uppers := [ds : _ in [1..np]];
             grids := [];
             for u in uppers do
-                Append(~grids, [ pe^i : i in [0..u]]);
+                Append(~grids, [ pe^i : i in [1..u]] cat [K!0] );
             end for;
             vals := [];
+            npoint := (ds+1)^np;
+            ipoint := 0;
             for point in CartesianProduct([ grids[k] : k in [1..np] ]) do
                 reversed_point := [ point[np - i + 1] : i in [1..np] ];
                  M_eval := Matrix(K, Nrows(dix2), Ncols(dix2), 
                           [Evaluate(elt, reversed_point) : elt in Eltseq(dix2)]);
                 Append(~vals, Determinant(M_eval)); 
+                ipoint := ipoint + 1;
+                print ipoint,npoint;
             end for;
 
-            vars :=  [ S.i : i in [1..Ngens(S)] ];
-            time d1 := TensorInterpolation(vars, grids, vals, S);
+            vars :=  [ P.i : i in [1..Ngens(P)] ];
+            time d1 := TensorInterpolation(vars, grids, vals, P);
             // time d1 := Determinant(dix2);
             if np eq 1 then
                 return d1;
@@ -256,13 +278,14 @@ print(7);
 end function;
 
 K := GF(65537);
-R< x0, x1, x2 >  := PolynomialRing(K, 3);
-ps := [5772*x0^3 - 7175*x0^2*x1 - 10624*x0*x1^2 + 11290*x1^3 - 19348*x0^2*x2 - 17179*x0*x1*x2 + 26711*x1^2*x2 - 29117*x0*x2^2 + 2909*x1*x2^2 - 31941*x2^3 + 6176*x0^2 - 25584*x0*x1 + 445*x1^2 + 19873*x0*x2 - 1617*x1*x2 + 29544*x2^2 + 11167*x0 - 25730*x1 + 19977*x2 + 22688,
- -9270*x0^3 - 10033*x0^2*x1 + 20435*x0*x1^2 - 4556*x1^3 - 23678*x0^2*x2 - 20624*x0*x1*x2 + 7510*x1^2*x2 + 12862*x0*x2^2 - 18101*x1*x2^2 - 24472*x2^3 + 15656*x0^2 + 7872*x0*x1 + 20425*x1^2 - 19358*x0*x2 - 30017*x1*x2 + 18744*x2^2 - 19*x0 - 13006*x1 + 14675*x2 - 23126];
-vars := [x0];
-pars := [x1,x2];
-
-time d := dixon(ps,vars,pars,1);
+R< x0, x1, x2, x3 >  := PolynomialRing(K, 4);
+ps := [4748*x0^2 + 11101*x0*x1 - 6109*x1^2 - 31021*x0*x2 + 9318*x1*x2 + 29439*x2^2 - 21354*x0*x3 + 24482*x1*x3 + 21080*x2*x3 - 16286*x3^2 - 28333*x0 + 18483*x1 - 31088*x2 - 12606*x3 - 14615,
+ 1124*x0^2 + 24743*x0*x1 + 4039*x1^2 - 7804*x0*x2 + 26702*x1*x2 + 15844*x2^2 + 3073*x0*x3 + 275*x1*x3 - 15498*x2*x3 - 4836*x3^2 + 22767*x0 + 4408*x1 - 26504*x2 + 32131*x3 + 16732,
+ 6706*x0^2 + 1956*x0*x1 - 13851*x1^2 - 7861*x0*x2 - 8872*x1*x2 + 27248*x2^2 + 28478*x0*x3 - 13449*x1*x3 - 12087*x2*x3 + 31514*x3^2 + 29552*x0 + 25623*x1 - 12628*x2 - 14744*x3 - 30708];
+vars := [x0,x1];
+pars := [x3,x2];
+is_interpolation := 1;
+time d := dixon(ps, vars, pars, is_interpolation);
 
 //rs := Roots(d);
 
