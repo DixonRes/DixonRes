@@ -1,3 +1,9 @@
+// Dixon Resultant Package for Magma
+// Author: Haohai Suo
+// E-mail: 1362172421@qq.com
+// Released under GPL Version 3  
+// Copyright (C) Haohai Suo, 2025";
+
 function Lagrange(nodes, values, X)
     k := #nodes;
     L := Parent(values[1])!0;
