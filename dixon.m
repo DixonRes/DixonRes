@@ -454,13 +454,55 @@ print extf;
     return d2, gcds, extf;
 end function;
 
-//SetColumns(170);
-
-K := GF(65537);
-R< x0, x1, x2, x3>  := PolynomialRing(K, 4);
-ps := [3*x0^2*x2^2*x3 + 5*x0*x1*x2*x3^2 - 2*x2^4 - 5*x0^2*x2 + 2*x1^2*x2 + 4*x0*x1 - x0 - 5,
- 5*x0^3*x1*x2 - 4*x1^4*x2 + 3*x0^2*x1*x2^2 + 5*x1*x2^2*x3^2 - x2^3*x3^2 - 4*x0*x1*x2^2 + 2*x0*x1*x2 - 3*x0*x3 + 5*x2*x3,
- -x0^5 + 4*x0^2*x1^3 + 5*x0^3*x1*x3 - 5*x0^3*x2*x3 + x0*x2^3*x3 + 3*x0*x1*x3^3 + 3*x1*x3^2 + 4*x0^2 + 4*x2];
-vars := [x0,x1];
-is_interpolation := 1;
-time d := dixon(ps, vars, is_interpolation);
+function random_polynomial_over_finite_field(n, d, p, m, k)
+    F := GF(p);
+    R<[x]> := PolynomialRing(F, n); //, "grevlex"
+    total_terms := Binomial(n + d, d);
+    
+    if k eq 0 or k gt total_terms then
+        k0 := total_terms;
+    else
+        k0 := k;
+    end if;
+    
+    valid_exponents := [];
+    current_layer := [[]];
+    
+    for i in [1..n] do
+        next_layer := [];
+        for vec in current_layer do
+            current_sum := IsEmpty(vec) select 0 else &+vec;
+            max_exp := d - current_sum;
+            for e in [0..max_exp] do
+                Append(~next_layer, vec cat [e]);
+            end for;
+        end for;
+        current_layer := next_layer;
+    end for;
+    valid_exponents := current_layer;
+    
+    ps := [];
+    vars := [];
+    for i in [1..m] do
+        f := R!0;
+        indices := [1..#valid_exponents];
+        selected := [];
+        for j in [1..k0] do
+            rand_index := Random(1, #indices);
+            Append(~selected, valid_exponents[indices[rand_index]]);
+            Remove(~indices, rand_index);
+        end for;
+        
+        for exp_vec in selected do
+            coeff := Random(F);
+            term := Monomial(R, exp_vec) * coeff;
+            f +:= term;
+        end for;
+        Append(~ps, f);
+        if not i eq m then
+            Append(~vars, x[i]);
+        end if;
+    end for;
+    
+    return ps,vars;
+end function;
