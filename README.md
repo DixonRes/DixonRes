@@ -39,6 +39,7 @@ dixon(ps, vars, mode);
 
 ```magma
 load "dixon.m";
+
 // Define polynomial ring
 R<x0,x1,x2,y0,y1,y2> := PolynomialRing(GF(65537), 6);
 
