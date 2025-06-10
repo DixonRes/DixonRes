@@ -1,0 +1,439 @@
+// Algorithm from Huang's "Sparse Polynomial Interpolation Based on Diversification"
+
+// Berlekamp-Massey Algorithm
+BM := function(s, N, Zp)
+    local C, B, T, L, k, i, n, d, b, R;
+    
+    assert #s eq 2*N;
+    
+    R<x> := PolynomialRing(Zp);
+    
+    B := R!1;
+    C := R!1;
+    L := 0;
+    k := 1;
+    b := Zp!1;
+    
+    for n := 0 to 2*N-1 do
+        d := Zp!s[n+1];
+        for i := 1 to L do
+            d +:= Coefficient(C, i) * s[n-i+1];
+        end for;
+        
+        if d eq 0 then
+            k +:= 1;
+        elif n lt 2*L then
+            C -:= (d * x^k * B) / b;
+            k +:= 1;
+        else
+            T := C;
+            C -:= (d * x^k * B) / b;
+            B := T;
+            L := n + 1 - L;
+            k := 1;
+            b := d;
+        end if;
+    end for;
+    
+    return C;
+end function;
+
+// Vinvert - Partial fraction decomposition inverse
+Vinvert := function(c, v, a, Zp)
+    local i, n, c1, d, q, q1, q2, R;
+    
+    R<z> := PolynomialRing(Zp);
+    
+    n := Degree(c);
+    d := R!0;
+    q1 := R!0;
+    c1 := [];
+    
+    // Build polynomial d
+    for i := 1 to n do
+        d +:= a[i] * z^(n + 1 - i);
+    end for;
+    
+    q := c * d;
+    
+    // Extract coefficients
+    for i := 1 to n do
+        q1 +:= Coefficient(q, 2*n + 1 - i) * z^(n - i);
+    end for;
+    
+    q2 := Derivative(c);
+    
+    // Evaluate at roots
+    for i := 1 to n do
+        c1_i := Evaluate(q1, v[i]) / Evaluate(q2, v[i]);
+        Append(~c1, c1_i);
+    end for;
+    
+    return c1;
+end function;
+
+// MC - Main computation
+MC := function(a, Zp)
+    local a1, v, u, n, q, f, m, i, c, roots, j, q1;
+    local R, S, p;
+    
+    n := #a div 2;
+    u := [];
+    v := [];
+    q := [];
+    
+    p := Characteristic(Zp);
+    R<x> := PolynomialRing(Zp);
+    S<z> := PolynomialRing(Zp);
+    
+    // Find minimal polynomial using BM
+    f := BM(a, n, Zp);
+    m := Degree(f);
+    
+    if m eq 0 then
+        return [];
+    end if;
+    
+    // Build a1 polynomial  
+    a1 := z^m;
+    for i := 1 to m do
+        a1 +:= Coefficient(f, i) * z^(m-i);
+    end for;
+    
+    // Get first m values
+    for i := 1 to m do
+        Append(~q, Zp!a[i]);
+    end for;
+    
+    // Find roots
+    q1 := Roots(a1);
+    
+    // Extract exactly m roots with multiplicities
+    v := [];
+    for r in q1 do
+        for j := 1 to r[2] do
+            if #v lt m then
+                Append(~v, r[1]);
+            end if;
+        end for;
+    end for;
+    
+    // Pad if necessary
+    while #v lt m do
+        if #v gt 0 then
+            Append(~v, v[1]);
+        else
+            Append(~v, Zp!0);
+        end if;
+    end while;
+    
+    // Compute coefficients
+    if m gt 1 then
+        try
+            c := Vinvert(a1, v, q, Zp);
+        catch e
+            c := q;
+        end try;
+    else
+        c := [a[1]];
+    end if;
+    
+    // Build result and sort
+    for i := 1 to m do
+        Append(~u, [c[i], v[i]]);
+    end for;
+    
+    // Sort by second component (matching Maple's sort)
+    Sort(~u, func<x,y | x[2] - y[2]>);
+    
+    return u;
+end function;
+
+// Corrected and optimized MBOT with proper root matching
+MBOT := function(M, n, T, omega, zeta, Zp, max_exp)
+    // Setup fields and rings
+    GFp := Zp;  // Use the provided base field
+    MPR := PolynomialRing(Zp, n);
+    vars := [ MPR.i : i in [1..n] ];
+
+    // Extract and filter first row values
+    a := [ M[1,j] : j in [1..2*T] ];
+    a := MC(a, Zp);
+    if IsEmpty(a) then
+        return MPR!0;
+    end if;
+    t := #a;
+    c := [ a[i][1] : i in [1..t] ];
+    first_roots := [ a[i][2] : i in [1..t] ];
+
+    // Precompute omega^k and log lookup
+    omega_gf := GFp!omega;
+    power2value := [ GFp!1 ];
+    for k in [1..max_exp] do
+        Append(~power2value, power2value[k] * omega_gf);
+    end for;
+    log_map := AssociativeArray();
+    for k in [0..max_exp] do
+        log_map[ power2value[k+1] ] := k;
+    end for;
+
+    // Initialize root matrix N
+    N := ZeroMatrix(Zp, n+1, t);
+    for j in [1..t] do
+        N[1][j] := first_roots[j];
+    end for;
+    // Process each subsequent row with proper matching
+    for i in [2..n+1] do
+        current := [ M[i,j] : j in [1..2*T] ];
+        current := MC(current, Zp);
+        if #current ne t then
+            error "Row ", i, ": expected ", t, " terms, got ", #current;
+        end if;
+        curr_roots := [ current[j][2] : j in [1..t] ];
+
+        // Match using discrete log lookup and used flags
+        used := [ false : j in [1..t] ];
+        matched := [ Zp!0 : j in [1..t] ];
+        for j in [1..t] do
+            idx := j;  // default fallback
+            if first_roots[j] ne 0 then
+                for k in [1..t] do
+                    if not used[k] then
+                        ratio := GFp!( curr_roots[k] / first_roots[j] );
+                        if IsDefined(log_map, ratio) then
+                            idx := k;
+                            break;
+                        end if;
+                    end if;
+                end for;
+            end if;
+            matched[j] := curr_roots[idx];
+            used[idx] := true;
+        end for;
+        for j in [1..t] do
+            N[i][j] := matched[j];
+        end for;
+    end for;
+    // Compute exponent matrix E
+    E := ZeroMatrix(Integers(), n, t);
+    for i in [1..n] do
+        for j in [1..t] do
+            if N[1][j] ne 0 then
+                ratio := GFp!(N[i+1][j] / N[1][j]);
+                if IsDefined(log_map, ratio) then
+                    E[i][j] := log_map[ratio];
+                else
+                    E[i][j] := 0;
+                end if;
+            else
+                E[i][j] := 0;
+            end if;
+        end for;
+    end for;
+
+    // Build polynomial f
+    f := MPR!0;
+    for j in [1..t] do
+        coeff := c[j];
+        mon := MPR!1;
+        for i in [1..n] do
+            exp := E[i][j];
+            mon *:= vars[i]^exp;
+            coeff := coeff / (Zp!zeta[i])^exp;
+        end for;
+        f +:= coeff * mon;
+    end for;
+    return f;
+end function;
+
+// Myeval - Evaluate multivariate polynomial
+Myeval := function(f, n, alpha, Zp)
+    local i, t, u, V, j, M, C, C1, a, b, c, mons, coeffs;
+    
+    // Get monomials and coefficients in consistent order
+    mons := Monomials(f);
+    coeffs := Coefficients(f);
+    t := #mons;
+    
+    if t eq 0 then
+        return ZeroMatrix(Zp, 1, 2);
+    end if;
+    
+    V := ZeroMatrix(Zp, t, 1);
+    
+    // Evaluate monomials at alpha
+    for i := 1 to t do
+        u := Zp!1;
+        for j := 1 to n do
+            exp := Degree(mons[i], j);
+            u *:= alpha[j]^exp;
+        end for;
+        V[i,1] := u;
+    end for;
+    
+    // Build Vandermonde matrix
+    M := ZeroMatrix(Zp, t, t);
+    for i := 1 to t do
+        for j := 1 to t do
+            M[i,j] := V[j,1]^(i-1);
+        end for;
+    end for;
+    
+    // Coefficient vector
+    C1 := ZeroMatrix(Zp, t, 1);
+    for i := 1 to t do
+        C1[i,1] := Zp!coeffs[i];
+    end for;
+    
+    a := M * C1;
+    
+    // Scale for second evaluation
+    for i := 1 to t do
+        u := V[i,1]^t;
+        for j := 1 to t do
+            M[j,i] *:= u;
+        end for;
+    end for;
+    
+    b := M * C1;
+    
+    // Combine results
+    c := ZeroMatrix(Zp, 1, 2*t);
+    for i := 1 to t do
+        c[1,i] := a[i,1];
+        c[1,i+t] := b[i,1];
+    end for;
+    
+    return c;
+end function;
+
+// TotalMyeval - Build evaluation matrix
+TotalMyeval := function(f, n, alpha, omega, Zp)
+    local i, a, t, M, beta, k, mons;
+    
+    mons := Monomials(f);
+    t := #mons;
+    
+    if t eq 0 then
+        return ZeroMatrix(Zp, n+1, 2);
+    end if;
+    
+    M := ZeroMatrix(Zp, n+1, 2*t);
+    
+    // First row - evaluate at alpha
+    a := Myeval(f, n, alpha, Zp);
+    for i := 1 to 2*t do
+        M[1,i] := a[1,i];
+    end for;
+    
+    // Remaining rows - modify one variable at a time
+    for k := 1 to n do
+        // Create a fresh copy of alpha
+        beta := [Zp!alpha[i] : i in [1..n]];
+        beta[k] := alpha[k] * omega;
+        a := Myeval(f, n, beta, Zp);
+        for i := 1 to 2*t do
+            M[k+1,i] := a[1,i];
+        end for;
+    end for;
+    
+    return M;
+end function;
+
+// Mydiver - Transform polynomial with zeta (returns single polynomial)
+Mydiver := function(f, n, zeta, Zp)
+    local i, t, u, j, g, mons, coeffs, MPR;
+    
+    // Get polynomial ring
+    MPR := Parent(f);
+    
+    // Get monomials and coefficients
+    mons := Monomials(f);
+    coeffs := Coefficients(f);
+    t := #mons;
+    
+    if t eq 0 then
+        return MPR!0;
+    end if;
+    
+    g := MPR!0;
+    
+    // Process each monomial
+    for i := 1 to t do
+        // Multiply coefficient by appropriate powers of zeta
+        u := Zp!1;
+        for j := 1 to n do
+            exp := Degree(mons[i], j);
+            u *:= zeta[j]^exp;
+        end for;
+        
+        // Add transformed term to result
+        g +:= (u * coeffs[i]) * mons[i];
+    end for;
+    
+    return g;
+end function;
+
+EvaluatePolyAtPoint := function(f, vars, point, Zp)
+    local result, mons, coeffs, i, j, val;
+    
+    if f eq 0 then
+        return Zp!0;
+    end if;
+    
+    mons := Monomials(f);
+    coeffs := Coefficients(f);
+    result := Zp!0;
+    
+    for i := 1 to #mons do
+        val := Zp!coeffs[i];
+        for j := 1 to #vars do
+            exp := Degree(mons[i], j);
+            val *:= point[j]^exp;
+        end for;
+        result +:= val;
+    end for;
+    
+    return result;
+end function;
+
+
+ComputePolyMatrixDet := function(A, n, max_exp)
+
+    local k, omega, zeta, alpha, T, det_poly, i, j;
+    local Zp, MPR, vars, det_values, M, beta, det_val;
+    local A_eval, entry_val, exp, var_idx;
+    local actual_det, actual_terms, det_evals, p;
+    
+    k := NumberOfRows(A);
+    assert k eq NumberOfColumns(A);
+    
+    Zp := BaseRing(BaseRing(A));
+    p := Characteristic(Zp);
+    MPR := BaseRing(A); 
+    vars := [MPR.i : i in [1..n]];
+    
+    omega := PrimitiveRoot(p);
+    
+    zeta := [Random(1, p-1) : i in [1..n]];
+    alpha := [Random(1, p-1) : i in [1..n]];
+    
+    
+    actual_det := Determinant(A);
+    actual_terms := #Terms(actual_det);
+    
+    T := actual_terms;
+    if T eq 0 then
+        return MPR!0; 
+    end if;
+    det_transformed := Mydiver(actual_det, n, zeta, Zp);
+
+    M := TotalMyeval(det_transformed, n, alpha, omega, Zp);
+
+
+    det_poly := MBOT(M, n, T, omega, zeta, Zp, max_exp);
+
+    det_poly := Evaluate(det_poly, vars);
+
+    return det_poly, actual_det;
+end function;

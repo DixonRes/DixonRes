@@ -1,0 +1,245 @@
+function Lagrange(nodes, values, X)
+    k := #nodes;
+    L := Parent(values[1])!0;
+    for j in [1..k] do
+        num := Parent(values[1])!1;
+        den := Parent(nodes[1])!1;
+        for m in [1..k] do
+            if m ne j then
+                num *:= (X - nodes[m]);
+                den *:= (nodes[j] - nodes[m]);
+            end if;
+        end for;
+        L +:= values[j] * num * den^-1;
+    end for;
+    return L;
+end function;
+
+function TensorInterpolation(Vars, Grids, Vals, P)
+    d := #Vars;
+    if d eq 1 then
+        return Lagrange(Grids[1], Vals, Vars[1]); 
+    end if;
+    blockSize := &* [ #Grids[i] : i in [1..d-1] ];
+    Hd := [];
+    // printf "expected total points = %o, actual = %o\n", &* [#Grids[i] : i in [1..d]], #Vals;
+
+    s := [];
+    for j in [1..#Grids[d]] do
+        if d lt 2 then
+            for _ in [1..#s] do
+                printf "\b";
+            end for;
+            s := Sprint(j) cat "/" cat Sprint(#Grids[d]) cat " ";
+            printf s;
+        end if;
+        subVals := Vals[(j-1)*blockSize + 1 .. j*blockSize];
+
+        H_j := TensorInterpolation(
+                   Vars[1..d-1],
+                   Grids[1..d-1],
+                   subVals,
+                   P
+               );
+        Append(~Hd, H_j);
+    end for;
+    Xd := Vars[d];
+//print Hd;
+    deg_d := Max([ Degree(h, Xd) : h in Hd ]);
+    C := [];
+    for k in [0..deg_d] do
+        seq := [ Coefficient(Hd[j], Xd, k) : j in [1..#Grids[d]] ];
+        Ck := Lagrange(Grids[d], seq, Xd);
+        Append(~C, Ck);
+    end for;
+
+    R := P!0;
+    for k in [0..deg_d] do
+        R +:= C[k+1] * Xd^k;
+    end for;
+    return R;
+end function;
+
+function UniDeterminant(M, d)
+    R := Parent(M[1][1]);
+    K := BaseRing(R);
+    if IsFinite(K) then
+        pe := PrimitiveElement(K);
+    else
+        pe := 2;
+    end if;
+    points := [ pe^i : i in [0..d] ] cat [K!0];
+    values := [ ];
+    npoint := d+2;
+    ipoint := 0;
+    s := [];
+print "Computing Interpolation Points...";
+    rows := NumberOfRows(M);
+    cols := NumberOfColumns(M);
+    eval_func := func< a | MatrixRing(K, Nrows(M))![Evaluate(elt, a) : elt in Eltseq(M)] >;
+    degs := [Degree(M[i][j]) : i in [1..rows], j in [1..cols]];
+    print Max(degs);
+    for a in points do
+        ipoint := ipoint + 1;
+        for j in [1..#s] do
+            printf "\b";
+        end for;
+        s := Sprint(ipoint) cat "/" cat Sprint(npoint) cat " ";
+        printf s;
+        N := Evaluate(M, a); //eval_func(a); // N := Evaluate(dix2, a); 
+        Append(~values, Determinant(N)); 
+    end for;
+print "Interpolating...";
+    d1 := Interpolation(points, values);
+    return d1;
+end function;
+
+
+function MultiDeterminant(M, ds)
+    R := Parent(M[1][1]);
+    np := Ngens(R);
+    K := BaseRing(R);
+    if IsFinite(K) then
+        pe := PrimitiveElement(K);
+    else
+        pe := 2;
+    end if;
+    uppers := ds;
+    grids := [];
+    un := 1;
+    for u in uppers do
+        un +:= 1;
+        Append(~grids, [ pe^i : i in [0..u]] cat [K!0] );
+        //Append(~grids, [ pe^(2*i+un)+un*i^2+un+i : i in [0..u+1]] );
+    end for;
+//print grids;
+    vals := [];
+    npoint := &*[i+2 : i in ds];//(d+2)^np;
+    ipoint := 0;
+    s := [];
+
+print "Computing Interpolation Network...";
+    time for point in CartesianProduct([ grids[k] : k in [1..np] ]) do
+        reversed_point := [ point[np - i + 1] : i in [1..np] ];
+         M_eval := Matrix(K, Nrows(M), Ncols(M), 
+                  [Evaluate(elt, reversed_point) : elt in Eltseq(M)]);
+        Append(~vals, Determinant(M_eval)); 
+        ipoint := ipoint + 1;
+        for j in [1..#s] do
+            printf "\b";
+        end for;
+        s := Sprint(ipoint) cat "/" cat Sprint(npoint) cat " ";
+        printf s;
+    end for;
+    vars :=  [ R.i : i in [1..Ngens(R)] ];
+print "Interpolating...";
+    d1 := TensorInterpolation(vars, grids, vals, R);
+    return d1;
+end function;
+
+
+
+function GenerateTotalDegreeExponents(n, D)
+    if n eq 1 then
+        return [[d] : d in [0..D]];
+    end if;
+    exps := [];
+    for d := 0 to D do
+        for tail in GenerateTotalDegreeExponents(n-1, D-d) do
+            Append(~exps, [d] cat tail);
+        end for;
+    end for;
+    return exps;
+end function;
+
+function MinTotalDegreeInterpolation(Vars, D, Vals, P)
+    n := #Vars;
+    K := BaseRing(P);
+    
+    exponents := GenerateTotalDegreeExponents(n, D);
+    num_terms := #exponents;
+    points := [];
+    base_pts := [2^i : i in [1..n]];
+    for exp in exponents do
+        pt := [];
+        for i := 1 to n do
+            Append(~pt, base_pts[i]^exp[i]);
+        end for;
+        Append(~points, pt);
+    end for;
+    V := ZeroMatrix(K, num_terms, num_terms);
+    s := [];
+    print("Constructing Vandermonde System...");
+    for i := 1 to num_terms do
+        for j in [1..#s] do
+            printf "\b";
+        end for;
+        s := Sprint(i) cat "/" cat Sprint(num_terms) cat " ";
+        printf s;
+        for j := 1 to num_terms do
+            term_val := 1;
+            for k := 1 to n do
+                term_val *:= points[i][k]^exponents[j][k];
+            end for;
+            V[i, j] := term_val;
+        end for;
+    end for;
+    
+    val_vec := Vector(K, Vals);
+    print("Solving Vandermonde System...");
+    coeffs := Solution(V, val_vec);
+    
+    poly := P!0;
+    for j := 1 to num_terms do
+        term := coeffs[j];
+        for k := 1 to n do
+            term *:= Vars[k]^exponents[j][k];
+        end for;
+        poly +:= term;
+    end for;
+    
+    return poly;
+end function;
+
+function MultiDeterminant_TotalDegreeBound(M, D)
+    R := Parent(M[1][1]);
+    np := Ngens(R);
+    K := BaseRing(R);
+    
+    exponents := GenerateTotalDegreeExponents(np, D);
+    num_points := #exponents;
+    printf "Using minimal point set: %o points\n", num_points;
+    
+    points := [];
+    base_pts := [2^i : i in [1..np]];
+    
+    for exp in exponents do
+        pt := [];
+        for i := 1 to np do
+            Append(~pt, base_pts[i]^exp[i]);
+        end for;
+        Append(~points, pt);
+    end for;
+    
+    vals := [];
+    print "Computing determinant values at minimal points...";
+    s := [];
+    for i := 1 to num_points do
+        pt := points[i];
+        M_eval := Matrix(K, Nrows(M), Ncols(M), 
+                 [Evaluate(elt, pt) : elt in Eltseq(M)]);
+        det_val := Determinant(M_eval);
+        Append(~vals, det_val);
+        for j in [1..#s] do
+            printf "\b";
+        end for;
+        s := Sprint(i) cat "/" cat Sprint(num_points) cat " ";
+        printf s;
+    end for;
+    
+    vars := [R.i : i in [1..np]];
+    print "\nInterpolating with minimal points...";
+    d1 := MinTotalDegreeInterpolation(vars, D, vals, R);
+    
+    return d1;
+end function;
