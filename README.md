@@ -33,7 +33,7 @@ dixon(ps, vars, mode);
 - `mode`: Computation mode:
   - `0`: Use Magma's built-in determinant calculation
   - `1`: Use interpolation method
-  - `2`: Output Dixon matrix for external computation
+  - `2`: Output Dixon matrix for external computation, Only supports well-posed systems (n equations with n variables)
 
 ### Example
 
@@ -74,9 +74,11 @@ Refer to `test.txt` for examples using `random_polynomial_over_finite_field` to 
 
 ## Performance Notes
 
-- For small systems (<10 variables), Mode 0 is recommended
-- For medium systems (10-20 variables), try Mode 1
-- For large systems (>20 variables), Mode 2 with external libraries is best
+- For low-degree polynomial systems: Mode 0 recommended
+- For high-degree polynomial systems: Mode 1 recommended
+- For single-parameter systems: Mode 2 recommended (fastest option for n equations with n variables cases)
+
+
 
 ## Limitations
 
