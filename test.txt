@@ -56,7 +56,7 @@ n := 3;      // number of variables
 d := 3;     // degree of polynomials
 p := 65537;  // characteristic of finite field
 m := 3;      // number of equations
-k := 10;      // monomial density (0 means using all valid terms)
+k := 10;      // number of monomials in each polynomial
 SetColumns(300);
 ps,vars := random_polynomial_over_finite_field(n, d, p, m, k);
 mode := 0;
