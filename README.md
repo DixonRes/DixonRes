@@ -17,7 +17,7 @@ This program implements Dixon resultant calculation in Magma, supporting multipl
 1. Ensure you have [Magma](http://magma.maths.usyd.edu.au/magma/) installed
 2. For mode 2 (external computation), install:
    - [NTL](https://www.libntl.org/) or [FLINT](https://www.flintlib.org/)
-   - [PML](https://github.com/asicoder/pml) (Polynomial Matrix Library)
+   - [PML](https://github.com/vneiger/pml) (Polynomial Matrix Library)
 
 ## Usage
 
