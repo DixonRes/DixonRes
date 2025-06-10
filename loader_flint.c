@@ -22,11 +22,9 @@ int main() {
     long p, m, d;
     fscanf(fin, "%ld %ld %ld", &p, &m, &d);
     
-    // 初始化FLINT矩阵
     nmod_poly_mat_t mat;
     nmod_poly_mat_init(mat, m, m, p);
     
-    // 初始化所有多项式元素
     for (long i = 0; i < m; i++) {
         for (long j = 0; j < m; j++) {
             nmod_poly_init(nmod_poly_mat_entry(mat, i, j), p);
@@ -61,10 +59,8 @@ int main() {
     clock_t start = clock();
     printf("determinant_via_iter\n");
     
-    // 使用FLINT/PML的迭代行列式计算函数
     nmod_poly_mat_det_iter(det, mat);
     
-    // 假设计算总是成功
     printf("1\n");
     printf("Determinant: ");
     //nmod_poly_print_pretty(det, "x");
@@ -73,7 +69,6 @@ int main() {
     double duration = (double)(end - start) * 1000.0 / CLOCKS_PER_SEC;
     printf("time: %.0f ms\n", duration);
 
-    // 清理资源
     nmod_poly_mat_clear(mat);
     nmod_poly_clear(det);
     
