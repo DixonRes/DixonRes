@@ -193,60 +193,6 @@ function ExportPivots(M)
     return rowPivots, colPivots;
 end function;
 
-function random_polynomial_over_finite_field(n, d, p, m, k)
-    F := GF(p);
-    R<[x]> := PolynomialRing(F, n); //, "grevlex"
-    total_terms := Binomial(n + d, d);
-    
-    if k eq 0 or k gt total_terms then
-        k0 := total_terms;
-    else
-        k0 := k;
-    end if;
-    
-    valid_exponents := [];
-    current_layer := [[]];
-    
-    for i in [1..n] do
-        next_layer := [];
-        for vec in current_layer do
-            current_sum := IsEmpty(vec) select 0 else &+vec;
-            max_exp := d - current_sum;
-            for e in [0..max_exp] do
-                Append(~next_layer, vec cat [e]);
-            end for;
-        end for;
-        current_layer := next_layer;
-    end for;
-    valid_exponents := current_layer;
-    
-    ps := [];
-    vars := [];
-    for i in [1..m] do
-        f := R!0;
-        indices := [1..#valid_exponents];
-        selected := [];
-        for j in [1..k0] do
-            rand_index := Random(1, #indices);
-            Append(~selected, valid_exponents[indices[rand_index]]);
-            Remove(~indices, rand_index);
-        end for;
-        
-        for exp_vec in selected do
-            coeff := Random(F);
-            term := Monomial(R, exp_vec) * coeff;
-            f +:= term;
-        end for;
-        Append(~ps, f);
-        if not i eq m then
-            Append(~vars, x[i]);
-        end if;
-    end for;
-    
-    return ps,vars;
-end function;
-
-
 function dixon(ps, vars, is_interpolation)
 
 print("\nStep0: Preprocessing\n");
