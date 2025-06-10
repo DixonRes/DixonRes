@@ -49,7 +49,7 @@ ps := [
     x0*x1*x2 - y2
 ];
 
-// Compute Dixon resultant eliminating x0, x1, x2
+// Compute Dixon resultant eliminating x0, x1
 resultant := dixon(ps, [x0,x1], 0);
 ```
 
