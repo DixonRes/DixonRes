@@ -1,6 +1,3 @@
-Here's a professional English README for your Magma-based Dixon resultant computation program:
-
----
 # Dixon Resultant Computation in Magma
 
 This program implements Dixon resultant calculation in Magma, supporting multiple computation modes for flexibility and performance optimization.
