@@ -33,7 +33,7 @@ dixon(ps, vars, mode);
 - `mode`: Computation mode:
   - `0`: Use Magma's built-in determinant calculation
   - `1`: Use interpolation method
-  - `2`: Output Dixon matrix for external computation, Only supports well-posed systems (n equations with n variables)
+  - `2`: Output Dixon matrix for external computation, only supports well-posed systems (n equations with n variables)
 
 ### Example
 
