@@ -6,8 +6,8 @@ m := 3;      // number of equations
 k := 0;      // monomial density (0 means using all valid terms)
 SetColumns(300);
 ps,vars := random_polynomial_over_finite_field(n, d, p, m, k);
-is_interpolation := 0;
-time d := dixon(ps, vars, is_interpolation);
+mode := 0;
+time d := dixon(ps, vars, mode);
 //print d;
 //Roots(d);
 
