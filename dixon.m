@@ -318,7 +318,7 @@ print("Computing Dixon Polynomial...");
     for i in [1..2*nv] do
         Append(~images, x[i]);
     end for;
-    for i in [1..np] do
+    for k in [1..np] do
         Append(~images, R!(p[k]));
     end for;
     phi2 := hom< R1 -> R | images >;
