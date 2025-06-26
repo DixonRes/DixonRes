@@ -13,6 +13,7 @@
 // Debug flag
 #define DEBUG 0
 #define TIMING 1
+#define DETAILED_TIMING 1
 
 #include <time.h>
 
@@ -32,7 +33,7 @@ void timer_stop(my_timer_t* t) {
 
 void timer_print(my_timer_t* t, const char* label) {
     if (TIMING) {
-        printf("%s: %.3f seconds\n", label, t->elapsed);
+        printf("  [TIMING] %s: %.6f seconds\n", label, t->elapsed);
     }
 }
 
@@ -144,6 +145,9 @@ void poly_max_degrees_per_var(slong* max_degs, const fmpz_mod_mpoly_t poly, cons
 
 // Berlekamp-Massey Algorithm (BM)
 void BM(fmpz_mod_poly_t C, const fmpz* s, slong N, const fmpz_mod_ctx_t ctx) {
+    my_timer_t timer;
+    if (DETAILED_TIMING) timer_start(&timer);
+    
     fmpz_mod_poly_t B, T;
     fmpz_t d, b, temp, temp2;
     slong L = 0, k = 1;
@@ -209,11 +213,19 @@ void BM(fmpz_mod_poly_t C, const fmpz* s, slong N, const fmpz_mod_ctx_t ctx) {
     fmpz_clear(b);
     fmpz_clear(temp);
     fmpz_clear(temp2);
+    
+    if (DETAILED_TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "    BM algorithm");
+    }
 }
 
 // Vinvert - compute coefficients from roots using partial fraction decomposition
 void Vinvert(fmpz* c1, const fmpz_mod_poly_t c, const fmpz* v, 
              const fmpz* a, slong n, const fmpz_mod_ctx_t ctx) {
+    
+    my_timer_t timer;
+    if (DETAILED_TIMING) timer_start(&timer);
     
     fmpz_mod_poly_t d, q, q1, q2;
     fmpz_t temp;
@@ -277,6 +289,11 @@ void Vinvert(fmpz* c1, const fmpz_mod_poly_t c, const fmpz* v,
     fmpz_mod_poly_clear(q1, ctx);
     fmpz_mod_poly_clear(q2, ctx);
     fmpz_clear(temp);
+    
+    if (DETAILED_TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "    Vinvert");
+    }
 }
 
 typedef struct {
@@ -298,6 +315,9 @@ int compare_pairs_by_root(const void* a, const void* b) {
 
 // MC - Monomials and Coefficients (Algorithm 3.1)
 term_list MC(const fmpz* a, slong N, const fmpz_mod_ctx_t ctx) {
+    my_timer_t timer, timer_inner;
+    if (DETAILED_TIMING) timer_start(&timer);
+    
     term_list result = {NULL, 0};
     fmpz_mod_poly_t f, Lambda;
     fmpz_mod_poly_factor_t fac;
@@ -343,7 +363,13 @@ term_list MC(const fmpz* a, slong N, const fmpz_mod_ctx_t ctx) {
     }
     
     // Find roots of Lambda
+    if (DETAILED_TIMING) timer_start(&timer_inner);
     fmpz_mod_poly_factor(fac, Lambda, ctx);
+    if (DETAILED_TIMING) {
+        timer_stop(&timer_inner);
+        timer_print(&timer_inner, "    Polynomial factorization");
+    }
+    
     slong root_count = 0;
     
     // Store roots and their multiplicities
@@ -458,6 +484,11 @@ term_list MC(const fmpz* a, slong N, const fmpz_mod_ctx_t ctx) {
     fmpz_mod_poly_clear(f, ctx);
     fmpz_mod_poly_clear(Lambda, ctx);
     fmpz_mod_poly_factor_clear(fac, ctx);
+    
+    if (DETAILED_TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "  MC (total)");
+    }
     
     return result;
 }
@@ -602,6 +633,9 @@ void TotalMyeval(fmpz_mod_mat_t M, const fmpz_mod_mpoly_t f, slong n,
                  const fmpz* alpha, const fmpz_t omega, 
                  const fmpz_mod_ctx_t ctx, const fmpz_mod_mpoly_ctx_t mctx) {
     
+    my_timer_t timer;
+    if (TIMING) timer_start(&timer);
+    
     slong T = fmpz_mod_mpoly_length(f, mctx);
     
     if (T == 0) {
@@ -649,12 +683,20 @@ void TotalMyeval(fmpz_mod_mat_t M, const fmpz_mod_mpoly_t f, slong n,
         fmpz_clear(beta + i);
     }
     free(beta);
+    
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "TotalMyeval");
+    }
 }
 
 // Diversification transformation
 void Mydiver(fmpz_mod_mpoly_t g, const fmpz_mod_mpoly_t f, slong n,
              const fmpz* zeta, const fmpz_mod_ctx_t ctx, 
              const fmpz_mod_mpoly_ctx_t mctx) {
+    
+    my_timer_t timer;
+    if (TIMING) timer_start(&timer);
     
     slong t = fmpz_mod_mpoly_length(f, mctx);
     
@@ -696,23 +738,116 @@ void Mydiver(fmpz_mod_mpoly_t g, const fmpz_mod_mpoly_t f, slong n,
     fmpz_clear(coeff);
     fmpz_clear(u);
     fmpz_clear(temp);
+    
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "Mydiver");
+    }
 }
 
-// MBOT - Main Black-box Optimization Technique
+
+
+
+// Hash table structure for omega powers
+typedef struct {
+    fmpz_t* keys;
+    slong* values;
+    slong size;
+    slong capacity;
+} omega_hash_table;
+
+// Fixed hash function - using only FLINT types
+static inline ulong fmpz_hash(const fmpz_t x, ulong capacity) {
+    // Get the least significant bits as ulong
+    ulong val = fmpz_get_ui(x);
+    // Simple but effective hash function
+    return (val * 2654435761UL) % capacity;
+}
+
+void omega_hash_init(omega_hash_table* ht, slong max_power) {
+    ht->capacity = max_power * 2 + 100; // 2x for lower collision probability
+    ht->size = 0;
+    ht->keys = (fmpz_t*)malloc(ht->capacity * sizeof(fmpz_t));
+    ht->values = (slong*)malloc(ht->capacity * sizeof(slong));
+    
+    for (slong i = 0; i < ht->capacity; i++) {
+        fmpz_init(ht->keys[i]);
+        ht->values[i] = -1;
+    }
+}
+
+void omega_hash_clear(omega_hash_table* ht) {
+    for (slong i = 0; i < ht->capacity; i++) {
+        fmpz_clear(ht->keys[i]);
+    }
+    free(ht->keys);
+    free(ht->values);
+}
+
+void omega_hash_insert(omega_hash_table* ht, const fmpz_t key, slong value) {
+    ulong idx = fmpz_hash(key, ht->capacity);
+    
+    // Linear probing for collision resolution
+    while (ht->values[idx] != -1) {
+        if (fmpz_equal(ht->keys[idx], key)) {
+            return; // Already exists
+        }
+        idx = (idx + 1) % ht->capacity;
+    }
+    
+    fmpz_set(ht->keys[idx], key);
+    ht->values[idx] = value;
+    ht->size++;
+}
+
+slong omega_hash_find(omega_hash_table* ht, const fmpz_t key) {
+    ulong idx = fmpz_hash(key, ht->capacity);
+    
+    while (ht->values[idx] != -1) {
+        if (fmpz_equal(ht->keys[idx], key)) {
+            return ht->values[idx];
+        }
+        idx = (idx + 1) % ht->capacity;
+        
+        // Safety check to prevent infinite loop
+        static slong max_probes = 0;
+        if (max_probes == 0) {
+            max_probes = ht->capacity;
+        }
+        slong probes = 0;
+        if (++probes > max_probes) {
+            break;
+        }
+    }
+    
+    return -1; // Not found
+}
+
+// NOW HERE'S THE COMPLETE MODIFIED MBOT FUNCTION:
 void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
           const fmpz_t omega, const fmpz* zeta, const fmpz_mod_ctx_t ctx,
           slong* max_degs_per_var, const fmpz_mod_mpoly_ctx_t mctx) {
     
-    my_timer_t timer;
-    timer_start(&timer);
+    my_timer_t timer, timer_total;
+    timer_start(&timer_total);
+    
+    printf("\n=== MBOT Performance Analysis ===\n");
+    printf("Parameters: n=%ld, T=%ld\n", n, T);
     
     // Process first row to get reference terms
+    if (TIMING) timer_start(&timer);
     fmpz* first_row = (fmpz*)malloc(2 * T * sizeof(fmpz));
     for (slong j = 0; j < 2 * T; j++) {
         fmpz_init(first_row + j);
         fmpz_set(first_row + j, fmpz_mod_mat_entry(M, 0, j));
     }
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "Extract first row");
+    }
     
+    // MC for first row
+    printf("\nProcessing first row:\n");
     term_list a = MC(first_row, T, ctx);
     
     if (a.length == 0) {
@@ -724,7 +859,6 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
     
     if (t != T) {
         printf("WARNING: MC found %ld terms, expected %ld\n", t, T);
-        // Try to continue anyway - the algorithm might still work
     }
     
     // Extract coefficients and roots from first row
@@ -737,7 +871,8 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
         fmpz_set(first_roots + i, a.pairs[i].root);
     }
     
-    // Precompute omega powers - use max degree across all variables
+    // Precompute omega powers
+    if (TIMING) timer_start(&timer);
     slong max_power = 0;
     for (slong i = 0; i < n; i++) {
         if (max_degs_per_var[i] > max_power) {
@@ -752,6 +887,7 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
         max_power = 1000000;
     }
     
+    printf("\nPrecomputing omega powers up to %ld\n", max_power);
     fmpz_t* omega_powers = (fmpz_t*)malloc((max_power + 1) * sizeof(fmpz_t));
     if (omega_powers == NULL) {
         printf("ERROR: Failed to allocate memory for omega powers\n");
@@ -763,6 +899,27 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
         fmpz_init(omega_powers[k]);
         fmpz_mod_pow_ui(omega_powers[k], omega, k, ctx);
     }
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "Precompute omega powers");
+    }
+    
+    // ============ NEW ADDITION: Build hash table ============
+    printf("\nBuilding omega power hash table...\n");
+    if (TIMING) timer_start(&timer);
+    
+    omega_hash_table omega_table;
+    omega_hash_init(&omega_table, max_power);
+    
+    for (slong k = 0; k <= max_power; k++) {
+        omega_hash_insert(&omega_table, omega_powers[k], k);
+    }
+    
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "Build omega hash table");
+    }
+    // ========================================================
     
     // Initialize root matrix N
     fmpz_mod_mat_t N;
@@ -774,8 +931,16 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
     }
     
     // Process each subsequent row
+    printf("\nProcessing remaining %ld rows:\n", n);
+    if (TIMING) timer_start(&timer);
+    
     int all_matched = 1;
     for (slong i = 1; i <= n; i++) {
+        my_timer_t timer_row;
+        if (DETAILED_TIMING) timer_start(&timer_row);
+        
+        printf("  Row %ld:\n", i);
+        
         // Extract current row
         fmpz* current_row = (fmpz*)malloc(2 * T * sizeof(fmpz));
         for (slong j = 0; j < 2 * T; j++) {
@@ -786,9 +951,13 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
         term_list current = MC(current_row, T, ctx);
         
         if (current.length != t) {
-            printf("WARNING: Row %ld has %ld terms, expected %ld\n", i, current.length, t);
+            printf("    WARNING: Row %ld has %ld terms, expected %ld\n", i, current.length, t);
             all_matched = 0;
         }
+        
+        // ============ MODIFIED ROOT MATCHING SECTION ============
+        my_timer_t timer_match;
+        if (DETAILED_TIMING) timer_start(&timer_match);
         
         // Create a permutation array to match roots
         slong* perm = (slong*)malloc(t * sizeof(slong));
@@ -800,37 +969,43 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
         }
         
         // Try to match roots based on ratio being a power of omega
+        slong comparisons = 0;
+        fmpz_t ratio, inv;
+        fmpz_init(ratio);
+        fmpz_init(inv);
+        
         for (slong j = 0; j < t; j++) {
             if (fmpz_is_zero(first_roots + j)) continue;
             
-            fmpz_t ratio, inv;
-            fmpz_init(ratio);
-            fmpz_init(inv);
             fmpz_mod_inv(inv, first_roots + j, ctx);
             
             // Find best match
             for (slong k = 0; k < current.length && k < t; k++) {
                 if (used[k]) continue;
+                comparisons++;
                 
                 // Compute ratio = current_root[k] / first_root[j]
                 fmpz_mod_mul(ratio, current.pairs[k].root, inv, ctx);
                 
-                // Check if ratio is a power of omega
-                int found = 0;
-                for (slong exp = 0; exp <= max_power; exp++) {
-                    if (fmpz_equal(ratio, omega_powers[exp])) {
-                        perm[j] = k;
-                        used[k] = 1;
-                        found = 1;
-                        break;
-                    }
+                // ===== USE HASH TABLE LOOKUP INSTEAD OF LINEAR SEARCH =====
+                slong exp = omega_hash_find(&omega_table, ratio);
+                if (exp >= 0) {
+                    perm[j] = k;
+                    used[k] = 1;
+                    break;
                 }
-                if (found) break;
+                // ===========================================================
             }
-            
-            fmpz_clear(ratio);
-            fmpz_clear(inv);
         }
+        
+        fmpz_clear(ratio);
+        fmpz_clear(inv);
+        
+        if (DETAILED_TIMING) {
+            timer_stop(&timer_match);
+            printf("    Root matching (%ld comparisons): %.6f seconds\n", comparisons, timer_match.elapsed);
+        }
+        // ========================================================
         
         // Fill unmatched positions with remaining roots
         slong next_unused = 0;
@@ -876,13 +1051,26 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
             fmpz_clear(current_row + j);
         }
         free(current_row);
+        
+        if (DETAILED_TIMING) {
+            timer_stop(&timer_row);
+            printf("  Total row %ld: %.6f seconds\n", i, timer_row.elapsed);
+        }
+    }
+    
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "Process all rows");
     }
     
     if (!all_matched) {
         printf("WARNING: Not all rows had matching term counts\n");
     }
     
-    // Compute exponents using discrete logarithms
+    // ============ MODIFIED: Use hash table for exponents too ============
+    printf("\nComputing exponents:\n");
+    if (TIMING) timer_start(&timer);
+    
     slong** E = (slong**)malloc(n * sizeof(slong*));
     for (slong i = 0; i < n; i++) {
         E[i] = (slong*)calloc(t, sizeof(slong));
@@ -891,6 +1079,7 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
     fmpz_t ratio;
     fmpz_init(ratio);
     
+    slong total_log_searches = 0;
     for (slong i = 0; i < n; i++) {
         for (slong j = 0; j < t; j++) {
             fmpz_t n0j, nij, inv;
@@ -906,14 +1095,9 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
                 fmpz_mod_inv(inv, n0j, ctx);
                 fmpz_mod_mul(ratio, nij, inv, ctx);
                 
-                // Find log_omega(ratio) using precomputed table
-                E[i][j] = -1;
-                for (slong k = 0; k <= max_power; k++) {
-                    if (fmpz_equal(ratio, omega_powers[k])) {
-                        E[i][j] = k;
-                        break;
-                    }
-                }
+                // Use hash table lookup instead of linear search
+                total_log_searches++;
+                E[i][j] = omega_hash_find(&omega_table, ratio);
                 
                 if (E[i][j] < 0) {
                     E[i][j] = 0; // Default to 0 if not found
@@ -927,8 +1111,18 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
             fmpz_clear(inv);
         }
     }
+    // ====================================================================
     
-    // Build polynomial
+    if (TIMING) {
+        timer_stop(&timer);
+        printf("  Total discrete log searches: %ld\n", total_log_searches);
+        timer_print(&timer, "Compute exponents");
+    }
+    
+    // Build polynomial (rest remains the same)
+    printf("\nBuilding final polynomial:\n");
+    if (TIMING) timer_start(&timer);
+    
     fmpz_mod_mpoly_zero(result, mctx);
     fmpz_t coeff, zeta_pow, inv;
     fmpz_init(coeff);
@@ -963,11 +1157,20 @@ void MBOT(fmpz_mod_mpoly_t result, const fmpz_mod_mat_t M, slong n, slong T,
     // Combine any like terms that may have been created
     fmpz_mod_mpoly_combine_like_terms(result, mctx);
     
+    if (TIMING) {
+        timer_stop(&timer);
+        timer_print(&timer, "Build polynomial");
+    }
+    
     // Cleanup
     fmpz_clear(ratio);
     fmpz_clear(coeff);
     fmpz_clear(zeta_pow);
     fmpz_clear(inv);
+    
+    // ============ NEW CLEANUP: Clear hash table ============
+    omega_hash_clear(&omega_table);
+    // ======================================================
     
     for (slong k = 0; k <= max_power; k++) {
         fmpz_clear(omega_powers[k]);
@@ -1000,10 +1203,9 @@ cleanup_first:
     }
     free(first_row);
     
-    timer_stop(&timer);
-    timer_print(&timer, "MBOT completed");
+    timer_stop(&timer_total);
+    printf("\n=== MBOT Total Time: %.6f seconds ===\n", timer_total.elapsed);
 }
-
 // Generate random polynomial with specified parameters (matching Maple version)
 void myrandpoly(fmpz_mod_mpoly_t f, slong n, slong T, slong D, 
                 const fmpz_mod_ctx_t ctx, const fmpz_mod_mpoly_ctx_t mctx) {
@@ -1267,7 +1469,7 @@ void test_random_polynomial() {
     printf("\n========== Testing Random Polynomial Interpolation ==========\n");
     
     // Parameters - use more reasonable values
-    slong n = 3;      // Number of variables  
+    slong n = 5;      // Number of variables  
     slong T = 4000;     // Number of terms
     slong d = 100;     // Maximum degree - MUCH MORE REASONABLE!
     
@@ -1489,7 +1691,7 @@ void test_random_polynomial() {
 // Test function
 int main() {
     // Version check
-    printf("Code version: Fixed with reasonable degree bounds (d=20, not 1000876)\n");
+    printf("Code version: Performance analysis version with detailed timing\n");
     
     // Initialize random state
     flint_rand_init(global_state);
