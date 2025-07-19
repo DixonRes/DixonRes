@@ -1,0 +1,1206 @@
+/* fq_unified_interface.h - Unified field operations header (declarations only) */
+#ifndef FQ_UNIFIED_INTERFACE_H
+#define FQ_UNIFIED_INTERFACE_H
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <flint/flint.h>
+#include <flint/fq_nmod.h>
+#include <flint/nmod.h>
+#include "gf2n_field.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ============================================================================
+   UNIFIED FIELD ELEMENT TYPE
+   ============================================================================ */
+
+/* Field element type enumeration */
+typedef enum {
+    FIELD_ID_NMOD   = 0,  /* Prime field Z/pZ */
+    FIELD_ID_GF28   = 1,  /* GF(2^8) */
+    FIELD_ID_GF216  = 2,  /* GF(2^16) */
+    FIELD_ID_GF232  = 3,  /* GF(2^32) */
+    FIELD_ID_GF264  = 4,  /* GF(2^64) */
+    FIELD_ID_GF2128 = 5,  /* GF(2^128) */
+    FIELD_ID_FQ     = 6   /* General finite field */
+} field_id_t;
+
+/* Unified field element using union */
+typedef union {
+    ulong nmod;              /* For prime fields */
+    uint8_t gf28;            /* For GF(2^8) */
+    uint16_t gf216;          /* For GF(2^16) */
+    gf232_t gf232;           /* For GF(2^32) */
+    gf264_t gf264;           /* For GF(2^64) */
+    gf2128_t gf2128;         /* For GF(2^128) */
+    fq_nmod_struct fq;       /* For general fields */
+} field_elem_u;
+
+/* ============================================================================
+   FIELD CONTEXT STRUCTURE (LIGHTWEIGHT)
+   ============================================================================ */
+
+typedef struct {
+    field_id_t field_id;
+    size_t elem_size;
+    
+    /* Context data */
+    union {
+        nmod_t nmod_ctx;                    /* For prime fields */
+        const fq_nmod_ctx_struct *fq_ctx;   /* For general fields */
+    } ctx;
+    
+    /* Optimization info */
+    const char *description;
+} field_ctx_t;
+
+/* ============================================================================
+   UNIFIED POLYNOMIAL TYPE
+   ============================================================================ */
+
+typedef struct {
+    field_elem_u *coeffs;     /* Array of coefficients */
+    slong length;             /* Current length */
+    slong alloc;              /* Allocated size */
+    field_ctx_t *ctx;         /* Field context */
+} unified_poly_struct;
+
+typedef unified_poly_struct unified_poly_t[1];
+
+/* ============================================================================
+   POLYNOMIAL MATRIX TYPE
+   ============================================================================ */
+
+typedef struct {
+    unified_poly_struct *entries;
+    slong r, c;
+    unified_poly_struct **rows;
+    field_ctx_t *ctx;
+} unified_poly_mat_struct;
+
+typedef unified_poly_mat_struct unified_poly_mat_t[1];
+
+
+/* ============================================================================
+   FUNCTION DECLARATIONS - CRITICAL HOT PATH FUNCTIONS MARKED INLINE
+   ============================================================================ */
+
+/* Field operations - only the most critical ones are inline */
+static inline void field_mul(field_elem_u *res, const field_elem_u *a, const field_elem_u *b, 
+                            field_id_t field_id, const void *ctx);
+static inline void field_add(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
+                            field_id_t field_id, const void *ctx);
+static inline int field_is_zero(const field_elem_u *a, field_id_t field_id, const void *ctx);
+static inline int field_is_one(const field_elem_u *a, field_id_t field_id, const void *ctx);
+
+/* Other field operations - not inline to save compilation resources */
+void field_neg(field_elem_u *res, const field_elem_u *a, field_id_t field_id, const void *ctx);
+void field_inv(field_elem_u *res, const field_elem_u *a, field_id_t field_id, const void *ctx);
+void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx);
+void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx);
+int field_equal(const field_elem_u *a, const field_elem_u *b, field_id_t field_id, const void *ctx);
+void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx);
+void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx);
+void field_set_elem(field_elem_u *res, const field_elem_u *a, field_id_t field_id, const void *ctx);
+
+/* Context initialization */
+void field_ctx_init(field_ctx_t *ctx, const fq_nmod_ctx_t fq_ctx);
+
+/* Conversion functions */
+void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem, const field_ctx_t *ctx);
+void field_elem_to_fq_nmod(fq_nmod_t res, const field_elem_u *elem, const field_ctx_t *ctx);
+
+/* Polynomial operations */
+void unified_poly_init(unified_poly_t poly, field_ctx_t *ctx);
+void unified_poly_clear(unified_poly_t poly);
+void unified_poly_fit_length(unified_poly_t poly, slong len);
+void unified_poly_normalise(unified_poly_t poly);
+void unified_poly_zero(unified_poly_t poly);
+int unified_poly_is_zero(const unified_poly_t poly);
+slong unified_poly_degree(const unified_poly_t poly);
+void unified_poly_set(unified_poly_t res, const unified_poly_t poly);
+void unified_poly_add(unified_poly_t res, const unified_poly_t a, const unified_poly_t b);
+void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly, const field_elem_u *c);
+void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_poly_t b);
+void unified_poly_get_coeff(field_elem_u *coeff, const unified_poly_t poly, slong i);
+void unified_poly_set_coeff(unified_poly_t poly, slong i, const field_elem_u *coeff);
+void unified_poly_shift_left(unified_poly_t res, const unified_poly_t poly, slong n);
+
+/* Conversion functions */
+void fq_nmod_poly_to_unified(unified_poly_t res, const fq_nmod_poly_t poly,
+                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
+void unified_to_fq_nmod_poly(fq_nmod_poly_t res, const unified_poly_t poly,
+                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
+
+/* Matrix operations */
+void unified_poly_mat_init(unified_poly_mat_t mat, slong rows, slong cols, field_ctx_t *ctx);
+void unified_poly_mat_clear(unified_poly_mat_t mat);
+unified_poly_struct *unified_poly_mat_entry(unified_poly_mat_t mat, slong i, slong j);
+const unified_poly_struct *unified_poly_mat_entry_const(const unified_poly_mat_t mat, slong i, slong j);
+void fq_nmod_poly_mat_to_unified(unified_poly_mat_t res, const fq_nmod_poly_mat_t mat,
+                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
+void unified_to_fq_nmod_poly_mat(fq_nmod_poly_mat_t res, const unified_poly_mat_t mat,
+                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
+
+/* Workspace management */
+void ensure_workspace_initialized(field_ctx_t *ctx);
+
+/* Optimized operations for hot paths - these remain inline */
+static inline slong unified_poly_degree_fast(const unified_poly_struct *poly);
+static inline field_elem_u* unified_poly_get_coeff_ptr(unified_poly_struct *poly, slong i);
+static inline void unified_poly_add_inplace(unified_poly_struct *res, 
+                                           const unified_poly_struct *a,
+                                           field_ctx_t *ctx);
+static inline void unified_poly_shift_left_add_inplace(unified_poly_struct *res,
+                                                      const unified_poly_struct *a,
+                                                      slong shift,
+                                                      field_ctx_t *ctx);
+
+/* ============================================================================
+   WORKSPACE FOR HOT PATHS
+   ============================================================================ */
+
+typedef struct {
+    field_elem_u lc1, lc2, cst, inv;
+    unified_poly_struct tmp, tmp2;
+    field_id_t field_id;  // Track which field this workspace is for
+    void *field_ctx;      // Store the context pointer
+    int initialized;
+} unified_workspace_t;
+
+/* Per-thread workspace */
+static __thread unified_workspace_t g_unified_workspace = {0};
+/* Clear workspace when switching fields */
+static void clear_workspace(unified_workspace_t *ws, field_ctx_t *ctx) {
+    if (ws->initialized && ws->field_ctx) {
+        void *ctx_ptr = ws->field_ctx;
+        
+        field_clear_elem(&ws->lc1, ws->field_id, ctx_ptr);
+        field_clear_elem(&ws->lc2, ws->field_id, ctx_ptr);
+        field_clear_elem(&ws->cst, ws->field_id, ctx_ptr);
+        field_clear_elem(&ws->inv, ws->field_id, ctx_ptr);
+        unified_poly_clear(&ws->tmp);
+        unified_poly_clear(&ws->tmp2);
+        
+        ws->initialized = 0;
+        ws->field_id = 0;
+        ws->field_ctx = NULL;
+    }
+}
+
+/* ============================================================================
+   INLINE IMPLEMENTATIONS - ONLY THE MOST CRITICAL
+   ============================================================================ */
+
+/* Core multiplication - inline for hot path */
+static inline void field_mul(field_elem_u *res, const field_elem_u *a, const field_elem_u *b, 
+                            field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            res->gf28 = gf28_mul(a->gf28, b->gf28);
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = gf216_mul(a->gf216, b->gf216);
+            break;
+        case FIELD_ID_GF232:
+            res->gf232 = gf232_mul(&a->gf232, &b->gf232);
+            break;
+        case FIELD_ID_GF264:
+            res->gf264 = gf264_mul(&a->gf264, &b->gf264);
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128 = gf2128_mul(&a->gf2128, &b->gf2128);
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = nmod_mul(a->nmod, b->nmod, *(const nmod_t*)ctx);
+            break;
+        case FIELD_ID_FQ:
+            /* Ensure result is initialized before operation */
+            if (res != a && res != b) {
+                fq_nmod_init(&res->fq, (const fq_nmod_ctx_struct *)ctx);
+            }
+            fq_nmod_mul(&res->fq, &a->fq, &b->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+/* Core addition - inline for hot path */
+static inline void field_add(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
+                            field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            res->gf28 = a->gf28 ^ b->gf28;
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = a->gf216 ^ b->gf216;
+            break;
+        case FIELD_ID_GF232:
+            res->gf232.value = a->gf232.value ^ b->gf232.value;
+            break;
+        case FIELD_ID_GF264:
+            res->gf264.value = a->gf264.value ^ b->gf264.value;
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128.low = a->gf2128.low ^ b->gf2128.low;
+            res->gf2128.high = a->gf2128.high ^ b->gf2128.high;
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = nmod_add(a->nmod, b->nmod, *(const nmod_t*)ctx);
+            break;
+        case FIELD_ID_FQ:
+            /* Ensure result is initialized before operation */
+            if (res != a && res != b) {
+                fq_nmod_init(&res->fq, (const fq_nmod_ctx_struct *)ctx);
+            }
+            fq_nmod_add(&res->fq, &a->fq, &b->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+/* Check if zero - inline for hot path */
+static inline int field_is_zero(const field_elem_u *a, field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            return a->gf28 == 0;
+        case FIELD_ID_GF216:
+            return a->gf216 == 0;
+        case FIELD_ID_GF232:
+            return a->gf232.value == 0;
+        case FIELD_ID_GF264:
+            return a->gf264.value == 0;
+        case FIELD_ID_GF2128:
+            return a->gf2128.low == 0 && a->gf2128.high == 0;
+        case FIELD_ID_NMOD:
+            return a->nmod == 0;
+        case FIELD_ID_FQ:
+            return fq_nmod_is_zero(&a->fq, (const fq_nmod_ctx_struct *)ctx);
+    }
+    return 0;
+}
+
+/* Check if one - inline for hot path */
+static inline int field_is_one(const field_elem_u *a, field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            return a->gf28 == 1;
+        case FIELD_ID_GF216:
+            return a->gf216 == 1;
+        case FIELD_ID_GF232:
+            return a->gf232.value == 1;
+        case FIELD_ID_GF264:
+            return a->gf264.value == 1;
+        case FIELD_ID_GF2128:
+            return a->gf2128.low == 1 && a->gf2128.high == 0;
+        case FIELD_ID_NMOD:
+            return a->nmod == 1;
+        case FIELD_ID_FQ:
+            return fq_nmod_is_one(&a->fq, (const fq_nmod_ctx_struct *)ctx);
+    }
+    return 0;
+}
+
+/* Fast degree computation - inline for hot path */
+static inline slong unified_poly_degree_fast(const unified_poly_struct *poly) {
+    slong len = poly->length;
+    if (len == 0) return -1;
+    
+    /* Check for trailing zeros for ALL field types, not just GF(2^n) */
+    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&poly->ctx->ctx.nmod_ctx : 
+                   (void*)poly->ctx->ctx.fq_ctx;
+    
+    /* Remove trailing zeros */
+    while (len > 0 && field_is_zero(&poly->coeffs[len-1], poly->ctx->field_id, ctx_ptr)) {
+        len--;
+    }
+    
+    return len - 1;
+}
+/* Get coefficient pointer directly - inline for hot path */
+static inline field_elem_u* unified_poly_get_coeff_ptr(unified_poly_struct *poly, slong i) {
+    if (i < poly->length) {
+        return &poly->coeffs[i];
+    }
+    return NULL;
+}
+
+/* In-place polynomial addition - inline for hot path */
+static inline void unified_poly_add_inplace(unified_poly_struct *res, 
+                                           const unified_poly_struct *a,
+                                           field_ctx_t *ctx) {
+    slong min_len = FLINT_MIN(res->length, a->length);
+    
+    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&ctx->ctx.nmod_ctx : 
+                   (void*)ctx->ctx.fq_ctx;
+    
+    /* Add coefficients */
+    for (slong i = 0; i < min_len; i++) {
+        field_add(&res->coeffs[i], &res->coeffs[i], &a->coeffs[i], ctx->field_id, ctx_ptr);
+    }
+    
+    /* Handle remaining coefficients if a is longer */
+    if (a->length > res->length) {
+        unified_poly_fit_length(res, a->length);
+        for (slong i = res->length; i < a->length; i++) {
+            /* CRITICAL FIX: Use field_set_elem instead of direct assignment */
+            field_set_elem(&res->coeffs[i], &a->coeffs[i], ctx->field_id, ctx_ptr);
+        }
+        res->length = a->length;
+    }
+}
+/* Combined shift-left and add operation - inline for hot path */
+static inline void unified_poly_shift_left_add_inplace(unified_poly_struct *res,
+                                                      const unified_poly_struct *a,
+                                                      slong shift,
+                                                      field_ctx_t *ctx) {
+    if (shift == 0) {
+        unified_poly_add_inplace(res, a, ctx);
+        return;
+    }
+    
+    slong new_len = a->length + shift;
+    unified_poly_fit_length(res, new_len);
+    
+    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&ctx->ctx.nmod_ctx : 
+                   (void*)ctx->ctx.fq_ctx;
+    
+    /* Ensure we have zeros up to shift position */
+    if (res->length < shift) {
+        for (slong i = res->length; i < shift; i++) {
+            field_set_zero(&res->coeffs[i], ctx->field_id, ctx_ptr);
+        }
+    }
+    
+    /* Add shifted coefficients */
+    for (slong i = 0; i < a->length; i++) {
+        if (i + shift < res->length) {
+            field_add(&res->coeffs[i + shift], &res->coeffs[i + shift], 
+                     &a->coeffs[i], ctx->field_id, ctx_ptr);
+        } else {
+            /* CRITICAL FIX: Use field_set_elem instead of direct assignment */
+            field_set_elem(&res->coeffs[i + shift], &a->coeffs[i], ctx->field_id, ctx_ptr);
+        }
+    }
+    
+    if (new_len > res->length) {
+        res->length = new_len;
+    }
+}
+
+
+/* Global workspace */
+//__thread unified_workspace_t g_unified_workspace = {0};
+
+/* ============================================================================
+   FIELD OPERATIONS IMPLEMENTATION
+   ============================================================================ */
+
+void field_neg(field_elem_u *res, const field_elem_u *a,
+               field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+        case FIELD_ID_GF216:
+        case FIELD_ID_GF232:
+        case FIELD_ID_GF264:
+        case FIELD_ID_GF2128:
+            *res = *a;  /* In GF(2^n), -a = a */
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = nmod_neg(a->nmod, *(const nmod_t*)ctx);
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_neg(&res->fq, &a->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+void field_inv(field_elem_u *res, const field_elem_u *a,
+               field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            res->gf28 = gf28_inv(a->gf28);
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = gf216_inv(a->gf216);
+            break;
+        case FIELD_ID_GF232:
+            res->gf232 = gf232_inv(&a->gf232);
+            break;
+        case FIELD_ID_GF264:
+            res->gf264 = gf264_inv(&a->gf264);
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128 = gf2128_inv(&a->gf2128);
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = n_invmod(a->nmod, ((const nmod_t*)ctx)->n);
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_inv(&res->fq, &a->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            res->gf28 = 0;
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = 0;
+            break;
+        case FIELD_ID_GF232:
+            res->gf232 = gf232_zero();
+            break;
+        case FIELD_ID_GF264:
+            res->gf264 = gf264_zero();
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128 = gf2128_zero();
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = 0;
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_zero(&res->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            res->gf28 = 1;
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = 1;
+            break;
+        case FIELD_ID_GF232:
+            res->gf232 = gf232_one();
+            break;
+        case FIELD_ID_GF264:
+            res->gf264 = gf264_one();
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128 = gf2128_one();
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = 1;
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_one(&res->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+int field_equal(const field_elem_u *a, const field_elem_u *b, 
+                field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            return a->gf28 == b->gf28;
+        case FIELD_ID_GF216:
+            return a->gf216 == b->gf216;
+        case FIELD_ID_GF232:
+            return a->gf232.value == b->gf232.value;
+        case FIELD_ID_GF264:
+            return a->gf264.value == b->gf264.value;
+        case FIELD_ID_GF2128:
+            return a->gf2128.low == b->gf2128.low && a->gf2128.high == b->gf2128.high;
+        case FIELD_ID_NMOD:
+            return a->nmod == b->nmod;
+        case FIELD_ID_FQ:
+            return fq_nmod_equal(&a->fq, &b->fq, (const fq_nmod_ctx_struct *)ctx);
+    }
+    return 0;
+}
+
+void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            elem->gf28 = 0;
+            break;
+        case FIELD_ID_GF216:
+            elem->gf216 = 0;
+            break;
+        case FIELD_ID_GF232:
+            elem->gf232 = gf232_zero();
+            break;
+        case FIELD_ID_GF264:
+            elem->gf264 = gf264_zero();
+            break;
+        case FIELD_ID_GF2128:
+            elem->gf2128 = gf2128_zero();
+            break;
+        case FIELD_ID_NMOD:
+            elem->nmod = 0;
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_init(&elem->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
+    if (field_id == FIELD_ID_FQ) {
+        fq_nmod_clear(&elem->fq, (const fq_nmod_ctx_struct *)ctx);
+    }
+}
+
+void field_set_elem(field_elem_u *res, const field_elem_u *a,
+                    field_id_t field_id, const void *ctx) {
+    switch (field_id) {
+        case FIELD_ID_GF28:
+            res->gf28 = a->gf28;
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = a->gf216;
+            break;
+        case FIELD_ID_GF232:
+            res->gf232 = a->gf232;
+            break;
+        case FIELD_ID_GF264:
+            res->gf264 = a->gf264;
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128 = a->gf2128;
+            break;
+        case FIELD_ID_NMOD:
+            res->nmod = a->nmod;
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_set(&res->fq, &a->fq, (const fq_nmod_ctx_struct *)ctx);
+            break;
+    }
+}
+
+/* ============================================================================
+   CONTEXT INITIALIZATION
+   ============================================================================ */
+
+void field_ctx_init(field_ctx_t *ctx, const fq_nmod_ctx_t fq_ctx) {
+    slong degree = fq_nmod_ctx_degree(fq_ctx);
+    ulong prime = fq_nmod_ctx_prime(fq_ctx);
+    
+    /* Always store the fq_ctx for conversions */
+    ctx->ctx.fq_ctx = fq_ctx;
+    
+    if (degree == 1) {
+        /* Prime field */
+        ctx->field_id = FIELD_ID_NMOD;
+        nmod_init(&ctx->ctx.nmod_ctx, prime);
+        ctx->elem_size = sizeof(ulong);
+        ctx->description = "Prime field (nmod)";
+    } else if (prime == 2) {
+        switch (degree) {
+            case 8:
+                ctx->field_id = FIELD_ID_GF28;
+                ctx->elem_size = sizeof(uint8_t);
+                init_gf28_standard();
+                init_gf28_conversion(fq_ctx);
+                ctx->description = "GF(2^8) lookup tables";
+                break;
+            case 16:
+                ctx->field_id = FIELD_ID_GF216;
+                ctx->elem_size = sizeof(uint16_t);
+                init_gf216_standard();
+                init_gf216_conversion(fq_ctx);
+                ctx->description = "GF(2^16) tower field";
+                break;
+            case 32:
+                ctx->field_id = FIELD_ID_GF232;
+                ctx->elem_size = sizeof(gf232_t);
+                init_gf232();
+                init_gf232_conversion(fq_ctx);
+                ctx->description = "GF(2^32) PCLMUL";
+                break;
+            case 64:
+                ctx->field_id = FIELD_ID_GF264;
+                ctx->elem_size = sizeof(gf264_t);
+                init_gf264();
+                init_gf264_conversion(fq_ctx);
+                ctx->description = "GF(2^64) PCLMUL";
+                break;
+            case 128:
+                ctx->field_id = FIELD_ID_GF2128;
+                ctx->elem_size = sizeof(gf2128_t);
+                init_gf2128();
+                init_gf2128_conversion(fq_ctx);
+                ctx->description = "GF(2^128) PCLMUL";
+                break;
+            default:
+                goto general_case;
+        }
+    } else {
+general_case:
+        ctx->field_id = FIELD_ID_FQ;
+        ctx->elem_size = sizeof(fq_nmod_struct);
+        ctx->description = "General finite field";
+    }
+}
+
+/* ============================================================================
+   CONVERSION FUNCTIONS
+   ============================================================================ */
+
+void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem, 
+                          const field_ctx_t *ctx) {
+    switch (ctx->field_id) {
+        case FIELD_ID_NMOD:
+            res->nmod = nmod_poly_get_coeff_ui(elem, 0);
+            break;
+        case FIELD_ID_GF28:
+            res->gf28 = fq_nmod_to_gf28_elem(elem, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF216:
+            res->gf216 = fq_nmod_to_gf216_elem(elem, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF232:
+            res->gf232 = fq_nmod_to_gf232(elem, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF264:
+            res->gf264 = fq_nmod_to_gf264(elem, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF2128:
+            res->gf2128 = fq_nmod_to_gf2128(elem, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_FQ:
+            fq_nmod_init(&res->fq, ctx->ctx.fq_ctx);
+            fq_nmod_set(&res->fq, elem, ctx->ctx.fq_ctx);
+            break;
+    }
+}
+
+void field_elem_to_fq_nmod(fq_nmod_t res, const field_elem_u *elem,
+                          const field_ctx_t *ctx) {
+    switch (ctx->field_id) {
+        case FIELD_ID_NMOD:
+            fq_nmod_zero(res, ctx->ctx.fq_ctx);
+            nmod_poly_set_coeff_ui(res, 0, elem->nmod);
+            break;
+        case FIELD_ID_GF28:
+            gf28_elem_to_fq_nmod(res, elem->gf28, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF216:
+            gf216_elem_to_fq_nmod(res, elem->gf216, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF232:
+            gf232_to_fq_nmod(res, &elem->gf232, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF264:
+            gf264_to_fq_nmod(res, &elem->gf264, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_GF2128:
+            gf2128_to_fq_nmod(res, &elem->gf2128, ctx->ctx.fq_ctx);
+            break;
+        case FIELD_ID_FQ:
+           fq_nmod_set(res, &elem->fq, ctx->ctx.fq_ctx);
+            break;
+    }
+}
+
+/* ============================================================================
+   POLYNOMIAL OPERATIONS IMPLEMENTATION
+   ============================================================================ */
+
+void unified_poly_init(unified_poly_t poly, field_ctx_t *ctx) {
+    poly->coeffs = NULL;
+    poly->length = 0;
+    poly->alloc = 0;
+    poly->ctx = ctx;
+}
+
+void unified_poly_clear(unified_poly_t poly) {
+    if (poly->coeffs) {
+        if (poly->ctx->field_id == FIELD_ID_FQ) {
+            for (slong i = 0; i < poly->alloc; i++) {
+                field_clear_elem(&poly->coeffs[i], poly->ctx->field_id, 
+                               poly->ctx->ctx.fq_ctx);
+            }
+        }
+        free(poly->coeffs);
+        poly->coeffs = NULL;
+    }
+    poly->length = 0;
+    poly->alloc = 0;
+}
+
+void unified_poly_fit_length(unified_poly_t poly, slong len) {
+    if (len > poly->alloc) {
+        slong new_alloc = poly->alloc;
+        if (new_alloc == 0) new_alloc = 16;
+        while (new_alloc < len) new_alloc *= 2;
+        
+        /* For FIELD_ID_FQ, we need to be careful about initialization */
+        if (poly->ctx->field_id == FIELD_ID_FQ) {
+            /* Allocate new array */
+            field_elem_u *new_coeffs = (field_elem_u *)malloc(new_alloc * sizeof(field_elem_u));
+            
+            /* Copy existing coefficients */
+            for (slong i = 0; i < poly->length; i++) {
+                /* Initialize new location */
+                fq_nmod_init(&new_coeffs[i].fq, poly->ctx->ctx.fq_ctx);
+                /* Copy value */
+                fq_nmod_set(&new_coeffs[i].fq, &poly->coeffs[i].fq, poly->ctx->ctx.fq_ctx);
+            }
+            
+            /* Initialize remaining elements */
+            for (slong i = poly->length; i < new_alloc; i++) {
+                fq_nmod_init(&new_coeffs[i].fq, poly->ctx->ctx.fq_ctx);
+            }
+            
+            /* Clear old coefficients */
+            if (poly->coeffs) {
+                for (slong i = 0; i < poly->alloc; i++) {
+                    if (poly->ctx->field_id == FIELD_ID_FQ) {
+                        fq_nmod_clear(&poly->coeffs[i].fq, poly->ctx->ctx.fq_ctx);
+                    }
+                }
+                free(poly->coeffs);
+            }
+            
+            poly->coeffs = new_coeffs;
+        } else {
+            /* For other field types, use realloc */
+            field_elem_u *new_coeffs = (field_elem_u *)realloc(poly->coeffs, 
+                                                               new_alloc * sizeof(field_elem_u));
+            if (!new_coeffs) {
+                printf("Memory allocation failed in unified_poly_fit_length\n");
+                return;
+            }
+            poly->coeffs = new_coeffs;
+            
+            /* Initialize new elements */
+            void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
+                           (void*)&poly->ctx->ctx.nmod_ctx : 
+                           (void*)poly->ctx->ctx.fq_ctx;
+            
+            for (slong i = poly->alloc; i < new_alloc; i++) {
+                field_init_elem(&poly->coeffs[i], poly->ctx->field_id, ctx_ptr);
+            }
+        }
+        
+        poly->alloc = new_alloc;
+    }
+}
+/* Fixed normalization to actually update the length */
+void unified_poly_normalise(unified_poly_t poly) {
+    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&poly->ctx->ctx.nmod_ctx : 
+                   (void*)poly->ctx->ctx.fq_ctx;
+    
+    /* Remove all trailing zeros */
+    while (poly->length > 0 && 
+           field_is_zero(&poly->coeffs[poly->length - 1], poly->ctx->field_id, ctx_ptr)) {
+        poly->length--;
+    }
+}
+
+void unified_poly_zero(unified_poly_t poly) {
+    poly->length = 0;
+}
+
+int unified_poly_is_zero(const unified_poly_t poly) {
+    return poly->length == 0;
+}
+
+slong unified_poly_degree(const unified_poly_t poly) {
+    return poly->length - 1;
+}
+
+void unified_poly_set(unified_poly_t res, const unified_poly_t poly) {
+    if (res == poly) return;
+    
+    unified_poly_fit_length(res, poly->length);
+    res->length = poly->length;
+    
+    void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&res->ctx->ctx.nmod_ctx : 
+                   (void*)res->ctx->ctx.fq_ctx;
+    
+    /* CRITICAL FIX: Use field_set_elem for all copies */
+    for (slong i = 0; i < poly->length; i++) {
+        field_set_elem(&res->coeffs[i], &poly->coeffs[i], res->ctx->field_id, ctx_ptr);
+    }
+}
+void unified_poly_add(unified_poly_t res, const unified_poly_t a, const unified_poly_t b) {
+    slong max_len = FLINT_MAX(a->length, b->length);
+    slong min_len = FLINT_MIN(a->length, b->length);
+    
+    if (max_len == 0) {
+        unified_poly_zero(res);
+        return;
+    }
+    
+    unified_poly_fit_length(res, max_len);
+    
+    void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&res->ctx->ctx.nmod_ctx : 
+                   (void*)res->ctx->ctx.fq_ctx;
+    
+    /* Add common coefficients */
+    for (slong i = 0; i < min_len; i++) {
+        field_add(&res->coeffs[i], &a->coeffs[i], &b->coeffs[i], 
+                 res->ctx->field_id, ctx_ptr);
+    }
+    
+    /* Copy remaining coefficients */
+    if (a->length > b->length) {
+        for (slong i = min_len; i < a->length; i++) {
+            field_set_elem(&res->coeffs[i], &a->coeffs[i], res->ctx->field_id, ctx_ptr);
+        }
+        res->length = a->length;
+    } else if (b->length > a->length) {
+        for (slong i = min_len; i < b->length; i++) {
+            field_set_elem(&res->coeffs[i], &b->coeffs[i], res->ctx->field_id, ctx_ptr);
+        }
+        res->length = b->length;
+    } else {
+        res->length = min_len;
+    }
+    
+    unified_poly_normalise(res);
+}
+
+void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly, 
+                            const field_elem_u *c) {
+    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&poly->ctx->ctx.nmod_ctx : 
+                   (void*)poly->ctx->ctx.fq_ctx;
+    
+    if (field_is_zero(c, poly->ctx->field_id, ctx_ptr)) {
+        unified_poly_zero(res);
+        return;
+    }
+    
+    if (field_is_one(c, poly->ctx->field_id, ctx_ptr)) {
+        unified_poly_set(res, poly);
+        return;
+    }
+    
+    unified_poly_fit_length(res, poly->length);
+    res->length = poly->length;
+    
+    for (slong i = 0; i < poly->length; i++) {
+        field_mul(&res->coeffs[i], &poly->coeffs[i], c, poly->ctx->field_id, ctx_ptr);
+    }
+    
+    unified_poly_normalise(res);
+}
+
+void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_poly_t b) {
+    if (unified_poly_is_zero(a) || unified_poly_is_zero(b)) {
+        unified_poly_zero(res);
+        return;
+    }
+    
+    slong rlen = a->length + b->length - 1;
+    
+    /* Always use temporary for FIELD_ID_FQ to avoid aliasing issues */
+    if (res->ctx->field_id == FIELD_ID_FQ || res == a || res == b) {
+        unified_poly_struct temp;
+        unified_poly_init(&temp, res->ctx);
+        unified_poly_fit_length(&temp, rlen);
+        
+        void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
+                       (void*)&res->ctx->ctx.nmod_ctx : 
+                       (void*)res->ctx->ctx.fq_ctx;
+        
+        /* Initialize result coefficients to zero */
+        for (slong i = 0; i < rlen; i++) {
+            field_set_zero(&temp.coeffs[i], res->ctx->field_id, ctx_ptr);
+        }
+        
+        /* Multiply */
+        field_elem_u prod;
+        field_init_elem(&prod, res->ctx->field_id, ctx_ptr);
+        
+        for (slong i = 0; i < a->length; i++) {
+            for (slong j = 0; j < b->length; j++) {
+                field_mul(&prod, &a->coeffs[i], &b->coeffs[j], res->ctx->field_id, ctx_ptr);
+                field_add(&temp.coeffs[i + j], &temp.coeffs[i + j], &prod, 
+                         res->ctx->field_id, ctx_ptr);
+            }
+        }
+        
+        field_clear_elem(&prod, res->ctx->field_id, ctx_ptr);
+        
+        temp.length = rlen;
+        unified_poly_normalise(&temp);
+        
+        /* Copy result back */
+        unified_poly_set(res, &temp);
+        unified_poly_clear(&temp);
+    } else {
+        /* Original implementation for non-FQ fields */
+        unified_poly_fit_length(res, rlen);
+        
+        void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
+                       (void*)&res->ctx->ctx.nmod_ctx : 
+                       (void*)res->ctx->ctx.fq_ctx;
+        
+        /* Initialize result coefficients to zero */
+        for (slong i = 0; i < rlen; i++) {
+            field_set_zero(&res->coeffs[i], res->ctx->field_id, ctx_ptr);
+        }
+        
+        /* Multiply */
+        field_elem_u prod;
+        field_init_elem(&prod, res->ctx->field_id, ctx_ptr);
+        
+        for (slong i = 0; i < a->length; i++) {
+            for (slong j = 0; j < b->length; j++) {
+                field_mul(&prod, &a->coeffs[i], &b->coeffs[j], res->ctx->field_id, ctx_ptr);
+                field_add(&res->coeffs[i + j], &res->coeffs[i + j], &prod, 
+                         res->ctx->field_id, ctx_ptr);
+            }
+        }
+        
+        field_clear_elem(&prod, res->ctx->field_id, ctx_ptr);
+        
+        res->length = rlen;
+        unified_poly_normalise(res);
+    }
+}
+
+void unified_poly_get_coeff(field_elem_u *coeff, const unified_poly_t poly, slong i) {
+    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&poly->ctx->ctx.nmod_ctx : 
+                   (void*)poly->ctx->ctx.fq_ctx;
+    
+    if (i < poly->length) {
+        field_set_elem(coeff, &poly->coeffs[i], poly->ctx->field_id, ctx_ptr);
+    } else {
+        field_set_zero(coeff, poly->ctx->field_id, ctx_ptr);
+    }
+}
+
+void unified_poly_set_coeff(unified_poly_t poly, slong i, const field_elem_u *coeff) {
+    unified_poly_fit_length(poly, i + 1);
+    
+    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&poly->ctx->ctx.nmod_ctx : 
+                   (void*)poly->ctx->ctx.fq_ctx;
+    
+    if (i >= poly->length) {
+        /* Zero out intermediate coefficients */
+        for (slong j = poly->length; j < i; j++) {
+            field_set_zero(&poly->coeffs[j], poly->ctx->field_id, ctx_ptr);
+        }
+        poly->length = i + 1;
+    }
+    
+    field_set_elem(&poly->coeffs[i], coeff, poly->ctx->field_id, ctx_ptr);
+    
+    /* Update length if setting leading coefficient to zero */
+    if (i == poly->length - 1) {
+        unified_poly_normalise(poly);
+    }
+}
+
+void unified_poly_shift_left(unified_poly_t res, const unified_poly_t poly, slong n) {
+    if (n == 0) {
+        unified_poly_set(res, poly);
+        return;
+    }
+    
+    if (unified_poly_is_zero(poly)) {
+        unified_poly_zero(res);
+        return;
+    }
+    
+    slong new_len = poly->length + n;
+    unified_poly_fit_length(res, new_len);
+    
+    void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&res->ctx->ctx.nmod_ctx : 
+                   (void*)res->ctx->ctx.fq_ctx;
+    
+    /* Zero lower coefficients */
+    for (slong i = 0; i < n; i++) {
+        field_set_zero(&res->coeffs[i], res->ctx->field_id, ctx_ptr);
+    }
+    
+    /* CRITICAL FIX: Copy coefficients properly */
+    if (res == poly) {
+        /* In-place: shift from right to left */
+        for (slong i = new_len - 1; i >= n; i--) {
+            field_set_elem(&res->coeffs[i], &res->coeffs[i - n], res->ctx->field_id, ctx_ptr);
+        }
+    } else {
+        /* Copy shifted */
+        for (slong i = 0; i < poly->length; i++) {
+            field_set_elem(&res->coeffs[i + n], &poly->coeffs[i], res->ctx->field_id, ctx_ptr);
+        }
+    }
+    
+    res->length = new_len;
+}
+/* ============================================================================
+   CONVERSION FUNCTIONS
+   ============================================================================ */
+
+void fq_nmod_poly_to_unified(unified_poly_t res, const fq_nmod_poly_t poly,
+                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
+    slong len = fq_nmod_poly_length(poly, ctx);
+    
+    if (len == 0) {
+        unified_poly_zero(res);
+        return;
+    }
+    
+    unified_poly_fit_length(res, len);
+    res->length = len;
+    
+    for (slong i = 0; i < len; i++) {
+        fq_nmod_t coeff;
+        fq_nmod_init(coeff, ctx);
+        fq_nmod_poly_get_coeff(coeff, poly, i, ctx);
+        fq_nmod_to_field_elem(&res->coeffs[i], coeff, field_ctx);
+        fq_nmod_clear(coeff, ctx);
+    }
+    
+    unified_poly_normalise(res);
+}
+
+void unified_to_fq_nmod_poly(fq_nmod_poly_t res, const unified_poly_t poly,
+                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
+    fq_nmod_poly_zero(res, ctx);
+    
+    void *ctx_ptr = (field_ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&field_ctx->ctx.nmod_ctx : 
+                   (void*)field_ctx->ctx.fq_ctx;
+    
+    for (slong i = 0; i < poly->length; i++) {
+        if (!field_is_zero(&poly->coeffs[i], field_ctx->field_id, ctx_ptr)) {
+            fq_nmod_t coeff;
+            fq_nmod_init(coeff, ctx);
+            field_elem_to_fq_nmod(coeff, &poly->coeffs[i], field_ctx);
+            fq_nmod_poly_set_coeff(res, i, coeff, ctx);
+            fq_nmod_clear(coeff, ctx);
+        }
+    }
+}
+
+/* ============================================================================
+   MATRIX OPERATIONS IMPLEMENTATION
+   ============================================================================ */
+
+void unified_poly_mat_init(unified_poly_mat_t mat, slong rows, slong cols,
+                          field_ctx_t *ctx) {
+    mat->entries = NULL;
+    mat->rows = NULL;
+    mat->ctx = ctx;
+    
+    if (rows > 0 && cols > 0) {
+        mat->entries = (unified_poly_struct *)malloc(rows * cols * sizeof(unified_poly_struct));
+        mat->rows = (unified_poly_struct **)malloc(rows * sizeof(unified_poly_struct *));
+        
+        for (slong i = 0; i < rows * cols; i++) {
+            unified_poly_init(mat->entries + i, ctx);
+        }
+        
+        for (slong i = 0; i < rows; i++) {
+            mat->rows[i] = mat->entries + i * cols;
+        }
+    }
+    
+    mat->r = rows;
+    mat->c = cols;
+}
+
+void unified_poly_mat_clear(unified_poly_mat_t mat) {
+    if (mat->entries != NULL) {
+        for (slong i = 0; i < mat->r * mat->c; i++) {
+            unified_poly_clear(mat->entries + i);
+        }
+        free(mat->entries);
+        free(mat->rows);
+    }
+}
+
+unified_poly_struct *unified_poly_mat_entry(unified_poly_mat_t mat, slong i, slong j) {
+    return mat->rows[i] + j;
+}
+
+const unified_poly_struct *unified_poly_mat_entry_const(const unified_poly_mat_t mat, slong i, slong j) {
+    return mat->rows[i] + j;
+}
+
+void fq_nmod_poly_mat_to_unified(unified_poly_mat_t res, const fq_nmod_poly_mat_t mat,
+                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
+    for (slong i = 0; i < mat->r; i++) {
+        for (slong j = 0; j < mat->c; j++) {
+            fq_nmod_poly_to_unified(unified_poly_mat_entry(res, i, j),
+                                   fq_nmod_poly_mat_entry(mat, i, j),
+                                   ctx, field_ctx);
+        }
+    }
+}
+
+void unified_to_fq_nmod_poly_mat(fq_nmod_poly_mat_t res, const unified_poly_mat_t mat,
+                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
+    for (slong i = 0; i < mat->r; i++) {
+        for (slong j = 0; j < mat->c; j++) {
+            unified_to_fq_nmod_poly(fq_nmod_poly_mat_entry(res, i, j),
+                                   unified_poly_mat_entry_const(mat, i, j),
+                                   ctx, field_ctx);
+        }
+    }
+}
+
+/* Ensure workspace is initialized for the current field */
+void ensure_workspace_initialized(field_ctx_t *ctx) {
+    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&ctx->ctx.nmod_ctx : 
+                   (void*)ctx->ctx.fq_ctx;
+    
+    /* Check if workspace needs to be re-initialized */
+    if (g_unified_workspace.initialized) {
+        /* Check if field type or context changed */
+        if (g_unified_workspace.field_id != ctx->field_id ||
+            g_unified_workspace.field_ctx != ctx_ptr) {
+            /* Clear old workspace */
+            clear_workspace(&g_unified_workspace, ctx);
+        } else {
+            /* Workspace already initialized for this field */
+            return;
+        }
+    }
+    
+    /* Initialize workspace for current field */
+    g_unified_workspace.field_id = ctx->field_id;
+    g_unified_workspace.field_ctx = ctx_ptr;
+    
+    field_init_elem(&g_unified_workspace.lc1, ctx->field_id, ctx_ptr);
+    field_init_elem(&g_unified_workspace.lc2, ctx->field_id, ctx_ptr);
+    field_init_elem(&g_unified_workspace.cst, ctx->field_id, ctx_ptr);
+    field_init_elem(&g_unified_workspace.inv, ctx->field_id, ctx_ptr);
+    unified_poly_init(&g_unified_workspace.tmp, ctx);
+    unified_poly_init(&g_unified_workspace.tmp2, ctx);
+    
+    g_unified_workspace.initialized = 1;
+}
+/* ============================================================================
+   FLINT VERSION COMPATIBILITY
+   ============================================================================ */
+
+#if __FLINT_VERSION >= 3
+#define FLINT_RAND_INIT(state) flint_rand_init(state)
+#define FLINT_RAND_CLEAR(state) flint_rand_clear(state)
+#define FLINT_RAND_SEED(state, seed) flint_rand_set_seed(state, seed, seed + 1)
+#else
+#define FLINT_RAND_INIT(state) flint_randinit(state)
+#define FLINT_RAND_CLEAR(state) flint_randclear(state)
+#define FLINT_RAND_SEED(state, seed) flint_randseed(state, seed, seed)
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* FQ_UNIFIED_INTERFACE_H */
