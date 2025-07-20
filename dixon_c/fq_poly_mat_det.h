@@ -1,6 +1,6 @@
-/* fq_poly_mat_det_fixed.h - Fixed Matrix determinant with compile-time dispatch */
-#ifndef FQ_POLY_MAT_DET_FIXED_H
-#define FQ_POLY_MAT_DET_FIXED_H
+/* fq_poly_mat_det.h - Fixed Matrix determinant with compile-time dispatch */
+#ifndef FQ_POLY_MAT_DET_H
+#define FQ_POLY_MAT_DET_H
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,6 +12,8 @@
 #include <flint/nmod_poly.h>
 #include <flint/nmod_poly_mat.h>
 #include <flint/nmod_vec.h>
+#include <nmod_poly_mat_utils.h>
+#include <nmod_poly_mat_extra.h>
 
 /* Include specialized implementations */
 #include "gf2n_field.h"
@@ -377,6 +379,77 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
         return;
     }
 
+    /* Check if we're in a prime field (degree 1) */
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        printf("\n=== Prime Field Detected ===\n");
+        printf("Field: GF(%lu)\n", fq_nmod_ctx_prime(ctx));
+        printf("Using optimized nmod_poly_mat_det_iter\n");
+        
+        /* Convert to nmod_poly_mat and use the optimized prime field version */
+        nmod_poly_mat_t nmod_mat;
+        nmod_poly_t nmod_det;
+        
+        ulong p = fq_nmod_ctx_prime(ctx);
+        nmod_poly_mat_init(nmod_mat, mat->r, mat->c, p);
+        nmod_poly_init(nmod_det, p);
+        
+        /* Convert fq_nmod_poly_mat to nmod_poly_mat */
+        for (slong i = 0; i < mat->r; i++) {
+            for (slong j = 0; j < mat->c; j++) {
+                fq_nmod_poly_struct *src = fq_nmod_poly_mat_entry(mat, i, j);
+                nmod_poly_struct *dst = nmod_poly_mat_entry(nmod_mat, i, j);
+                
+                /* Convert each polynomial coefficient */
+                slong len = fq_nmod_poly_length(src, ctx);
+                nmod_poly_fit_length(dst, len);
+                
+                for (slong k = 0; k < len; k++) {
+                    fq_nmod_t coeff;
+                    fq_nmod_init(coeff, ctx);
+                    fq_nmod_poly_get_coeff(coeff, src, k, ctx);
+                    
+                    /* In prime field, fq_nmod element is just a polynomial of degree 0 */
+                    ulong val = nmod_poly_get_coeff_ui(coeff, 0);
+                    nmod_poly_set_coeff_ui(dst, k, val);
+                    
+                    fq_nmod_clear(coeff, ctx);
+                }
+                _nmod_poly_set_length(dst, len);
+                _nmod_poly_normalise(dst);
+            }
+        }
+        
+        /* Call the optimized nmod version */
+        clock_t nmod_start = clock();
+        nmod_poly_mat_det_iter(nmod_det, nmod_mat);
+        clock_t nmod_end = clock();
+        
+        /* Convert result back to fq_nmod_poly */
+        fq_nmod_poly_zero(det, ctx);
+        slong det_len = nmod_poly_length(nmod_det);
+        
+        for (slong i = 0; i < det_len; i++) {
+            ulong coeff_val = nmod_poly_get_coeff_ui(nmod_det, i);
+            if (coeff_val != 0) {
+                fq_nmod_t coeff;
+                fq_nmod_init(coeff, ctx);
+                nmod_poly_set_coeff_ui(coeff, 0, coeff_val);
+                fq_nmod_poly_set_coeff(det, i, coeff, ctx);
+                fq_nmod_clear(coeff, ctx);
+            }
+        }
+        
+        /* Cleanup */
+        nmod_poly_mat_clear(nmod_mat);
+        nmod_poly_clear(nmod_det);
+        
+        double nmod_time = ((double)(nmod_end - nmod_start)) / CLOCKS_PER_SEC;
+        printf("nmod_poly_mat_det_iter completed in %.2f seconds\n", nmod_time);
+        printf("Determinant degree: %ld\n", fq_nmod_poly_degree(det, ctx));
+        
+        return;
+    }
+    
     /* Initialize field context with compile-time dispatch */
     field_ctx_t field_ctx;
     field_ctx_init(&field_ctx, ctx);
