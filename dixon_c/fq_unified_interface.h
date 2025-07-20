@@ -1153,19 +1153,65 @@ void unified_to_fq_nmod_poly_mat(fq_nmod_poly_mat_t res, const unified_poly_mat_
     }
 }
 
+void cleanup_unified_workspace(void) {
+    if (g_unified_workspace.initialized) {
+        void *ctx_ptr = g_unified_workspace.field_ctx;
+        
+        if (ctx_ptr) {
+            field_clear_elem(&g_unified_workspace.lc1, g_unified_workspace.field_id, ctx_ptr);
+            field_clear_elem(&g_unified_workspace.lc2, g_unified_workspace.field_id, ctx_ptr);
+            field_clear_elem(&g_unified_workspace.cst, g_unified_workspace.field_id, ctx_ptr);
+            field_clear_elem(&g_unified_workspace.inv, g_unified_workspace.field_id, ctx_ptr);
+        }
+        
+        if (g_unified_workspace.tmp.coeffs) {
+            unified_poly_clear(&g_unified_workspace.tmp);
+        }
+        if (g_unified_workspace.tmp2.coeffs) {
+            unified_poly_clear(&g_unified_workspace.tmp2);
+        }
+        
+        g_unified_workspace.initialized = 0;
+        g_unified_workspace.field_id = 0;
+        g_unified_workspace.field_ctx = NULL;
+    }
+}
+
 /* Ensure workspace is initialized for the current field */
 void ensure_workspace_initialized(field_ctx_t *ctx) {
     void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
                    (void*)&ctx->ctx.nmod_ctx : 
                    (void*)ctx->ctx.fq_ctx;
     
-    /* Check if workspace needs to be re-initialized */
+    /* Always reinitialize if field context changes OR if it's FQ field */
+    /* For FQ fields, we should be more conservative about reusing workspace */
     if (g_unified_workspace.initialized) {
-        /* Check if field type or context changed */
-        if (g_unified_workspace.field_id != ctx->field_id ||
-            g_unified_workspace.field_ctx != ctx_ptr) {
+        int need_reinit = 0;
+        
+        /* Check if field type changed */
+        if (g_unified_workspace.field_id != ctx->field_id) {
+            need_reinit = 1;
+        }
+        /* For FQ fields, check if the field parameters match */
+        else if (ctx->field_id == FIELD_ID_FQ) {
+            /* Compare field degree and characteristic */
+            const fq_nmod_ctx_struct *old_ctx = (const fq_nmod_ctx_struct *)g_unified_workspace.field_ctx;
+            const fq_nmod_ctx_struct *new_ctx = (const fq_nmod_ctx_struct *)ctx_ptr;
+            
+            if (!old_ctx || !new_ctx || 
+                fq_nmod_ctx_degree(old_ctx) != fq_nmod_ctx_degree(new_ctx) ||
+                fq_nmod_ctx_prime(old_ctx) != fq_nmod_ctx_prime(new_ctx)) {
+                need_reinit = 1;
+            }
+        }
+        /* For other fields, check context pointer */
+        else if (g_unified_workspace.field_ctx != ctx_ptr) {
+            need_reinit = 1;
+        }
+        
+        if (need_reinit) {
             /* Clear old workspace */
-            clear_workspace(&g_unified_workspace, ctx);
+            cleanup_unified_workspace();
         } else {
             /* Workspace already initialized for this field */
             return;
@@ -1184,6 +1230,34 @@ void ensure_workspace_initialized(field_ctx_t *ctx) {
     unified_poly_init(&g_unified_workspace.tmp2, ctx);
     
     g_unified_workspace.initialized = 1;
+}
+
+/* Also add cleanup for conversion tables in gf2n_field.h */
+void reset_all_gf2n_conversions(void) {
+    /* Reset GF(2^8) conversion */
+    if (g_gf28_conversion) {
+        g_gf28_conversion->initialized = 0;
+    }
+    
+    /* Reset GF(2^16) conversion */
+    if (g_gf216_conversion) {
+        g_gf216_conversion->initialized = 0;
+    }
+    
+    /* Reset GF(2^32) conversion */
+    if (g_gf232_conversion) {
+        g_gf232_conversion->initialized = 0;
+    }
+    
+    /* Reset GF(2^64) conversion */
+    if (g_gf264_conversion) {
+        g_gf264_conversion->initialized = 0;
+    }
+    
+    /* Reset GF(2^128) conversion */
+    if (g_gf2128_conversion) {
+        g_gf2128_conversion->initialized = 0;
+    }
 }
 /* ============================================================================
    FLINT VERSION COMPATIBILITY
