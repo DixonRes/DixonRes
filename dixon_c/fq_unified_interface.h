@@ -1,1280 +1,1116 @@
-/* fq_unified_interface.h - Unified field operations header (declarations only) */
-#ifndef FQ_UNIFIED_INTERFACE_H
-#define FQ_UNIFIED_INTERFACE_H
+/*
+ * Optimized polynomial matrix determinant for small matrices with dense polynomials
+ * Focus on optimizing the polynomial operations themselves
+ * Enhanced with prime field optimization using nmod_mpoly
+ */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <flint/flint.h>
+#ifndef FQ_MPOLY_MAT_DET_OPTIMIZED_H
+#define FQ_MPOLY_MAT_DET_OPTIMIZED_H
+
+#include <omp.h>
+#include <flint/fq_nmod_mpoly.h>
 #include <flint/fq_nmod.h>
-#include <flint/nmod.h>
-#include "gf2n_field.h"
+#include <flint/fq_nmod_mat.h>
+#include <flint/fq_nmod_poly.h>
+#include <flint/nmod_mpoly.h>
+#include <time.h>
+#include <sys/time.h>
+#include <stdio.h>
+#include "fq_poly_mat_det.h"
 
-#ifdef __cplusplus
-extern "C" {
+// Configuration
+#define PARALLEL_THRESHOLD 5
+#define MAX_PARALLEL_DEPTH 2
+#define UNIVARIATE_THRESHOLD 3
+
+// Debug control
+#define DEBUG_FQ_DET 0
+
+#if DEBUG_FQ_DET
+#define DET_PRINT(fmt, ...) printf("[FQ_DET] " fmt, ##__VA_ARGS__)
+#else
+#define DET_PRINT(fmt, ...)
 #endif
 
-/* ============================================================================
-   UNIFIED FIELD ELEMENT TYPE
-   ============================================================================ */
-
-/* Field element type enumeration */
-typedef enum {
-    FIELD_ID_NMOD   = 0,  /* Prime field Z/pZ */
-    FIELD_ID_GF28   = 1,  /* GF(2^8) */
-    FIELD_ID_GF216  = 2,  /* GF(2^16) */
-    FIELD_ID_GF232  = 3,  /* GF(2^32) */
-    FIELD_ID_GF264  = 4,  /* GF(2^64) */
-    FIELD_ID_GF2128 = 5,  /* GF(2^128) */
-    FIELD_ID_FQ     = 6   /* General finite field */
-} field_id_t;
-
-/* Unified field element using union */
-typedef union {
-    ulong nmod;              /* For prime fields */
-    uint8_t gf28;            /* For GF(2^8) */
-    uint16_t gf216;          /* For GF(2^16) */
-    gf232_t gf232;           /* For GF(2^32) */
-    gf264_t gf264;           /* For GF(2^64) */
-    gf2128_t gf2128;         /* For GF(2^128) */
-    fq_nmod_struct fq;       /* For general fields */
-} field_elem_u;
-
-/* ============================================================================
-   FIELD CONTEXT STRUCTURE (LIGHTWEIGHT)
-   ============================================================================ */
+// ============= Timing Utilities =============
 
 typedef struct {
-    field_id_t field_id;
-    size_t elem_size;
+    double wall_time;
+    double cpu_time;
+} timing_info_t;
+
+static double get_wall_time() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec * 1e-6;
+}
+
+static double get_cpu_time() {
+    return ((double)clock()) / CLOCKS_PER_SEC;
+}
+
+static timing_info_t start_timing() {
+    timing_info_t t;
+    t.wall_time = get_wall_time();
+    t.cpu_time = get_cpu_time();
+    return t;
+}
+
+static timing_info_t end_timing(timing_info_t start) {
+    timing_info_t elapsed;
+    elapsed.wall_time = get_wall_time() - start.wall_time;
+    elapsed.cpu_time = get_cpu_time() - start.cpu_time;
+    return elapsed;
+}
+
+static void print_timing(const char* label, timing_info_t elapsed) {
+    DET_PRINT("%s: Wall time: %.6f s, CPU time: %.6f s", 
+              label, elapsed.wall_time, elapsed.cpu_time);
+    if (elapsed.wall_time > 0) {
+        DET_PRINT(" (CPU efficiency: %.1f%%)\n", 
+                  (elapsed.cpu_time / elapsed.wall_time) * 100.0);
+    } else {
+        DET_PRINT("\n");
+    }
+}
+
+// ============= Prime Field Detection =============
+
+static inline int is_prime_field(const fq_nmod_ctx_t ctx) {
+    return fq_nmod_ctx_degree(ctx) == 1;
+}
+
+// ============= Polynomial Operation Optimizations =============
+
+// Custom multiplication for dense polynomials
+static inline void poly_mul_dense_optimized(fq_nmod_mpoly_t c, 
+                                           const fq_nmod_mpoly_t a,
+                                           const fq_nmod_mpoly_t b,
+                                           const fq_nmod_mpoly_ctx_t ctx) {
+    slong alen = fq_nmod_mpoly_length(a, ctx);
+    slong blen = fq_nmod_mpoly_length(b, ctx);
     
-    /* Context data */
-    union {
-        nmod_t nmod_ctx;                    /* For prime fields */
-        const fq_nmod_ctx_struct *fq_ctx;   /* For general fields */
-    } ctx;
+    // For very dense polynomials, try different multiplication algorithms
+    if (alen > 100 && blen > 100) {
+        // Try Johnson's multiplication for dense polynomials
+        fq_nmod_mpoly_mul_johnson(c, a, b, ctx);
+    } else {
+        // Default multiplication
+        fq_nmod_mpoly_mul(c, a, b, ctx);
+    }
+}
+
+// ============= Prime Field Conversion Functions =============
+
+void fq_mvpoly_to_nmod_mpoly(nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
+                             nmod_mpoly_ctx_t mpoly_ctx) {
+    nmod_mpoly_zero(mpoly, mpoly_ctx);
     
-    /* Optimization info */
-    const char *description;
-} field_ctx_t;
-
-/* ============================================================================
-   UNIFIED POLYNOMIAL TYPE
-   ============================================================================ */
-
-typedef struct {
-    field_elem_u *coeffs;     /* Array of coefficients */
-    slong length;             /* Current length */
-    slong alloc;              /* Allocated size */
-    field_ctx_t *ctx;         /* Field context */
-} unified_poly_struct;
-
-typedef unified_poly_struct unified_poly_t[1];
-
-/* ============================================================================
-   POLYNOMIAL MATRIX TYPE
-   ============================================================================ */
-
-typedef struct {
-    unified_poly_struct *entries;
-    slong r, c;
-    unified_poly_struct **rows;
-    field_ctx_t *ctx;
-} unified_poly_mat_struct;
-
-typedef unified_poly_mat_struct unified_poly_mat_t[1];
-
-
-/* ============================================================================
-   FUNCTION DECLARATIONS - CRITICAL HOT PATH FUNCTIONS MARKED INLINE
-   ============================================================================ */
-
-/* Field operations - only the most critical ones are inline */
-static inline void field_mul(field_elem_u *res, const field_elem_u *a, const field_elem_u *b, 
-                            field_id_t field_id, const void *ctx);
-static inline void field_add(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
-                            field_id_t field_id, const void *ctx);
-static inline int field_is_zero(const field_elem_u *a, field_id_t field_id, const void *ctx);
-static inline int field_is_one(const field_elem_u *a, field_id_t field_id, const void *ctx);
-
-/* Other field operations - not inline to save compilation resources */
-void field_neg(field_elem_u *res, const field_elem_u *a, field_id_t field_id, const void *ctx);
-void field_inv(field_elem_u *res, const field_elem_u *a, field_id_t field_id, const void *ctx);
-void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx);
-void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx);
-int field_equal(const field_elem_u *a, const field_elem_u *b, field_id_t field_id, const void *ctx);
-void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx);
-void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx);
-void field_set_elem(field_elem_u *res, const field_elem_u *a, field_id_t field_id, const void *ctx);
-
-/* Context initialization */
-void field_ctx_init(field_ctx_t *ctx, const fq_nmod_ctx_t fq_ctx);
-
-/* Conversion functions */
-void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem, const field_ctx_t *ctx);
-void field_elem_to_fq_nmod(fq_nmod_t res, const field_elem_u *elem, const field_ctx_t *ctx);
-
-/* Polynomial operations */
-void unified_poly_init(unified_poly_t poly, field_ctx_t *ctx);
-void unified_poly_clear(unified_poly_t poly);
-void unified_poly_fit_length(unified_poly_t poly, slong len);
-void unified_poly_normalise(unified_poly_t poly);
-void unified_poly_zero(unified_poly_t poly);
-int unified_poly_is_zero(const unified_poly_t poly);
-slong unified_poly_degree(const unified_poly_t poly);
-void unified_poly_set(unified_poly_t res, const unified_poly_t poly);
-void unified_poly_add(unified_poly_t res, const unified_poly_t a, const unified_poly_t b);
-void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly, const field_elem_u *c);
-void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_poly_t b);
-void unified_poly_get_coeff(field_elem_u *coeff, const unified_poly_t poly, slong i);
-void unified_poly_set_coeff(unified_poly_t poly, slong i, const field_elem_u *coeff);
-void unified_poly_shift_left(unified_poly_t res, const unified_poly_t poly, slong n);
-
-/* Conversion functions */
-void fq_nmod_poly_to_unified(unified_poly_t res, const fq_nmod_poly_t poly,
-                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
-void unified_to_fq_nmod_poly(fq_nmod_poly_t res, const unified_poly_t poly,
-                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
-
-/* Matrix operations */
-void unified_poly_mat_init(unified_poly_mat_t mat, slong rows, slong cols, field_ctx_t *ctx);
-void unified_poly_mat_clear(unified_poly_mat_t mat);
-unified_poly_struct *unified_poly_mat_entry(unified_poly_mat_t mat, slong i, slong j);
-const unified_poly_struct *unified_poly_mat_entry_const(const unified_poly_mat_t mat, slong i, slong j);
-void fq_nmod_poly_mat_to_unified(unified_poly_mat_t res, const fq_nmod_poly_mat_t mat,
-                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
-void unified_to_fq_nmod_poly_mat(fq_nmod_poly_mat_t res, const unified_poly_mat_t mat,
-                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx);
-
-/* Workspace management */
-void ensure_workspace_initialized(field_ctx_t *ctx);
-
-/* Optimized operations for hot paths - these remain inline */
-static inline slong unified_poly_degree_fast(const unified_poly_struct *poly);
-static inline field_elem_u* unified_poly_get_coeff_ptr(unified_poly_struct *poly, slong i);
-static inline void unified_poly_add_inplace(unified_poly_struct *res, 
-                                           const unified_poly_struct *a,
-                                           field_ctx_t *ctx);
-static inline void unified_poly_shift_left_add_inplace(unified_poly_struct *res,
-                                                      const unified_poly_struct *a,
-                                                      slong shift,
-                                                      field_ctx_t *ctx);
-
-/* ============================================================================
-   WORKSPACE FOR HOT PATHS
-   ============================================================================ */
-
-typedef struct {
-    field_elem_u lc1, lc2, cst, inv;
-    unified_poly_struct tmp, tmp2;
-    field_id_t field_id;  // Track which field this workspace is for
-    void *field_ctx;      // Store the context pointer
-    int initialized;
-} unified_workspace_t;
-
-/* Per-thread workspace */
-static __thread unified_workspace_t g_unified_workspace = {0};
-/* Clear workspace when switching fields */
-static void clear_workspace(unified_workspace_t *ws, field_ctx_t *ctx) {
-    if (ws->initialized && ws->field_ctx) {
-        void *ctx_ptr = ws->field_ctx;
+    if (poly->nterms == 0) return;
+    
+    slong total_vars = poly->nvars + poly->npars;
+    
+    // Pre-allocate space for better performance
+    nmod_mpoly_fit_length(mpoly, poly->nterms, mpoly_ctx);
+    
+    for (slong i = 0; i < poly->nterms; i++) {
+        ulong *exps = (ulong*) flint_calloc(total_vars, sizeof(ulong));
         
-        field_clear_elem(&ws->lc1, ws->field_id, ctx_ptr);
-        field_clear_elem(&ws->lc2, ws->field_id, ctx_ptr);
-        field_clear_elem(&ws->cst, ws->field_id, ctx_ptr);
-        field_clear_elem(&ws->inv, ws->field_id, ctx_ptr);
-        unified_poly_clear(&ws->tmp);
-        unified_poly_clear(&ws->tmp2);
-        
-        ws->initialized = 0;
-        ws->field_id = 0;
-        ws->field_ctx = NULL;
-    }
-}
-
-/* ============================================================================
-   INLINE IMPLEMENTATIONS - ONLY THE MOST CRITICAL
-   ============================================================================ */
-
-/* Core multiplication - inline for hot path */
-static inline void field_mul(field_elem_u *res, const field_elem_u *a, const field_elem_u *b, 
-                            field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            res->gf28 = gf28_mul(a->gf28, b->gf28);
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = gf216_mul(a->gf216, b->gf216);
-            break;
-        case FIELD_ID_GF232:
-            res->gf232 = gf232_mul(&a->gf232, &b->gf232);
-            break;
-        case FIELD_ID_GF264:
-            res->gf264 = gf264_mul(&a->gf264, &b->gf264);
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128 = gf2128_mul(&a->gf2128, &b->gf2128);
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = nmod_mul(a->nmod, b->nmod, *(const nmod_t*)ctx);
-            break;
-        case FIELD_ID_FQ:
-            /* Ensure result is initialized before operation */
-            if (res != a && res != b) {
-                fq_nmod_init(&res->fq, (const fq_nmod_ctx_struct *)ctx);
+        if (poly->terms[i].var_exp && poly->nvars > 0) {
+            for (slong j = 0; j < poly->nvars; j++) {
+                exps[j] = (ulong)poly->terms[i].var_exp[j];
             }
-            fq_nmod_mul(&res->fq, &a->fq, &b->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-/* Core addition - inline for hot path */
-static inline void field_add(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
-                            field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            res->gf28 = a->gf28 ^ b->gf28;
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = a->gf216 ^ b->gf216;
-            break;
-        case FIELD_ID_GF232:
-            res->gf232.value = a->gf232.value ^ b->gf232.value;
-            break;
-        case FIELD_ID_GF264:
-            res->gf264.value = a->gf264.value ^ b->gf264.value;
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128.low = a->gf2128.low ^ b->gf2128.low;
-            res->gf2128.high = a->gf2128.high ^ b->gf2128.high;
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = nmod_add(a->nmod, b->nmod, *(const nmod_t*)ctx);
-            break;
-        case FIELD_ID_FQ:
-            /* Ensure result is initialized before operation */
-            if (res != a && res != b) {
-                fq_nmod_init(&res->fq, (const fq_nmod_ctx_struct *)ctx);
-            }
-            fq_nmod_add(&res->fq, &a->fq, &b->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-/* Check if zero - inline for hot path */
-static inline int field_is_zero(const field_elem_u *a, field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            return a->gf28 == 0;
-        case FIELD_ID_GF216:
-            return a->gf216 == 0;
-        case FIELD_ID_GF232:
-            return a->gf232.value == 0;
-        case FIELD_ID_GF264:
-            return a->gf264.value == 0;
-        case FIELD_ID_GF2128:
-            return a->gf2128.low == 0 && a->gf2128.high == 0;
-        case FIELD_ID_NMOD:
-            return a->nmod == 0;
-        case FIELD_ID_FQ:
-            return fq_nmod_is_zero(&a->fq, (const fq_nmod_ctx_struct *)ctx);
-    }
-    return 0;
-}
-
-/* Check if one - inline for hot path */
-static inline int field_is_one(const field_elem_u *a, field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            return a->gf28 == 1;
-        case FIELD_ID_GF216:
-            return a->gf216 == 1;
-        case FIELD_ID_GF232:
-            return a->gf232.value == 1;
-        case FIELD_ID_GF264:
-            return a->gf264.value == 1;
-        case FIELD_ID_GF2128:
-            return a->gf2128.low == 1 && a->gf2128.high == 0;
-        case FIELD_ID_NMOD:
-            return a->nmod == 1;
-        case FIELD_ID_FQ:
-            return fq_nmod_is_one(&a->fq, (const fq_nmod_ctx_struct *)ctx);
-    }
-    return 0;
-}
-
-/* Fast degree computation - inline for hot path */
-static inline slong unified_poly_degree_fast(const unified_poly_struct *poly) {
-    slong len = poly->length;
-    if (len == 0) return -1;
-    
-    /* Check for trailing zeros for ALL field types, not just GF(2^n) */
-    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&poly->ctx->ctx.nmod_ctx : 
-                   (void*)poly->ctx->ctx.fq_ctx;
-    
-    /* Remove trailing zeros */
-    while (len > 0 && field_is_zero(&poly->coeffs[len-1], poly->ctx->field_id, ctx_ptr)) {
-        len--;
-    }
-    
-    return len - 1;
-}
-/* Get coefficient pointer directly - inline for hot path */
-static inline field_elem_u* unified_poly_get_coeff_ptr(unified_poly_struct *poly, slong i) {
-    if (i < poly->length) {
-        return &poly->coeffs[i];
-    }
-    return NULL;
-}
-
-/* In-place polynomial addition - inline for hot path */
-static inline void unified_poly_add_inplace(unified_poly_struct *res, 
-                                           const unified_poly_struct *a,
-                                           field_ctx_t *ctx) {
-    slong min_len = FLINT_MIN(res->length, a->length);
-    
-    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&ctx->ctx.nmod_ctx : 
-                   (void*)ctx->ctx.fq_ctx;
-    
-    /* Add coefficients */
-    for (slong i = 0; i < min_len; i++) {
-        field_add(&res->coeffs[i], &res->coeffs[i], &a->coeffs[i], ctx->field_id, ctx_ptr);
-    }
-    
-    /* Handle remaining coefficients if a is longer */
-    if (a->length > res->length) {
-        unified_poly_fit_length(res, a->length);
-        for (slong i = res->length; i < a->length; i++) {
-            /* CRITICAL FIX: Use field_set_elem instead of direct assignment */
-            field_set_elem(&res->coeffs[i], &a->coeffs[i], ctx->field_id, ctx_ptr);
         }
-        res->length = a->length;
+        
+        if (poly->terms[i].par_exp && poly->npars > 0) {
+            for (slong j = 0; j < poly->npars; j++) {
+                exps[poly->nvars + j] = (ulong)poly->terms[i].par_exp[j];
+            }
+        }
+        
+        // For prime fields, extract the coefficient as ulong
+        ulong coeff_val = nmod_poly_get_coeff_ui(poly->terms[i].coeff, 0);
+        nmod_mpoly_push_term_ui_ui(mpoly, coeff_val, exps, mpoly_ctx);
+        flint_free(exps);
     }
+    
+    nmod_mpoly_sort_terms(mpoly, mpoly_ctx);
+    nmod_mpoly_combine_like_terms(mpoly, mpoly_ctx);
 }
-/* Combined shift-left and add operation - inline for hot path */
-static inline void unified_poly_shift_left_add_inplace(unified_poly_struct *res,
-                                                      const unified_poly_struct *a,
-                                                      slong shift,
-                                                      field_ctx_t *ctx) {
-    if (shift == 0) {
-        unified_poly_add_inplace(res, a, ctx);
+
+void nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *poly, const nmod_mpoly_t mpoly,
+                             slong nvars, slong npars, 
+                             nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx) {
+    fq_mvpoly_init(poly, nvars, npars, ctx);
+    
+    slong nterms = nmod_mpoly_length(mpoly, mpoly_ctx);
+    if (nterms == 0) return;
+    
+    slong total_vars = nvars + npars;
+    
+    poly->alloc = nterms;
+    poly->terms = (fq_monomial_t*) flint_realloc(poly->terms, poly->alloc * sizeof(fq_monomial_t));
+    poly->nterms = nterms;
+    
+    ulong *exp_buffer = (ulong*) flint_malloc(total_vars * sizeof(ulong));
+    
+    for (slong i = 0; i < nterms; i++) {
+        fq_nmod_init(poly->terms[i].coeff, ctx);
+        
+        // Get coefficient and convert to fq_nmod
+        ulong coeff_val = nmod_mpoly_get_term_coeff_ui(mpoly, i, mpoly_ctx);
+        fq_nmod_set_ui(poly->terms[i].coeff, coeff_val, ctx);
+        
+        nmod_mpoly_get_term_exp_ui(exp_buffer, mpoly, i, mpoly_ctx);
+        
+        if (nvars > 0) {
+            poly->terms[i].var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
+            for (slong j = 0; j < nvars; j++) {
+                poly->terms[i].var_exp[j] = (slong)exp_buffer[j];
+            }
+        } else {
+            poly->terms[i].var_exp = NULL;
+        }
+        
+        if (npars > 0) {
+            poly->terms[i].par_exp = (slong*) flint_calloc(npars, sizeof(slong));
+            for (slong j = 0; j < npars; j++) {
+                poly->terms[i].par_exp[j] = (slong)exp_buffer[nvars + j];
+            }
+        } else {
+            poly->terms[i].par_exp = NULL;
+        }
+    }
+    
+    flint_free(exp_buffer);
+}
+
+void fq_matrix_mvpoly_to_nmod_mpoly(nmod_mpoly_t **mpoly_matrix, 
+                                    fq_mvpoly_t **mvpoly_matrix, 
+                                    slong size, 
+                                    nmod_mpoly_ctx_t mpoly_ctx) {
+    DET_PRINT("Converting %ld x %ld matrix to nmod_mpoly\n", size, size);
+    
+    timing_info_t start = start_timing();
+    
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            nmod_mpoly_init(mpoly_matrix[i][j], mpoly_ctx);
+            fq_mvpoly_to_nmod_mpoly(mpoly_matrix[i][j], &mvpoly_matrix[i][j], mpoly_ctx);
+        }
+    }
+    
+    timing_info_t elapsed = end_timing(start);
+    print_timing("Matrix conversion to nmod_mpoly", elapsed);
+}
+
+// ============= Prime Field Determinant Computation =============
+
+// Hand-optimized 3x3 determinant for nmod_mpoly
+static void compute_det_3x3_nmod_optimized(nmod_mpoly_t det, 
+                                          nmod_mpoly_t **m,
+                                          nmod_mpoly_ctx_t ctx) {
+    nmod_mpoly_t t1, t2, t3, t4, t5, t6, sum;
+    
+    // Initialize temporaries
+    nmod_mpoly_init(t1, ctx);
+    nmod_mpoly_init(t2, ctx);
+    nmod_mpoly_init(t3, ctx);
+    nmod_mpoly_init(t4, ctx);
+    nmod_mpoly_init(t5, ctx);
+    nmod_mpoly_init(t6, ctx);
+    nmod_mpoly_init(sum, ctx);
+    
+    // Compute 6 products in parallel if beneficial
+    #pragma omp parallel sections if(omp_get_max_threads() > 2)
+    {
+        #pragma omp section
+        {
+            nmod_mpoly_mul_array(t1, m[1][1], m[2][2], ctx);
+            nmod_mpoly_mul_array(t1, m[0][0], t1, ctx);
+        }
+        #pragma omp section
+        {
+            nmod_mpoly_mul_array(t2, m[1][2], m[2][0], ctx);
+            nmod_mpoly_mul_array(t2, m[0][1], t2, ctx);
+        }
+        #pragma omp section
+        {
+            nmod_mpoly_mul_array(t3, m[1][0], m[2][1], ctx);
+            nmod_mpoly_mul_array(t3, m[0][2], t3, ctx);
+        }
+        #pragma omp section
+        {
+            nmod_mpoly_mul_array(t4, m[1][0], m[2][2], ctx);
+            nmod_mpoly_mul_array(t4, m[0][1], t4, ctx);
+        }
+        #pragma omp section
+        {
+            nmod_mpoly_mul_array(t5, m[1][1], m[2][0], ctx);
+            nmod_mpoly_mul_array(t5, m[0][2], t5, ctx);
+        }
+        #pragma omp section
+        {
+            nmod_mpoly_mul_array(t6, m[1][2], m[2][1], ctx);
+            nmod_mpoly_mul_array(t6, m[0][0], t6, ctx);
+        }
+    }
+    
+    // Sum with signs
+    nmod_mpoly_add(sum, t1, t2, ctx);
+    nmod_mpoly_add(sum, sum, t3, ctx);
+    nmod_mpoly_sub(sum, sum, t4, ctx);
+    nmod_mpoly_sub(sum, sum, t5, ctx);
+    nmod_mpoly_sub(det, sum, t6, ctx);
+    
+    // Cleanup
+    nmod_mpoly_clear(t1, ctx);
+    nmod_mpoly_clear(t2, ctx);
+    nmod_mpoly_clear(t3, ctx);
+    nmod_mpoly_clear(t4, ctx);
+    nmod_mpoly_clear(t5, ctx);
+    nmod_mpoly_clear(t6, ctx);
+    nmod_mpoly_clear(sum, ctx);
+}
+
+// Recursive determinant for nmod_mpoly
+void compute_nmod_mpoly_det_recursive(nmod_mpoly_t det_result, 
+                                     nmod_mpoly_t **mpoly_matrix, 
+                                     slong size, 
+                                     nmod_mpoly_ctx_t mpoly_ctx) {
+    if (size <= 0) {
+        nmod_mpoly_one(det_result, mpoly_ctx);
         return;
     }
     
-    slong new_len = a->length + shift;
-    unified_poly_fit_length(res, new_len);
-    
-    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&ctx->ctx.nmod_ctx : 
-                   (void*)ctx->ctx.fq_ctx;
-    
-    /* Ensure we have zeros up to shift position */
-    if (res->length < shift) {
-        for (slong i = res->length; i < shift; i++) {
-            field_set_zero(&res->coeffs[i], ctx->field_id, ctx_ptr);
-        }
+    if (size == 1) {
+        nmod_mpoly_set(det_result, mpoly_matrix[0][0], mpoly_ctx);
+        return;
     }
     
-    /* Add shifted coefficients */
-    for (slong i = 0; i < a->length; i++) {
-        if (i + shift < res->length) {
-            field_add(&res->coeffs[i + shift], &res->coeffs[i + shift], 
-                     &a->coeffs[i], ctx->field_id, ctx_ptr);
-        } else {
-            /* CRITICAL FIX: Use field_set_elem instead of direct assignment */
-            field_set_elem(&res->coeffs[i + shift], &a->coeffs[i], ctx->field_id, ctx_ptr);
-        }
-    }
-    
-    if (new_len > res->length) {
-        res->length = new_len;
-    }
-}
-
-
-/* Global workspace */
-//__thread unified_workspace_t g_unified_workspace = {0};
-
-/* ============================================================================
-   FIELD OPERATIONS IMPLEMENTATION
-   ============================================================================ */
-
-void field_neg(field_elem_u *res, const field_elem_u *a,
-               field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-        case FIELD_ID_GF216:
-        case FIELD_ID_GF232:
-        case FIELD_ID_GF264:
-        case FIELD_ID_GF2128:
-            *res = *a;  /* In GF(2^n), -a = a */
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = nmod_neg(a->nmod, *(const nmod_t*)ctx);
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_neg(&res->fq, &a->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-void field_inv(field_elem_u *res, const field_elem_u *a,
-               field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            res->gf28 = gf28_inv(a->gf28);
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = gf216_inv(a->gf216);
-            break;
-        case FIELD_ID_GF232:
-            res->gf232 = gf232_inv(&a->gf232);
-            break;
-        case FIELD_ID_GF264:
-            res->gf264 = gf264_inv(&a->gf264);
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128 = gf2128_inv(&a->gf2128);
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = n_invmod(a->nmod, ((const nmod_t*)ctx)->n);
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_inv(&res->fq, &a->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            res->gf28 = 0;
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = 0;
-            break;
-        case FIELD_ID_GF232:
-            res->gf232 = gf232_zero();
-            break;
-        case FIELD_ID_GF264:
-            res->gf264 = gf264_zero();
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128 = gf2128_zero();
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = 0;
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_zero(&res->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            res->gf28 = 1;
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = 1;
-            break;
-        case FIELD_ID_GF232:
-            res->gf232 = gf232_one();
-            break;
-        case FIELD_ID_GF264:
-            res->gf264 = gf264_one();
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128 = gf2128_one();
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = 1;
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_one(&res->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-int field_equal(const field_elem_u *a, const field_elem_u *b, 
-                field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            return a->gf28 == b->gf28;
-        case FIELD_ID_GF216:
-            return a->gf216 == b->gf216;
-        case FIELD_ID_GF232:
-            return a->gf232.value == b->gf232.value;
-        case FIELD_ID_GF264:
-            return a->gf264.value == b->gf264.value;
-        case FIELD_ID_GF2128:
-            return a->gf2128.low == b->gf2128.low && a->gf2128.high == b->gf2128.high;
-        case FIELD_ID_NMOD:
-            return a->nmod == b->nmod;
-        case FIELD_ID_FQ:
-            return fq_nmod_equal(&a->fq, &b->fq, (const fq_nmod_ctx_struct *)ctx);
-    }
-    return 0;
-}
-
-void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            elem->gf28 = 0;
-            break;
-        case FIELD_ID_GF216:
-            elem->gf216 = 0;
-            break;
-        case FIELD_ID_GF232:
-            elem->gf232 = gf232_zero();
-            break;
-        case FIELD_ID_GF264:
-            elem->gf264 = gf264_zero();
-            break;
-        case FIELD_ID_GF2128:
-            elem->gf2128 = gf2128_zero();
-            break;
-        case FIELD_ID_NMOD:
-            elem->nmod = 0;
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_init(&elem->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
-    if (field_id == FIELD_ID_FQ) {
-        fq_nmod_clear(&elem->fq, (const fq_nmod_ctx_struct *)ctx);
-    }
-}
-
-void field_set_elem(field_elem_u *res, const field_elem_u *a,
-                    field_id_t field_id, const void *ctx) {
-    switch (field_id) {
-        case FIELD_ID_GF28:
-            res->gf28 = a->gf28;
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = a->gf216;
-            break;
-        case FIELD_ID_GF232:
-            res->gf232 = a->gf232;
-            break;
-        case FIELD_ID_GF264:
-            res->gf264 = a->gf264;
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128 = a->gf2128;
-            break;
-        case FIELD_ID_NMOD:
-            res->nmod = a->nmod;
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_set(&res->fq, &a->fq, (const fq_nmod_ctx_struct *)ctx);
-            break;
-    }
-}
-
-/* ============================================================================
-   CONTEXT INITIALIZATION
-   ============================================================================ */
-
-void field_ctx_init(field_ctx_t *ctx, const fq_nmod_ctx_t fq_ctx) {
-    slong degree = fq_nmod_ctx_degree(fq_ctx);
-    ulong prime = fq_nmod_ctx_prime(fq_ctx);
-    
-    /* Always store the fq_ctx for conversions */
-    ctx->ctx.fq_ctx = fq_ctx;
-    
-    if (degree == 1) {
-        /* Prime field */
-        ctx->field_id = FIELD_ID_NMOD;
-        nmod_init(&ctx->ctx.nmod_ctx, prime);
-        ctx->elem_size = sizeof(ulong);
-        ctx->description = "Prime field (nmod)";
-    } else if (prime == 2) {
-        switch (degree) {
-            case 8:
-                ctx->field_id = FIELD_ID_GF28;
-                ctx->elem_size = sizeof(uint8_t);
-                init_gf28_standard();
-                init_gf28_conversion(fq_ctx);
-                ctx->description = "GF(2^8) lookup tables";
-                break;
-            case 16:
-                ctx->field_id = FIELD_ID_GF216;
-                ctx->elem_size = sizeof(uint16_t);
-                init_gf216_standard();
-                init_gf216_conversion(fq_ctx);
-                ctx->description = "GF(2^16) tower field";
-                break;
-            case 32:
-                ctx->field_id = FIELD_ID_GF232;
-                ctx->elem_size = sizeof(gf232_t);
-                init_gf232();
-                init_gf232_conversion(fq_ctx);
-                ctx->description = "GF(2^32) PCLMUL";
-                break;
-            case 64:
-                ctx->field_id = FIELD_ID_GF264;
-                ctx->elem_size = sizeof(gf264_t);
-                init_gf264();
-                init_gf264_conversion(fq_ctx);
-                ctx->description = "GF(2^64) PCLMUL";
-                break;
-            case 128:
-                ctx->field_id = FIELD_ID_GF2128;
-                ctx->elem_size = sizeof(gf2128_t);
-                init_gf2128();
-                init_gf2128_conversion(fq_ctx);
-                ctx->description = "GF(2^128) PCLMUL";
-                break;
-            default:
-                goto general_case;
-        }
-    } else {
-general_case:
-        ctx->field_id = FIELD_ID_FQ;
-        ctx->elem_size = sizeof(fq_nmod_struct);
-        ctx->description = "General finite field";
-    }
-}
-
-/* ============================================================================
-   CONVERSION FUNCTIONS
-   ============================================================================ */
-
-void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem, 
-                          const field_ctx_t *ctx) {
-    switch (ctx->field_id) {
-        case FIELD_ID_NMOD:
-            res->nmod = nmod_poly_get_coeff_ui(elem, 0);
-            break;
-        case FIELD_ID_GF28:
-            res->gf28 = fq_nmod_to_gf28_elem(elem, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF216:
-            res->gf216 = fq_nmod_to_gf216_elem(elem, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF232:
-            res->gf232 = fq_nmod_to_gf232(elem, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF264:
-            res->gf264 = fq_nmod_to_gf264(elem, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF2128:
-            res->gf2128 = fq_nmod_to_gf2128(elem, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_FQ:
-            fq_nmod_init(&res->fq, ctx->ctx.fq_ctx);
-            fq_nmod_set(&res->fq, elem, ctx->ctx.fq_ctx);
-            break;
-    }
-}
-
-void field_elem_to_fq_nmod(fq_nmod_t res, const field_elem_u *elem,
-                          const field_ctx_t *ctx) {
-    switch (ctx->field_id) {
-        case FIELD_ID_NMOD:
-            fq_nmod_zero(res, ctx->ctx.fq_ctx);
-            nmod_poly_set_coeff_ui(res, 0, elem->nmod);
-            break;
-        case FIELD_ID_GF28:
-            gf28_elem_to_fq_nmod(res, elem->gf28, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF216:
-            gf216_elem_to_fq_nmod(res, elem->gf216, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF232:
-            gf232_to_fq_nmod(res, &elem->gf232, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF264:
-            gf264_to_fq_nmod(res, &elem->gf264, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_GF2128:
-            gf2128_to_fq_nmod(res, &elem->gf2128, ctx->ctx.fq_ctx);
-            break;
-        case FIELD_ID_FQ:
-           fq_nmod_set(res, &elem->fq, ctx->ctx.fq_ctx);
-            break;
-    }
-}
-
-/* ============================================================================
-   POLYNOMIAL OPERATIONS IMPLEMENTATION
-   ============================================================================ */
-
-void unified_poly_init(unified_poly_t poly, field_ctx_t *ctx) {
-    poly->coeffs = NULL;
-    poly->length = 0;
-    poly->alloc = 0;
-    poly->ctx = ctx;
-}
-
-void unified_poly_clear(unified_poly_t poly) {
-    if (poly->coeffs) {
-        if (poly->ctx->field_id == FIELD_ID_FQ) {
-            for (slong i = 0; i < poly->alloc; i++) {
-                field_clear_elem(&poly->coeffs[i], poly->ctx->field_id, 
-                               poly->ctx->ctx.fq_ctx);
-            }
-        }
-        free(poly->coeffs);
-        poly->coeffs = NULL;
-    }
-    poly->length = 0;
-    poly->alloc = 0;
-}
-
-void unified_poly_fit_length(unified_poly_t poly, slong len) {
-    if (len > poly->alloc) {
-        slong new_alloc = poly->alloc;
-        if (new_alloc == 0) new_alloc = 16;
-        while (new_alloc < len) new_alloc *= 2;
+    if (size == 2) {
+        nmod_mpoly_t ad, bc;
+        nmod_mpoly_init(ad, mpoly_ctx);
+        nmod_mpoly_init(bc, mpoly_ctx);
         
-        /* For FIELD_ID_FQ, we need to be careful about initialization */
-        if (poly->ctx->field_id == FIELD_ID_FQ) {
-            /* Allocate new array */
-            field_elem_u *new_coeffs = (field_elem_u *)malloc(new_alloc * sizeof(field_elem_u));
-            
-            /* Copy existing coefficients */
-            for (slong i = 0; i < poly->length; i++) {
-                /* Initialize new location */
-                fq_nmod_init(&new_coeffs[i].fq, poly->ctx->ctx.fq_ctx);
-                /* Copy value */
-                fq_nmod_set(&new_coeffs[i].fq, &poly->coeffs[i].fq, poly->ctx->ctx.fq_ctx);
+        nmod_mpoly_mul_array(ad, mpoly_matrix[0][0], mpoly_matrix[1][1], mpoly_ctx);
+        nmod_mpoly_mul_array(bc, mpoly_matrix[0][1], mpoly_matrix[1][0], mpoly_ctx);
+        nmod_mpoly_sub(det_result, ad, bc, mpoly_ctx);
+        
+        nmod_mpoly_clear(ad, mpoly_ctx);
+        nmod_mpoly_clear(bc, mpoly_ctx);
+        return;
+    }
+    
+    if (size == 3) {
+        compute_det_3x3_nmod_optimized(det_result, mpoly_matrix, mpoly_ctx);
+        return;
+    }
+    
+    // General case: Laplace expansion
+    nmod_mpoly_zero(det_result, mpoly_ctx);
+    
+    nmod_mpoly_t temp_result, cofactor, subdet;
+    nmod_mpoly_init(temp_result, mpoly_ctx);
+    nmod_mpoly_init(cofactor, mpoly_ctx);
+    nmod_mpoly_init(subdet, mpoly_ctx);
+    
+    for (slong col = 0; col < size; col++) {
+        if (nmod_mpoly_is_zero(mpoly_matrix[0][col], mpoly_ctx)) {
+            continue;
+        }
+        
+        // Create submatrix
+        nmod_mpoly_t **submatrix = (nmod_mpoly_t**) flint_malloc((size-1) * sizeof(nmod_mpoly_t*));
+        for (slong i = 0; i < size-1; i++) {
+            submatrix[i] = (nmod_mpoly_t*) flint_malloc((size-1) * sizeof(nmod_mpoly_t));
+            for (slong j = 0; j < size-1; j++) {
+                nmod_mpoly_init(submatrix[i][j], mpoly_ctx);
             }
-            
-            /* Initialize remaining elements */
-            for (slong i = poly->length; i < new_alloc; i++) {
-                fq_nmod_init(&new_coeffs[i].fq, poly->ctx->ctx.fq_ctx);
-            }
-            
-            /* Clear old coefficients */
-            if (poly->coeffs) {
-                for (slong i = 0; i < poly->alloc; i++) {
-                    if (poly->ctx->field_id == FIELD_ID_FQ) {
-                        fq_nmod_clear(&poly->coeffs[i].fq, poly->ctx->ctx.fq_ctx);
-                    }
+        }
+        
+        // Fill submatrix
+        for (slong i = 1; i < size; i++) {
+            slong sub_j = 0;
+            for (slong j = 0; j < size; j++) {
+                if (j != col) {
+                    nmod_mpoly_set(submatrix[i-1][sub_j], mpoly_matrix[i][j], mpoly_ctx);
+                    sub_j++;
                 }
-                free(poly->coeffs);
             }
-            
-            poly->coeffs = new_coeffs;
+        }
+        
+        // Recursive computation
+        compute_nmod_mpoly_det_recursive(subdet, submatrix, size-1, mpoly_ctx);
+        
+        // Compute cofactor
+        nmod_mpoly_mul_array(cofactor, mpoly_matrix[0][col], subdet, mpoly_ctx);
+        
+        // Add/subtract to result
+        if (col % 2 == 0) {
+            nmod_mpoly_add(temp_result, det_result, cofactor, mpoly_ctx);
         } else {
-            /* For other field types, use realloc */
-            field_elem_u *new_coeffs = (field_elem_u *)realloc(poly->coeffs, 
-                                                               new_alloc * sizeof(field_elem_u));
-            if (!new_coeffs) {
-                printf("Memory allocation failed in unified_poly_fit_length\n");
-                return;
+            nmod_mpoly_sub(temp_result, det_result, cofactor, mpoly_ctx);
+        }
+        nmod_mpoly_set(det_result, temp_result, mpoly_ctx);
+        
+        // Cleanup submatrix
+        for (slong i = 0; i < size-1; i++) {
+            for (slong j = 0; j < size-1; j++) {
+                nmod_mpoly_clear(submatrix[i][j], mpoly_ctx);
             }
-            poly->coeffs = new_coeffs;
+            flint_free(submatrix[i]);
+        }
+        flint_free(submatrix);
+    }
+    
+    nmod_mpoly_clear(temp_result, mpoly_ctx);
+    nmod_mpoly_clear(cofactor, mpoly_ctx);
+    nmod_mpoly_clear(subdet, mpoly_ctx);
+}
+
+// Parallel determinant computation for nmod_mpoly
+void compute_nmod_mpoly_det_parallel_optimized(nmod_mpoly_t det_result, 
+                                              nmod_mpoly_t **mpoly_matrix, 
+                                              slong size, 
+                                              nmod_mpoly_ctx_t mpoly_ctx,
+                                              slong depth) {
+    if (size < PARALLEL_THRESHOLD || depth >= MAX_PARALLEL_DEPTH) {
+        compute_nmod_mpoly_det_recursive(det_result, mpoly_matrix, size, mpoly_ctx);
+        return;
+    }
+    
+    DET_PRINT("Parallel nmod computation for %ld x %ld matrix (depth %ld)\n", size, size, depth);
+    
+    if (size <= 3) {
+        compute_nmod_mpoly_det_recursive(det_result, mpoly_matrix, size, mpoly_ctx);
+        return;
+    }
+    
+    nmod_mpoly_zero(det_result, mpoly_ctx);
+    
+    // Count non-zero entries in first row
+    slong nonzero_count = 0;
+    for (slong col = 0; col < size; col++) {
+        if (!nmod_mpoly_is_zero(mpoly_matrix[0][col], mpoly_ctx)) {
+            nonzero_count++;
+        }
+    }
+    
+    if (nonzero_count < 2) {
+        compute_nmod_mpoly_det_recursive(det_result, mpoly_matrix, size, mpoly_ctx);
+        return;
+    }
+    
+    // Allocate space for partial results
+    nmod_mpoly_t *partial_results = (nmod_mpoly_t*) flint_malloc(size * sizeof(nmod_mpoly_t));
+    for (slong i = 0; i < size; i++) {
+        nmod_mpoly_init(partial_results[i], mpoly_ctx);
+        nmod_mpoly_zero(partial_results[i], mpoly_ctx);
+    }
+    
+    // Parallel computation of cofactors
+    #pragma omp parallel for schedule(dynamic, 1) if(nonzero_count >= 3)
+    for (slong col = 0; col < size; col++) {
+        if (nmod_mpoly_is_zero(mpoly_matrix[0][col], mpoly_ctx)) {
+            continue;
+        }
+        
+        nmod_mpoly_t cofactor, subdet;
+        nmod_mpoly_init(cofactor, mpoly_ctx);
+        nmod_mpoly_init(subdet, mpoly_ctx);
+        
+        // Create submatrix
+        nmod_mpoly_t **submatrix = (nmod_mpoly_t**) flint_malloc((size-1) * sizeof(nmod_mpoly_t*));
+        for (slong i = 0; i < size-1; i++) {
+            submatrix[i] = (nmod_mpoly_t*) flint_malloc((size-1) * sizeof(nmod_mpoly_t));
+            for (slong j = 0; j < size-1; j++) {
+                nmod_mpoly_init(submatrix[i][j], mpoly_ctx);
+            }
+        }
+        
+        // Fill submatrix
+        for (slong i = 1; i < size; i++) {
+            slong sub_j = 0;
+            for (slong j = 0; j < size; j++) {
+                if (j != col) {
+                    nmod_mpoly_set(submatrix[i-1][sub_j], mpoly_matrix[i][j], mpoly_ctx);
+                    sub_j++;
+                }
+            }
+        }
+        
+        // Recursive call
+        if (size-1 >= PARALLEL_THRESHOLD && depth < MAX_PARALLEL_DEPTH) {
+            compute_nmod_mpoly_det_parallel_optimized(subdet, submatrix, size-1, mpoly_ctx, depth+1);
+        } else {
+            compute_nmod_mpoly_det_recursive(subdet, submatrix, size-1, mpoly_ctx);
+        }
+        
+        // Compute cofactor
+        nmod_mpoly_mul_array_threaded(cofactor, mpoly_matrix[0][col], subdet, mpoly_ctx);
+        
+        // Store with sign
+        if (col % 2 == 0) {
+            nmod_mpoly_set(partial_results[col], cofactor, mpoly_ctx);
+        } else {
+            nmod_mpoly_neg(partial_results[col], cofactor, mpoly_ctx);
+        }
+        
+        // Cleanup
+        for (slong i = 0; i < size-1; i++) {
+            for (slong j = 0; j < size-1; j++) {
+                nmod_mpoly_clear(submatrix[i][j], mpoly_ctx);
+            }
+            flint_free(submatrix[i]);
+        }
+        flint_free(submatrix);
+        
+        nmod_mpoly_clear(cofactor, mpoly_ctx);
+        nmod_mpoly_clear(subdet, mpoly_ctx);
+    }
+    
+    // Sum results
+    nmod_mpoly_t temp_sum;
+    nmod_mpoly_init(temp_sum, mpoly_ctx);
+    
+    for (slong col = 0; col < size; col++) {
+        if (!nmod_mpoly_is_zero(partial_results[col], mpoly_ctx)) {
+            nmod_mpoly_add(temp_sum, det_result, partial_results[col], mpoly_ctx);
+            nmod_mpoly_set(det_result, temp_sum, mpoly_ctx);
+        }
+        nmod_mpoly_clear(partial_results[col], mpoly_ctx);
+    }
+    
+    nmod_mpoly_clear(temp_sum, mpoly_ctx);
+    flint_free(partial_results);
+}
+
+// ============= Univariate Optimization =============
+
+int is_univariate_matrix(fq_mvpoly_t **matrix, slong size) {
+    if (size == 0) return 0;
+    slong nvars = matrix[0][0].nvars;
+    slong npars = matrix[0][0].npars;
+    return (nvars == 1 && npars == 0);
+}
+
+void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+    if (size <= 0) {
+        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        return;
+    }
+    
+    DET_PRINT("Using univariate polynomial matrix optimization for %ldx%ld matrix\n", size, size);
+    
+    const fq_nmod_ctx_struct *ctx = matrix[0][0].ctx;
+    fq_mvpoly_init(result, 1, 0, ctx);
+    
+    timing_info_t start = start_timing();
+    
+    fq_nmod_poly_mat_t poly_mat;
+    fq_nmod_poly_mat_init(poly_mat, size, size, ctx);
+    
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            fq_nmod_poly_struct *entry = fq_nmod_poly_mat_entry(poly_mat, i, j);
+            fq_nmod_poly_zero(entry, ctx);
             
-            /* Initialize new elements */
-            void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
-                           (void*)&poly->ctx->ctx.nmod_ctx : 
-                           (void*)poly->ctx->ctx.fq_ctx;
-            
-            for (slong i = poly->alloc; i < new_alloc; i++) {
-                field_init_elem(&poly->coeffs[i], poly->ctx->field_id, ctx_ptr);
+            for (slong k = 0; k < matrix[i][j].nterms; k++) {
+                fq_monomial_t *term = &matrix[i][j].terms[k];
+                slong degree = 0;
+                if (term->var_exp && matrix[i][j].nvars > 0) {
+                    degree = term->var_exp[0];
+                }
+                fq_nmod_poly_set_coeff(entry, degree, term->coeff, ctx);
             }
         }
-        
-        poly->alloc = new_alloc;
-    }
-}
-/* Fixed normalization to actually update the length */
-void unified_poly_normalise(unified_poly_t poly) {
-    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&poly->ctx->ctx.nmod_ctx : 
-                   (void*)poly->ctx->ctx.fq_ctx;
-    
-    /* Remove all trailing zeros */
-    while (poly->length > 0 && 
-           field_is_zero(&poly->coeffs[poly->length - 1], poly->ctx->field_id, ctx_ptr)) {
-        poly->length--;
-    }
-}
-
-void unified_poly_zero(unified_poly_t poly) {
-    poly->length = 0;
-}
-
-int unified_poly_is_zero(const unified_poly_t poly) {
-    return poly->length == 0;
-}
-
-slong unified_poly_degree(const unified_poly_t poly) {
-    return poly->length - 1;
-}
-
-void unified_poly_set(unified_poly_t res, const unified_poly_t poly) {
-    if (res == poly) return;
-    
-    unified_poly_fit_length(res, poly->length);
-    res->length = poly->length;
-    
-    void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&res->ctx->ctx.nmod_ctx : 
-                   (void*)res->ctx->ctx.fq_ctx;
-    
-    /* CRITICAL FIX: Use field_set_elem for all copies */
-    for (slong i = 0; i < poly->length; i++) {
-        field_set_elem(&res->coeffs[i], &poly->coeffs[i], res->ctx->field_id, ctx_ptr);
-    }
-}
-void unified_poly_add(unified_poly_t res, const unified_poly_t a, const unified_poly_t b) {
-    slong max_len = FLINT_MAX(a->length, b->length);
-    slong min_len = FLINT_MIN(a->length, b->length);
-    
-    if (max_len == 0) {
-        unified_poly_zero(res);
-        return;
     }
     
-    unified_poly_fit_length(res, max_len);
+    fq_nmod_poly_t det_poly;
+    fq_nmod_poly_init(det_poly, ctx);
     
-    void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&res->ctx->ctx.nmod_ctx : 
-                   (void*)res->ctx->ctx.fq_ctx;
+    fq_nmod_poly_mat_det_iter(det_poly, poly_mat, ctx);
     
-    /* Add common coefficients */
-    for (slong i = 0; i < min_len; i++) {
-        field_add(&res->coeffs[i], &a->coeffs[i], &b->coeffs[i], 
-                 res->ctx->field_id, ctx_ptr);
-    }
+    timing_info_t conv_elapsed = end_timing(start);
+    print_timing("Univariate matrix determinant", conv_elapsed);
     
-    /* Copy remaining coefficients */
-    if (a->length > b->length) {
-        for (slong i = min_len; i < a->length; i++) {
-            field_set_elem(&res->coeffs[i], &a->coeffs[i], res->ctx->field_id, ctx_ptr);
-        }
-        res->length = a->length;
-    } else if (b->length > a->length) {
-        for (slong i = min_len; i < b->length; i++) {
-            field_set_elem(&res->coeffs[i], &b->coeffs[i], res->ctx->field_id, ctx_ptr);
-        }
-        res->length = b->length;
-    } else {
-        res->length = min_len;
-    }
-    
-    unified_poly_normalise(res);
-}
-
-void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly, 
-                            const field_elem_u *c) {
-    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&poly->ctx->ctx.nmod_ctx : 
-                   (void*)poly->ctx->ctx.fq_ctx;
-    
-    if (field_is_zero(c, poly->ctx->field_id, ctx_ptr)) {
-        unified_poly_zero(res);
-        return;
-    }
-    
-    if (field_is_one(c, poly->ctx->field_id, ctx_ptr)) {
-        unified_poly_set(res, poly);
-        return;
-    }
-    
-    unified_poly_fit_length(res, poly->length);
-    res->length = poly->length;
-    
-    for (slong i = 0; i < poly->length; i++) {
-        field_mul(&res->coeffs[i], &poly->coeffs[i], c, poly->ctx->field_id, ctx_ptr);
-    }
-    
-    unified_poly_normalise(res);
-}
-
-void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_poly_t b) {
-    if (unified_poly_is_zero(a) || unified_poly_is_zero(b)) {
-        unified_poly_zero(res);
-        return;
-    }
-    
-    slong rlen = a->length + b->length - 1;
-    
-    /* Always use temporary for FIELD_ID_FQ to avoid aliasing issues */
-    if (res->ctx->field_id == FIELD_ID_FQ || res == a || res == b) {
-        unified_poly_struct temp;
-        unified_poly_init(&temp, res->ctx);
-        unified_poly_fit_length(&temp, rlen);
-        
-        void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
-                       (void*)&res->ctx->ctx.nmod_ctx : 
-                       (void*)res->ctx->ctx.fq_ctx;
-        
-        /* Initialize result coefficients to zero */
-        for (slong i = 0; i < rlen; i++) {
-            field_set_zero(&temp.coeffs[i], res->ctx->field_id, ctx_ptr);
-        }
-        
-        /* Multiply */
-        field_elem_u prod;
-        field_init_elem(&prod, res->ctx->field_id, ctx_ptr);
-        
-        for (slong i = 0; i < a->length; i++) {
-            for (slong j = 0; j < b->length; j++) {
-                field_mul(&prod, &a->coeffs[i], &b->coeffs[j], res->ctx->field_id, ctx_ptr);
-                field_add(&temp.coeffs[i + j], &temp.coeffs[i + j], &prod, 
-                         res->ctx->field_id, ctx_ptr);
-            }
-        }
-        
-        field_clear_elem(&prod, res->ctx->field_id, ctx_ptr);
-        
-        temp.length = rlen;
-        unified_poly_normalise(&temp);
-        
-        /* Copy result back */
-        unified_poly_set(res, &temp);
-        unified_poly_clear(&temp);
-    } else {
-        /* Original implementation for non-FQ fields */
-        unified_poly_fit_length(res, rlen);
-        
-        void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
-                       (void*)&res->ctx->ctx.nmod_ctx : 
-                       (void*)res->ctx->ctx.fq_ctx;
-        
-        /* Initialize result coefficients to zero */
-        for (slong i = 0; i < rlen; i++) {
-            field_set_zero(&res->coeffs[i], res->ctx->field_id, ctx_ptr);
-        }
-        
-        /* Multiply */
-        field_elem_u prod;
-        field_init_elem(&prod, res->ctx->field_id, ctx_ptr);
-        
-        for (slong i = 0; i < a->length; i++) {
-            for (slong j = 0; j < b->length; j++) {
-                field_mul(&prod, &a->coeffs[i], &b->coeffs[j], res->ctx->field_id, ctx_ptr);
-                field_add(&res->coeffs[i + j], &res->coeffs[i + j], &prod, 
-                         res->ctx->field_id, ctx_ptr);
-            }
-        }
-        
-        field_clear_elem(&prod, res->ctx->field_id, ctx_ptr);
-        
-        res->length = rlen;
-        unified_poly_normalise(res);
-    }
-}
-
-void unified_poly_get_coeff(field_elem_u *coeff, const unified_poly_t poly, slong i) {
-    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&poly->ctx->ctx.nmod_ctx : 
-                   (void*)poly->ctx->ctx.fq_ctx;
-    
-    if (i < poly->length) {
-        field_set_elem(coeff, &poly->coeffs[i], poly->ctx->field_id, ctx_ptr);
-    } else {
-        field_set_zero(coeff, poly->ctx->field_id, ctx_ptr);
-    }
-}
-
-void unified_poly_set_coeff(unified_poly_t poly, slong i, const field_elem_u *coeff) {
-    unified_poly_fit_length(poly, i + 1);
-    
-    void *ctx_ptr = (poly->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&poly->ctx->ctx.nmod_ctx : 
-                   (void*)poly->ctx->ctx.fq_ctx;
-    
-    if (i >= poly->length) {
-        /* Zero out intermediate coefficients */
-        for (slong j = poly->length; j < i; j++) {
-            field_set_zero(&poly->coeffs[j], poly->ctx->field_id, ctx_ptr);
-        }
-        poly->length = i + 1;
-    }
-    
-    field_set_elem(&poly->coeffs[i], coeff, poly->ctx->field_id, ctx_ptr);
-    
-    /* Update length if setting leading coefficient to zero */
-    if (i == poly->length - 1) {
-        unified_poly_normalise(poly);
-    }
-}
-
-void unified_poly_shift_left(unified_poly_t res, const unified_poly_t poly, slong n) {
-    if (n == 0) {
-        unified_poly_set(res, poly);
-        return;
-    }
-    
-    if (unified_poly_is_zero(poly)) {
-        unified_poly_zero(res);
-        return;
-    }
-    
-    slong new_len = poly->length + n;
-    unified_poly_fit_length(res, new_len);
-    
-    void *ctx_ptr = (res->ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&res->ctx->ctx.nmod_ctx : 
-                   (void*)res->ctx->ctx.fq_ctx;
-    
-    /* Zero lower coefficients */
-    for (slong i = 0; i < n; i++) {
-        field_set_zero(&res->coeffs[i], res->ctx->field_id, ctx_ptr);
-    }
-    
-    /* CRITICAL FIX: Copy coefficients properly */
-    if (res == poly) {
-        /* In-place: shift from right to left */
-        for (slong i = new_len - 1; i >= n; i--) {
-            field_set_elem(&res->coeffs[i], &res->coeffs[i - n], res->ctx->field_id, ctx_ptr);
-        }
-    } else {
-        /* Copy shifted */
-        for (slong i = 0; i < poly->length; i++) {
-            field_set_elem(&res->coeffs[i + n], &poly->coeffs[i], res->ctx->field_id, ctx_ptr);
-        }
-    }
-    
-    res->length = new_len;
-}
-/* ============================================================================
-   CONVERSION FUNCTIONS
-   ============================================================================ */
-
-void fq_nmod_poly_to_unified(unified_poly_t res, const fq_nmod_poly_t poly,
-                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
-    slong len = fq_nmod_poly_length(poly, ctx);
-    
-    if (len == 0) {
-        unified_poly_zero(res);
-        return;
-    }
-    
-    unified_poly_fit_length(res, len);
-    res->length = len;
-    
-    for (slong i = 0; i < len; i++) {
-        fq_nmod_t coeff;
-        fq_nmod_init(coeff, ctx);
-        fq_nmod_poly_get_coeff(coeff, poly, i, ctx);
-        fq_nmod_to_field_elem(&res->coeffs[i], coeff, field_ctx);
-        fq_nmod_clear(coeff, ctx);
-    }
-    
-    unified_poly_normalise(res);
-}
-
-void unified_to_fq_nmod_poly(fq_nmod_poly_t res, const unified_poly_t poly,
-                            const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
-    fq_nmod_poly_zero(res, ctx);
-    
-    void *ctx_ptr = (field_ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&field_ctx->ctx.nmod_ctx : 
-                   (void*)field_ctx->ctx.fq_ctx;
-    
-    for (slong i = 0; i < poly->length; i++) {
-        if (!field_is_zero(&poly->coeffs[i], field_ctx->field_id, ctx_ptr)) {
+    slong degree = fq_nmod_poly_degree(det_poly, ctx);
+    if (degree >= 0) {
+        for (slong d = 0; d <= degree; d++) {
             fq_nmod_t coeff;
             fq_nmod_init(coeff, ctx);
-            field_elem_to_fq_nmod(coeff, &poly->coeffs[i], field_ctx);
-            fq_nmod_poly_set_coeff(res, i, coeff, ctx);
+            fq_nmod_poly_get_coeff(coeff, det_poly, d, ctx);
+            
+            if (!fq_nmod_is_zero(coeff, ctx)) {
+                slong *var_exp = (slong*) flint_calloc(1, sizeof(slong));
+                var_exp[0] = d;
+                fq_mvpoly_add_term(result, var_exp, NULL, coeff);
+                flint_free(var_exp);
+            }
+            
             fq_nmod_clear(coeff, ctx);
         }
     }
-}
-
-/* ============================================================================
-   MATRIX OPERATIONS IMPLEMENTATION
-   ============================================================================ */
-
-void unified_poly_mat_init(unified_poly_mat_t mat, slong rows, slong cols,
-                          field_ctx_t *ctx) {
-    mat->entries = NULL;
-    mat->rows = NULL;
-    mat->ctx = ctx;
     
-    if (rows > 0 && cols > 0) {
-        mat->entries = (unified_poly_struct *)malloc(rows * cols * sizeof(unified_poly_struct));
-        mat->rows = (unified_poly_struct **)malloc(rows * sizeof(unified_poly_struct *));
-        
-        for (slong i = 0; i < rows * cols; i++) {
-            unified_poly_init(mat->entries + i, ctx);
-        }
-        
-        for (slong i = 0; i < rows; i++) {
-            mat->rows[i] = mat->entries + i * cols;
-        }
-    }
+    fq_nmod_poly_clear(det_poly, ctx);
+    fq_nmod_poly_mat_clear(poly_mat, ctx);
+}
+
+// ============= Conversion Functions =============
+
+void fq_mvpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
+                               fq_nmod_mpoly_ctx_t mpoly_ctx) {
+    fq_nmod_mpoly_zero(mpoly, mpoly_ctx);
     
-    mat->r = rows;
-    mat->c = cols;
-}
-
-void unified_poly_mat_clear(unified_poly_mat_t mat) {
-    if (mat->entries != NULL) {
-        for (slong i = 0; i < mat->r * mat->c; i++) {
-            unified_poly_clear(mat->entries + i);
-        }
-        free(mat->entries);
-        free(mat->rows);
-    }
-}
-
-unified_poly_struct *unified_poly_mat_entry(unified_poly_mat_t mat, slong i, slong j) {
-    return mat->rows[i] + j;
-}
-
-const unified_poly_struct *unified_poly_mat_entry_const(const unified_poly_mat_t mat, slong i, slong j) {
-    return mat->rows[i] + j;
-}
-
-void fq_nmod_poly_mat_to_unified(unified_poly_mat_t res, const fq_nmod_poly_mat_t mat,
-                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
-    for (slong i = 0; i < mat->r; i++) {
-        for (slong j = 0; j < mat->c; j++) {
-            fq_nmod_poly_to_unified(unified_poly_mat_entry(res, i, j),
-                                   fq_nmod_poly_mat_entry(mat, i, j),
-                                   ctx, field_ctx);
-        }
-    }
-}
-
-void unified_to_fq_nmod_poly_mat(fq_nmod_poly_mat_t res, const unified_poly_mat_t mat,
-                                const fq_nmod_ctx_t ctx, field_ctx_t *field_ctx) {
-    for (slong i = 0; i < mat->r; i++) {
-        for (slong j = 0; j < mat->c; j++) {
-            unified_to_fq_nmod_poly(fq_nmod_poly_mat_entry(res, i, j),
-                                   unified_poly_mat_entry_const(mat, i, j),
-                                   ctx, field_ctx);
-        }
-    }
-}
-
-void cleanup_unified_workspace(void) {
-    if (g_unified_workspace.initialized) {
-        void *ctx_ptr = g_unified_workspace.field_ctx;
-        
-        if (ctx_ptr) {
-            field_clear_elem(&g_unified_workspace.lc1, g_unified_workspace.field_id, ctx_ptr);
-            field_clear_elem(&g_unified_workspace.lc2, g_unified_workspace.field_id, ctx_ptr);
-            field_clear_elem(&g_unified_workspace.cst, g_unified_workspace.field_id, ctx_ptr);
-            field_clear_elem(&g_unified_workspace.inv, g_unified_workspace.field_id, ctx_ptr);
-        }
-        
-        if (g_unified_workspace.tmp.coeffs) {
-            unified_poly_clear(&g_unified_workspace.tmp);
-        }
-        if (g_unified_workspace.tmp2.coeffs) {
-            unified_poly_clear(&g_unified_workspace.tmp2);
-        }
-        
-        g_unified_workspace.initialized = 0;
-        g_unified_workspace.field_id = 0;
-        g_unified_workspace.field_ctx = NULL;
-    }
-}
-
-/* Ensure workspace is initialized for the current field */
-void ensure_workspace_initialized(field_ctx_t *ctx) {
-    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
-                   (void*)&ctx->ctx.nmod_ctx : 
-                   (void*)ctx->ctx.fq_ctx;
+    if (poly->nterms == 0) return;
     
-    /* Always reinitialize if field context changes OR if it's FQ field */
-    /* For FQ fields, we should be more conservative about reusing workspace */
-    if (g_unified_workspace.initialized) {
-        int need_reinit = 0;
+    slong total_vars = poly->nvars + poly->npars;
+    
+    // Pre-allocate space for better performance
+    fq_nmod_mpoly_fit_length(mpoly, poly->nterms, mpoly_ctx);
+    
+    for (slong i = 0; i < poly->nterms; i++) {
+        ulong *exps = (ulong*) flint_calloc(total_vars, sizeof(ulong));
         
-        /* Check if field type changed */
-        if (g_unified_workspace.field_id != ctx->field_id) {
-            need_reinit = 1;
-        }
-        /* For FQ fields, check if the field parameters match */
-        else if (ctx->field_id == FIELD_ID_FQ) {
-            /* Compare field degree and characteristic */
-            const fq_nmod_ctx_struct *old_ctx = (const fq_nmod_ctx_struct *)g_unified_workspace.field_ctx;
-            const fq_nmod_ctx_struct *new_ctx = (const fq_nmod_ctx_struct *)ctx_ptr;
-            
-            if (!old_ctx || !new_ctx || 
-                fq_nmod_ctx_degree(old_ctx) != fq_nmod_ctx_degree(new_ctx) ||
-                fq_nmod_ctx_prime(old_ctx) != fq_nmod_ctx_prime(new_ctx)) {
-                need_reinit = 1;
+        if (poly->terms[i].var_exp && poly->nvars > 0) {
+            for (slong j = 0; j < poly->nvars; j++) {
+                exps[j] = (ulong)poly->terms[i].var_exp[j];
             }
         }
-        /* For other fields, check context pointer */
-        else if (g_unified_workspace.field_ctx != ctx_ptr) {
-            need_reinit = 1;
+        
+        if (poly->terms[i].par_exp && poly->npars > 0) {
+            for (slong j = 0; j < poly->npars; j++) {
+                exps[poly->nvars + j] = (ulong)poly->terms[i].par_exp[j];
+            }
         }
         
-        if (need_reinit) {
-            /* Clear old workspace */
-            cleanup_unified_workspace();
+        fq_nmod_mpoly_push_term_fq_nmod_ui(mpoly, poly->terms[i].coeff, exps, mpoly_ctx);
+        flint_free(exps);
+    }
+    
+    fq_nmod_mpoly_sort_terms(mpoly, mpoly_ctx);
+    fq_nmod_mpoly_combine_like_terms(mpoly, mpoly_ctx);
+}
+
+void fq_nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *poly, const fq_nmod_mpoly_t mpoly,
+                                slong nvars, slong npars, 
+                                fq_nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx) {
+    fq_mvpoly_init(poly, nvars, npars, ctx);
+    
+    slong nterms = fq_nmod_mpoly_length(mpoly, mpoly_ctx);
+    if (nterms == 0) return;
+    
+    slong total_vars = nvars + npars;
+    
+    poly->alloc = nterms;
+    poly->terms = (fq_monomial_t*) flint_realloc(poly->terms, poly->alloc * sizeof(fq_monomial_t));
+    poly->nterms = nterms;
+    
+    ulong *exp_buffer = (ulong*) flint_malloc(total_vars * sizeof(ulong));
+    
+    for (slong i = 0; i < nterms; i++) {
+        fq_nmod_init(poly->terms[i].coeff, ctx);
+        
+        fq_nmod_mpoly_get_term_coeff_fq_nmod(poly->terms[i].coeff, mpoly, i, mpoly_ctx);
+        fq_nmod_mpoly_get_term_exp_ui(exp_buffer, mpoly, i, mpoly_ctx);
+        
+        if (nvars > 0) {
+            poly->terms[i].var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
+            for (slong j = 0; j < nvars; j++) {
+                poly->terms[i].var_exp[j] = (slong)exp_buffer[j];
+            }
         } else {
-            /* Workspace already initialized for this field */
-            return;
+            poly->terms[i].var_exp = NULL;
+        }
+        
+        if (npars > 0) {
+            poly->terms[i].par_exp = (slong*) flint_calloc(npars, sizeof(slong));
+            for (slong j = 0; j < npars; j++) {
+                poly->terms[i].par_exp[j] = (slong)exp_buffer[nvars + j];
+            }
+        } else {
+            poly->terms[i].par_exp = NULL;
         }
     }
     
-    /* Initialize workspace for current field */
-    g_unified_workspace.field_id = ctx->field_id;
-    g_unified_workspace.field_ctx = ctx_ptr;
-    
-    field_init_elem(&g_unified_workspace.lc1, ctx->field_id, ctx_ptr);
-    field_init_elem(&g_unified_workspace.lc2, ctx->field_id, ctx_ptr);
-    field_init_elem(&g_unified_workspace.cst, ctx->field_id, ctx_ptr);
-    field_init_elem(&g_unified_workspace.inv, ctx->field_id, ctx_ptr);
-    unified_poly_init(&g_unified_workspace.tmp, ctx);
-    unified_poly_init(&g_unified_workspace.tmp2, ctx);
-    
-    g_unified_workspace.initialized = 1;
+    flint_free(exp_buffer);
 }
 
-/* Also add cleanup for conversion tables in gf2n_field.h */
-void reset_all_gf2n_conversions(void) {
-    /* Reset GF(2^8) conversion */
-    if (g_gf28_conversion) {
-        g_gf28_conversion->initialized = 0;
+void fq_matrix_mvpoly_to_mpoly(fq_nmod_mpoly_t **mpoly_matrix, 
+                              fq_mvpoly_t **mvpoly_matrix, 
+                              slong size, 
+                              fq_nmod_mpoly_ctx_t mpoly_ctx) {
+    DET_PRINT("Converting %ld x %ld matrix\n", size, size);
+    
+    timing_info_t start = start_timing();
+    
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            fq_nmod_mpoly_init(mpoly_matrix[i][j], mpoly_ctx);
+            fq_mvpoly_to_fq_nmod_mpoly(mpoly_matrix[i][j], &mvpoly_matrix[i][j], mpoly_ctx);
+        }
     }
     
-    /* Reset GF(2^16) conversion */
-    if (g_gf216_conversion) {
-        g_gf216_conversion->initialized = 0;
+    timing_info_t elapsed = end_timing(start);
+    print_timing("Matrix conversion", elapsed);
+}
+
+// ============= Optimized Determinant Computation =============
+
+// Hand-optimized 3x3 determinant
+static void compute_det_3x3_optimized(fq_nmod_mpoly_t det, 
+                                     fq_nmod_mpoly_t **m,
+                                     fq_nmod_mpoly_ctx_t ctx) {
+    fq_nmod_mpoly_t t1, t2, t3, t4, t5, t6, sum;
+    
+    // Initialize temporaries
+    fq_nmod_mpoly_init(t1, ctx);
+    fq_nmod_mpoly_init(t2, ctx);
+    fq_nmod_mpoly_init(t3, ctx);
+    fq_nmod_mpoly_init(t4, ctx);
+    fq_nmod_mpoly_init(t5, ctx);
+    fq_nmod_mpoly_init(t6, ctx);
+    fq_nmod_mpoly_init(sum, ctx);
+    
+    // Compute 6 products in parallel if beneficial
+    #pragma omp parallel sections if(omp_get_max_threads() > 2)
+    {
+        #pragma omp section
+        {
+            fq_nmod_mpoly_mul(t1, m[1][1], m[2][2], ctx);
+            poly_mul_dense_optimized(t1, m[0][0], t1, ctx);
+        }
+        #pragma omp section
+        {
+            fq_nmod_mpoly_mul(t2, m[1][2], m[2][0], ctx);
+            poly_mul_dense_optimized(t2, m[0][1], t2, ctx);
+        }
+        #pragma omp section
+        {
+            fq_nmod_mpoly_mul(t3, m[1][0], m[2][1], ctx);
+            poly_mul_dense_optimized(t3, m[0][2], t3, ctx);
+        }
+        #pragma omp section
+        {
+            fq_nmod_mpoly_mul(t4, m[1][0], m[2][2], ctx);
+            poly_mul_dense_optimized(t4, m[0][1], t4, ctx);
+        }
+        #pragma omp section
+        {
+            fq_nmod_mpoly_mul(t5, m[1][1], m[2][0], ctx);
+            poly_mul_dense_optimized(t5, m[0][2], t5, ctx);
+        }
+        #pragma omp section
+        {
+            fq_nmod_mpoly_mul(t6, m[1][2], m[2][1], ctx);
+            poly_mul_dense_optimized(t6, m[0][0], t6, ctx);
+        }
     }
     
-    /* Reset GF(2^32) conversion */
-    if (g_gf232_conversion) {
-        g_gf232_conversion->initialized = 0;
+    // Sum with signs
+    fq_nmod_mpoly_add(sum, t1, t2, ctx);
+    fq_nmod_mpoly_add(sum, sum, t3, ctx);
+    fq_nmod_mpoly_sub(sum, sum, t4, ctx);
+    fq_nmod_mpoly_sub(sum, sum, t5, ctx);
+    fq_nmod_mpoly_sub(det, sum, t6, ctx);
+    
+    // Cleanup
+    fq_nmod_mpoly_clear(t1, ctx);
+    fq_nmod_mpoly_clear(t2, ctx);
+    fq_nmod_mpoly_clear(t3, ctx);
+    fq_nmod_mpoly_clear(t4, ctx);
+    fq_nmod_mpoly_clear(t5, ctx);
+    fq_nmod_mpoly_clear(t6, ctx);
+    fq_nmod_mpoly_clear(sum, ctx);
+}
+
+// Recursive determinant with optimizations
+void compute_fq_nmod_mpoly_det_recursive(fq_nmod_mpoly_t det_result, 
+                                        fq_nmod_mpoly_t **mpoly_matrix, 
+                                        slong size, 
+                                        fq_nmod_mpoly_ctx_t mpoly_ctx) {
+    if (size <= 0) {
+        fq_nmod_mpoly_one(det_result, mpoly_ctx);
+        return;
     }
     
-    /* Reset GF(2^64) conversion */
-    if (g_gf264_conversion) {
-        g_gf264_conversion->initialized = 0;
+    if (size == 1) {
+        fq_nmod_mpoly_set(det_result, mpoly_matrix[0][0], mpoly_ctx);
+        return;
     }
     
-    /* Reset GF(2^128) conversion */
-    if (g_gf2128_conversion) {
-        g_gf2128_conversion->initialized = 0;
+    if (size == 2) {
+        fq_nmod_mpoly_t ad, bc;
+        fq_nmod_mpoly_init(ad, mpoly_ctx);
+        fq_nmod_mpoly_init(bc, mpoly_ctx);
+        
+        poly_mul_dense_optimized(ad, mpoly_matrix[0][0], mpoly_matrix[1][1], mpoly_ctx);
+        poly_mul_dense_optimized(bc, mpoly_matrix[0][1], mpoly_matrix[1][0], mpoly_ctx);
+        fq_nmod_mpoly_sub(det_result, ad, bc, mpoly_ctx);
+        
+        fq_nmod_mpoly_clear(ad, mpoly_ctx);
+        fq_nmod_mpoly_clear(bc, mpoly_ctx);
+        return;
+    }
+    
+    if (size == 3) {
+        compute_det_3x3_optimized(det_result, mpoly_matrix, mpoly_ctx);
+        return;
+    }
+    
+    // General case: Laplace expansion
+    fq_nmod_mpoly_zero(det_result, mpoly_ctx);
+    
+    fq_nmod_mpoly_t temp_result, cofactor, subdet;
+    fq_nmod_mpoly_init(temp_result, mpoly_ctx);
+    fq_nmod_mpoly_init(cofactor, mpoly_ctx);
+    fq_nmod_mpoly_init(subdet, mpoly_ctx);
+    
+    for (slong col = 0; col < size; col++) {
+        if (fq_nmod_mpoly_is_zero(mpoly_matrix[0][col], mpoly_ctx)) {
+            continue;
+        }
+        
+        // Create submatrix
+        fq_nmod_mpoly_t **submatrix = (fq_nmod_mpoly_t**) flint_malloc((size-1) * sizeof(fq_nmod_mpoly_t*));
+        for (slong i = 0; i < size-1; i++) {
+            submatrix[i] = (fq_nmod_mpoly_t*) flint_malloc((size-1) * sizeof(fq_nmod_mpoly_t));
+            for (slong j = 0; j < size-1; j++) {
+                fq_nmod_mpoly_init(submatrix[i][j], mpoly_ctx);
+            }
+        }
+        
+        // Fill submatrix
+        for (slong i = 1; i < size; i++) {
+            slong sub_j = 0;
+            for (slong j = 0; j < size; j++) {
+                if (j != col) {
+                    fq_nmod_mpoly_set(submatrix[i-1][sub_j], mpoly_matrix[i][j], mpoly_ctx);
+                    sub_j++;
+                }
+            }
+        }
+        
+        // Recursive computation
+        compute_fq_nmod_mpoly_det_recursive(subdet, submatrix, size-1, mpoly_ctx);
+        
+        // Compute cofactor
+        poly_mul_dense_optimized(cofactor, mpoly_matrix[0][col], subdet, mpoly_ctx);
+        
+        // Add/subtract to result
+        if (col % 2 == 0) {
+            fq_nmod_mpoly_add(temp_result, det_result, cofactor, mpoly_ctx);
+        } else {
+            fq_nmod_mpoly_sub(temp_result, det_result, cofactor, mpoly_ctx);
+        }
+        fq_nmod_mpoly_set(det_result, temp_result, mpoly_ctx);
+        
+        // Cleanup submatrix
+        for (slong i = 0; i < size-1; i++) {
+            for (slong j = 0; j < size-1; j++) {
+                fq_nmod_mpoly_clear(submatrix[i][j], mpoly_ctx);
+            }
+            flint_free(submatrix[i]);
+        }
+        flint_free(submatrix);
+    }
+    
+    fq_nmod_mpoly_clear(temp_result, mpoly_ctx);
+    fq_nmod_mpoly_clear(cofactor, mpoly_ctx);
+    fq_nmod_mpoly_clear(subdet, mpoly_ctx);
+}
+
+// Parallel determinant computation
+void compute_fq_nmod_mpoly_det_parallel_optimized(fq_nmod_mpoly_t det_result, 
+                                                  fq_nmod_mpoly_t **mpoly_matrix, 
+                                                  slong size, 
+                                                  fq_nmod_mpoly_ctx_t mpoly_ctx,
+                                                  slong depth) {
+    if (size < PARALLEL_THRESHOLD || depth >= MAX_PARALLEL_DEPTH) {
+        compute_fq_nmod_mpoly_det_recursive(det_result, mpoly_matrix, size, mpoly_ctx);
+        return;
+    }
+    
+    DET_PRINT("Parallel computation for %ld x %ld matrix (depth %ld)\n", size, size, depth);
+    
+    if (size <= 3) {
+        compute_fq_nmod_mpoly_det_recursive(det_result, mpoly_matrix, size, mpoly_ctx);
+        return;
+    }
+    
+    fq_nmod_mpoly_zero(det_result, mpoly_ctx);
+    
+    // Count non-zero entries in first row
+    slong nonzero_count = 0;
+    for (slong col = 0; col < size; col++) {
+        if (!fq_nmod_mpoly_is_zero(mpoly_matrix[0][col], mpoly_ctx)) {
+            nonzero_count++;
+        }
+    }
+    
+    if (nonzero_count < 2) {
+        compute_fq_nmod_mpoly_det_recursive(det_result, mpoly_matrix, size, mpoly_ctx);
+        return;
+    }
+    
+    // Allocate space for partial results
+    fq_nmod_mpoly_t *partial_results = (fq_nmod_mpoly_t*) flint_malloc(size * sizeof(fq_nmod_mpoly_t));
+    for (slong i = 0; i < size; i++) {
+        fq_nmod_mpoly_init(partial_results[i], mpoly_ctx);
+        fq_nmod_mpoly_zero(partial_results[i], mpoly_ctx);
+    }
+    
+    // Parallel computation of cofactors
+    #pragma omp parallel for schedule(dynamic, 1) if(nonzero_count >= 3)
+    for (slong col = 0; col < size; col++) {
+        if (fq_nmod_mpoly_is_zero(mpoly_matrix[0][col], mpoly_ctx)) {
+            continue;
+        }
+        
+        fq_nmod_mpoly_t cofactor, subdet;
+        fq_nmod_mpoly_init(cofactor, mpoly_ctx);
+        fq_nmod_mpoly_init(subdet, mpoly_ctx);
+        
+        // Create submatrix
+        fq_nmod_mpoly_t **submatrix = (fq_nmod_mpoly_t**) flint_malloc((size-1) * sizeof(fq_nmod_mpoly_t*));
+        for (slong i = 0; i < size-1; i++) {
+            submatrix[i] = (fq_nmod_mpoly_t*) flint_malloc((size-1) * sizeof(fq_nmod_mpoly_t));
+            for (slong j = 0; j < size-1; j++) {
+                fq_nmod_mpoly_init(submatrix[i][j], mpoly_ctx);
+            }
+        }
+        
+        // Fill submatrix
+        for (slong i = 1; i < size; i++) {
+            slong sub_j = 0;
+            for (slong j = 0; j < size; j++) {
+                if (j != col) {
+                    fq_nmod_mpoly_set(submatrix[i-1][sub_j], mpoly_matrix[i][j], mpoly_ctx);
+                    sub_j++;
+                }
+            }
+        }
+        
+        // Recursive call
+        if (size-1 >= PARALLEL_THRESHOLD && depth < MAX_PARALLEL_DEPTH) {
+            compute_fq_nmod_mpoly_det_parallel_optimized(subdet, submatrix, size-1, mpoly_ctx, depth+1);
+        } else {
+            compute_fq_nmod_mpoly_det_recursive(subdet, submatrix, size-1, mpoly_ctx);
+        }
+        
+        // Compute cofactor
+        poly_mul_dense_optimized(cofactor, mpoly_matrix[0][col], subdet, mpoly_ctx);
+        
+        // Store with sign
+        if (col % 2 == 0) {
+            fq_nmod_mpoly_set(partial_results[col], cofactor, mpoly_ctx);
+        } else {
+            fq_nmod_mpoly_neg(partial_results[col], cofactor, mpoly_ctx);
+        }
+        
+        // Cleanup
+        for (slong i = 0; i < size-1; i++) {
+            for (slong j = 0; j < size-1; j++) {
+                fq_nmod_mpoly_clear(submatrix[i][j], mpoly_ctx);
+            }
+            flint_free(submatrix[i]);
+        }
+        flint_free(submatrix);
+        
+        fq_nmod_mpoly_clear(cofactor, mpoly_ctx);
+        fq_nmod_mpoly_clear(subdet, mpoly_ctx);
+    }
+    
+    // Sum results
+    fq_nmod_mpoly_t temp_sum;
+    fq_nmod_mpoly_init(temp_sum, mpoly_ctx);
+    
+    for (slong col = 0; col < size; col++) {
+        if (!fq_nmod_mpoly_is_zero(partial_results[col], mpoly_ctx)) {
+            fq_nmod_mpoly_add(temp_sum, det_result, partial_results[col], mpoly_ctx);
+            fq_nmod_mpoly_set(det_result, temp_sum, mpoly_ctx);
+        }
+        fq_nmod_mpoly_clear(partial_results[col], mpoly_ctx);
+    }
+    
+    fq_nmod_mpoly_clear(temp_sum, mpoly_ctx);
+    flint_free(partial_results);
+}
+
+// ============= Main Interface with Prime Field Detection =============
+
+void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+    if (size <= 0) {
+        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        return;
+    }
+    
+    timing_info_t total_start = start_timing();
+    
+    slong max_threads = omp_get_max_threads();
+    DET_PRINT("Computing %ldx%ld determinant (OpenMP: %ld threads available)\n", 
+              size, size, max_threads);
+    
+    slong nvars = matrix[0][0].nvars;
+    slong npars = matrix[0][0].npars;
+    slong total_vars = nvars + npars;
+    const fq_nmod_ctx_struct *ctx = matrix[0][0].ctx;
+    
+    fq_mvpoly_init(result, nvars, npars, ctx);
+    
+    // Check for univariate optimization
+    if (is_univariate_matrix(matrix, size) && size >= UNIVARIATE_THRESHOLD) {
+        DET_PRINT("Detected univariate matrix, using specialized optimization\n");
+        compute_fq_det_univariate_optimized(result, matrix, size);
+        
+        timing_info_t total_elapsed = end_timing(total_start);
+        print_timing("Total univariate computation", total_elapsed);
+        return;
+    }
+    
+    // Check if we can use prime field optimization
+    if (is_prime_field(ctx)) {
+        DET_PRINT("Detected prime field, using nmod_mpoly optimization\n");
+        
+        // Get the modulus
+        mp_limb_t modulus = fq_nmod_ctx_modulus(ctx)->mod.n;
+        
+        // Create nmod_mpoly context
+        nmod_mpoly_ctx_t nmod_ctx;
+        nmod_mpoly_ctx_init(nmod_ctx, total_vars, ORD_LEX, modulus);
+        
+        // Allocate nmod_mpoly matrix
+        nmod_mpoly_t **nmod_matrix = (nmod_mpoly_t**) flint_malloc(size * sizeof(nmod_mpoly_t*));
+        for (slong i = 0; i < size; i++) {
+            nmod_matrix[i] = (nmod_mpoly_t*) flint_malloc(size * sizeof(nmod_mpoly_t));
+        }
+        
+        // Convert matrix
+        fq_matrix_mvpoly_to_nmod_mpoly(nmod_matrix, matrix, size, nmod_ctx);
+        
+        // Compute determinant
+        nmod_mpoly_t det_nmod;
+        nmod_mpoly_init(det_nmod, nmod_ctx);
+        
+        timing_info_t det_start = start_timing();
+        if (size >= PARALLEL_THRESHOLD && max_threads > 1) {
+            DET_PRINT("Using parallel nmod determinant computation\n");
+            compute_nmod_mpoly_det_parallel_optimized(det_nmod, nmod_matrix, size, nmod_ctx, 0);
+        } else {
+            DET_PRINT("Using serial nmod determinant computation\n");
+            compute_nmod_mpoly_det_recursive(det_nmod, nmod_matrix, size, nmod_ctx);
+        }
+        timing_info_t det_elapsed = end_timing(det_start);
+        print_timing("Prime field determinant computation", det_elapsed);
+        
+        // Convert result back
+        timing_info_t result_start = start_timing();
+        nmod_mpoly_to_fq_mvpoly(result, det_nmod, nvars, npars, nmod_ctx, ctx);
+        timing_info_t result_elapsed = end_timing(result_start);
+        print_timing("Result conversion from nmod", result_elapsed);
+        
+        DET_PRINT("Final result: %ld terms\n", result->nterms);
+        
+        // Cleanup
+        for (slong i = 0; i < size; i++) {
+            for (slong j = 0; j < size; j++) {
+                nmod_mpoly_clear(nmod_matrix[i][j], nmod_ctx);
+            }
+            flint_free(nmod_matrix[i]);
+        }
+        flint_free(nmod_matrix);
+        
+        nmod_mpoly_clear(det_nmod, nmod_ctx);
+        nmod_mpoly_ctx_clear(nmod_ctx);
+        
+        timing_info_t total_elapsed = end_timing(total_start);
+        printf("Total computation (prime field): Wall time: %.6f s, CPU time: %.6f s", 
+               total_elapsed.wall_time, total_elapsed.cpu_time);
+        if (total_elapsed.wall_time > 0) {
+            printf(" (CPU efficiency: %.1f%%)\n", 
+                   (total_elapsed.cpu_time / total_elapsed.wall_time) * 100.0);
+        } else {
+            printf("\n");
+        }
+        return;
+    }
+    
+    // General case: Use fq_nmod_mpoly
+    DET_PRINT("Using general multivariate polynomial matrix method\n");
+    
+    // Create mpoly context
+    fq_nmod_mpoly_ctx_t mpoly_ctx;
+    fq_nmod_mpoly_ctx_init(mpoly_ctx, total_vars, ORD_LEX, ctx);
+    
+    // Allocate mpoly matrix
+    fq_nmod_mpoly_t **mpoly_matrix = (fq_nmod_mpoly_t**) flint_malloc(size * sizeof(fq_nmod_mpoly_t*));
+    for (slong i = 0; i < size; i++) {
+        mpoly_matrix[i] = (fq_nmod_mpoly_t*) flint_malloc(size * sizeof(fq_nmod_mpoly_t));
+    }
+    
+    // Convert matrix
+    fq_matrix_mvpoly_to_mpoly(mpoly_matrix, matrix, size, mpoly_ctx);
+    
+    // Compute determinant
+    fq_nmod_mpoly_t det_mpoly;
+    fq_nmod_mpoly_init(det_mpoly, mpoly_ctx);
+    
+    timing_info_t det_start = start_timing();
+    if (size >= PARALLEL_THRESHOLD && max_threads > 1) {
+        DET_PRINT("Using parallel determinant computation\n");
+        compute_fq_nmod_mpoly_det_parallel_optimized(det_mpoly, mpoly_matrix, size, mpoly_ctx, 0);
+    } else {
+        DET_PRINT("Using serial determinant computation\n");
+        compute_fq_nmod_mpoly_det_recursive(det_mpoly, mpoly_matrix, size, mpoly_ctx);
+    }
+    timing_info_t det_elapsed = end_timing(det_start);
+    print_timing("Determinant computation", det_elapsed);
+    
+    // Convert result back
+    timing_info_t result_start = start_timing();
+    fq_nmod_mpoly_to_fq_mvpoly(result, det_mpoly, nvars, npars, mpoly_ctx, ctx);
+    timing_info_t result_elapsed = end_timing(result_start);
+    print_timing("Result conversion", result_elapsed);
+    
+    DET_PRINT("Final result: %ld terms\n", result->nterms);
+    
+    // Cleanup
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            fq_nmod_mpoly_clear(mpoly_matrix[i][j], mpoly_ctx);
+        }
+        flint_free(mpoly_matrix[i]);
+    }
+    flint_free(mpoly_matrix);
+    
+    fq_nmod_mpoly_clear(det_mpoly, mpoly_ctx);
+    fq_nmod_mpoly_ctx_clear(mpoly_ctx);
+    
+    timing_info_t total_elapsed = end_timing(total_start);
+    printf("Total computation: Wall time: %.6f s, CPU time: %.6f s", 
+           total_elapsed.wall_time, total_elapsed.cpu_time);
+    if (total_elapsed.wall_time > 0) {
+        printf(" (CPU efficiency: %.1f%%)\n", 
+               (total_elapsed.cpu_time / total_elapsed.wall_time) * 100.0);
+    } else {
+        printf("\n");
     }
 }
-/* ============================================================================
-   FLINT VERSION COMPATIBILITY
-   ============================================================================ */
 
-#if __FLINT_VERSION >= 3
-#define FLINT_RAND_INIT(state) flint_rand_init(state)
-#define FLINT_RAND_CLEAR(state) flint_rand_clear(state)
-#define FLINT_RAND_SEED(state, seed) flint_rand_set_seed(state, seed, seed + 1)
-#else
-#define FLINT_RAND_INIT(state) flint_randinit(state)
-#define FLINT_RAND_CLEAR(state) flint_randclear(state)
-#define FLINT_RAND_SEED(state, seed) flint_randseed(state, seed, seed)
-#endif
-
-#ifdef __cplusplus
+// Compatibility interfaces
+void compute_fq_det_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+    compute_fq_det_recursive_flint(result, matrix, size);
 }
-#endif
 
-#endif /* FQ_UNIFIED_INTERFACE_H */
+void compute_fq_det_polynomial_matrix_simple(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+    if (is_univariate_matrix(matrix, size)) {
+        DET_PRINT("Using simple polynomial matrix method for univariate case\n");
+        compute_fq_det_univariate_optimized(result, matrix, size);
+    } else {
+        DET_PRINT("Matrix is not univariate, falling back to general method\n");
+        compute_fq_det_recursive_flint(result, matrix, size);
+    }
+}
+
+#endif // FQ_MPOLY_MAT_DET_OPTIMIZED_H
