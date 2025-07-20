@@ -8,7 +8,7 @@
  * - Assignment to array types
  * 
  * Compile with:
- * gcc -O3 -march=native -o dixon_flint dixon_flint.c -lflint -lmpfr -lgmp -lpthread -L/home/suohaohai02/mylinks -lflint -lstdc++ -lpml2 -fopenmp
+ * gcc -O3 -march=native -o dixon_flint dixon_flint.c -lflint -lmpfr -lgmp -lpthread -L/home/mylinks -lflint -lstdc++ -lpml2 -fopenmp
  */
 
 #include <stdio.h>
