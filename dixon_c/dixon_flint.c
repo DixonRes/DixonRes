@@ -8,13 +8,7 @@
  * - Assignment to array types
  * 
  * Compile with:
- * gcc -o dixon_fq_nmod dixon_main.c -lflint -lmpfr -lgmp -lpthread
-     --param max-inline-insns-single=1000 \
-    --param max-inline-insns-auto=2000 \
-    --param inline-unit-growth=50 \
-    --param large-function-growth=200 \
-    gcc -O3 -march=native --param max-inline-insns-single=1000 --param max-inline-insns-auto=2000 --param inline-unit-growth=50 --param large-function-growth=200 -Winline -fdump-ipa-inline -o dixon_flint dixon_flint.c -lflint -lmpfr -lgmp -lpthread -L/home/suohaohai02/mylinks -lflint -lstdc++ -lpml2
- //gcc -O3 -march=native -o dixon_flint dixon_flint.c -lflint -lmpfr -lgmp -lpthread -L/home/suohaohai02/mylinks -lflint -lstdc++ -lpml2
+ * gcc -O3 -march=native -o dixon_flint dixon_flint.c -lflint -lmpfr -lgmp -lpthread -L/home/suohaohai02/mylinks -lflint -lstdc++ -lpml2 -fopenmp
  */
 
 #include <stdio.h>
