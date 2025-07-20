@@ -1186,69 +1186,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
 
 // ============ Submatrix finding functions ============
 
-// Check if a row is linearly dependent
-static int is_fq_linearly_dependent_row(fq_nmod_mat_t mat, slong new_row_idx, 
-                                       slong *selected_rows, slong num_selected_rows,
-                                       slong ncols, const fq_nmod_ctx_t ctx) {
-    if (num_selected_rows == 0) return 0;
-    
-    // Build matrix with selected rows and new row
-    fq_nmod_mat_t test_mat;
-    fq_nmod_mat_init(test_mat, num_selected_rows + 1, ncols, ctx);
-    
-    // Copy selected rows
-    for (slong i = 0; i < num_selected_rows; i++) {
-        for (slong j = 0; j < ncols; j++) {
-            fq_nmod_set(fq_nmod_mat_entry(test_mat, i, j), 
-                       fq_nmod_mat_entry(mat, selected_rows[i], j), ctx);
-        }
-    }
-    
-    // Add new row
-    for (slong j = 0; j < ncols; j++) {
-        fq_nmod_set(fq_nmod_mat_entry(test_mat, num_selected_rows, j),
-                   fq_nmod_mat_entry(mat, new_row_idx, j), ctx);
-    }
-    
-    // Compute rank
-    slong rank = fq_nmod_mat_rank(test_mat, ctx);
-    fq_nmod_mat_clear(test_mat, ctx);
-    
-    // If rank didn't increase, new row is linearly dependent
-    return (rank == num_selected_rows);
-}
-
-// Check if a column is linearly dependent
-static int is_fq_linearly_dependent_col(fq_nmod_mat_t mat, slong new_col_idx,
-                                       slong *selected_cols, slong num_selected_cols,
-                                       slong *selected_rows, slong num_selected_rows,
-                                       const fq_nmod_ctx_t ctx) {
-    if (num_selected_cols == 0 || num_selected_rows == 0) return 0;
-    
-    // Build submatrix with selected rows
-    fq_nmod_mat_t test_mat;
-    fq_nmod_mat_init(test_mat, num_selected_rows, num_selected_cols + 1, ctx);
-    
-    // Copy selected columns
-    for (slong i = 0; i < num_selected_rows; i++) {
-        for (slong j = 0; j < num_selected_cols; j++) {
-            fq_nmod_set(fq_nmod_mat_entry(test_mat, i, j),
-                       fq_nmod_mat_entry(mat, selected_rows[i], selected_cols[j]), ctx);
-        }
-        // Add new column
-        fq_nmod_set(fq_nmod_mat_entry(test_mat, i, num_selected_cols),
-                   fq_nmod_mat_entry(mat, selected_rows[i], new_col_idx), ctx);
-    }
-    
-    // Compute rank
-    slong rank = fq_nmod_mat_rank(test_mat, ctx);
-    fq_nmod_mat_clear(test_mat, ctx);
-    
-    // If rank didn't increase, new column is linearly dependent
-    return (rank == num_selected_cols);
-}
-
-
 
 // Helper function to compute total degree of a polynomial
 static slong compute_fq_polynomial_total_degree(fq_mvpoly_t *poly, slong npars) {
@@ -1311,74 +1248,119 @@ static slong compute_fq_col_max_total_degree(fq_mvpoly_t ***matrix, slong col_id
     return max_degree;
 }
 
-// 修复后的函数
-// 简化优化版本 - 直接替换原有函数
-// 只需要在 dixon_flint.c 中替换 find_fq_optimal_maximal_rank_submatrix 函数
-
-// 辅助结构：维护当前行空间的基
+// 使用通用接口的行基跟踪器（使用统一格式）
 typedef struct {
-    fq_nmod_mat_t reduced_rows;    // 已约化的行向量
+    field_elem_u *reduced_rows;    // 已约化的行向量（统一格式）
     slong *pivot_cols;             // 每行的主元列位置  
     slong *selected_indices;       // 已选择的原始行索引
     slong current_rank;            // 当前秩
-} row_basis_tracker_t;
+    slong max_size;
+    slong ncols;
+    field_ctx_t *ctx;              // 统一字段上下文
+} unified_row_basis_tracker_t;
 
-// 初始化行基跟踪器
-static void row_basis_tracker_init(row_basis_tracker_t *tracker, slong max_size, slong ncols, 
-                                  const fq_nmod_ctx_struct *ctx) {
-    fq_nmod_mat_init(tracker->reduced_rows, max_size, ncols, ctx);
+// 初始化统一格式的行基跟踪器
+static void unified_row_basis_tracker_init(unified_row_basis_tracker_t *tracker, 
+                                          slong max_size, slong ncols, 
+                                          field_ctx_t *ctx) {
+    tracker->max_size = max_size;
+    tracker->ncols = ncols;
+    tracker->ctx = ctx;
+    tracker->current_rank = 0;
+    
+    void *ctx_ptr = (ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&ctx->ctx.nmod_ctx : 
+                   (void*)ctx->ctx.fq_ctx;
+    
+    // 分配并初始化所有元素
+    tracker->reduced_rows = (field_elem_u*) flint_malloc(max_size * ncols * sizeof(field_elem_u));
+    for (slong i = 0; i < max_size * ncols; i++) {
+        field_init_elem(&tracker->reduced_rows[i], ctx->field_id, ctx_ptr);
+    }
+    
     tracker->pivot_cols = (slong*) flint_malloc(max_size * sizeof(slong));
     tracker->selected_indices = (slong*) flint_malloc(max_size * sizeof(slong));
-    tracker->current_rank = 0;
     
     for (slong i = 0; i < max_size; i++) {
         tracker->pivot_cols[i] = -1;
     }
 }
 
-// 清理行基跟踪器
-static void row_basis_tracker_clear(row_basis_tracker_t *tracker, const fq_nmod_ctx_struct *ctx) {
-    fq_nmod_mat_clear(tracker->reduced_rows, ctx);
+// 清理统一格式的行基跟踪器
+static void unified_row_basis_tracker_clear(unified_row_basis_tracker_t *tracker) {
+    void *ctx_ptr = (tracker->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&tracker->ctx->ctx.nmod_ctx : 
+                   (void*)tracker->ctx->ctx.fq_ctx;
+    
+    for (slong i = 0; i < tracker->max_size * tracker->ncols; i++) {
+        field_clear_elem(&tracker->reduced_rows[i], tracker->ctx->field_id, ctx_ptr);
+    }
+    
+    flint_free(tracker->reduced_rows);
     flint_free(tracker->pivot_cols);
     flint_free(tracker->selected_indices);
 }
 
-// 尝试添加新行到基中，返回1表示成功（线性无关），0表示失败（线性相关）
-static int try_add_row_to_basis(row_basis_tracker_t *tracker, const fq_nmod_mat_t eval_mat, 
-                               slong new_row_idx, slong ncols, const fq_nmod_ctx_struct *ctx) {
-    // 复制新行到工作向量
-    fq_nmod_t *work_row = (fq_nmod_t*) flint_malloc(ncols * sizeof(fq_nmod_t));
+// 使用统一格式的 try_add_row_to_basis（不需要转换）
+static int unified_try_add_row_to_basis(unified_row_basis_tracker_t *tracker, 
+                                       const field_elem_u *unified_mat,
+                                       slong new_row_idx, slong ncols) {
+    void *ctx_ptr = (tracker->ctx->field_id == FIELD_ID_NMOD) ? 
+                   (void*)&tracker->ctx->ctx.nmod_ctx : 
+                   (void*)tracker->ctx->ctx.fq_ctx;
+    
+    // 分配工作行
+    field_elem_u *work_row = (field_elem_u*) flint_malloc(ncols * sizeof(field_elem_u));
+    
+    // 初始化并复制新行（已经是统一格式）
     for (slong j = 0; j < ncols; j++) {
-        fq_nmod_init(work_row[j], ctx);
-        fq_nmod_set(work_row[j], fq_nmod_mat_entry(eval_mat, new_row_idx, j), ctx);
+        field_init_elem(&work_row[j], tracker->ctx->field_id, ctx_ptr);
+        field_set_elem(&work_row[j], &unified_mat[new_row_idx * ncols + j], 
+                      tracker->ctx->field_id, ctx_ptr);
     }
+    
+    // 预分配临时变量
+    field_elem_u factor, temp;
+    field_init_elem(&factor, tracker->ctx->field_id, ctx_ptr);
+    field_init_elem(&temp, tracker->ctx->field_id, ctx_ptr);
     
     // 用现有基对新行进行高斯消元
     for (slong i = 0; i < tracker->current_rank; i++) {
         slong pivot_col = tracker->pivot_cols[i];
-        if (pivot_col >= 0 && !fq_nmod_is_zero(work_row[pivot_col], ctx)) {
-            // 计算消元因子
-            fq_nmod_t factor;
-            fq_nmod_init(factor, ctx);
-            fq_nmod_div(factor, work_row[pivot_col], 
-                       fq_nmod_mat_entry(tracker->reduced_rows, i, pivot_col), ctx);
+        if (pivot_col >= 0 && !field_is_zero(&work_row[pivot_col], tracker->ctx->field_id, ctx_ptr)) {
+            // 计算消元因子: factor = work_row[pivot_col] / reduced_rows[i][pivot_col]
+            field_inv(&temp, &tracker->reduced_rows[i * ncols + pivot_col], 
+                     tracker->ctx->field_id, ctx_ptr);
+            field_mul(&factor, &work_row[pivot_col], &temp, tracker->ctx->field_id, ctx_ptr);
             
-            // 消元: work_row = work_row - factor * reduced_rows[i]
+            // 消元：work_row = work_row - factor * reduced_rows[i]
             for (slong j = 0; j < ncols; j++) {
-                fq_nmod_t temp;
-                fq_nmod_init(temp, ctx);
-                fq_nmod_mul(temp, factor, fq_nmod_mat_entry(tracker->reduced_rows, i, j), ctx);
-                fq_nmod_sub(work_row[j], work_row[j], temp, ctx);
-                fq_nmod_clear(temp, ctx);
+                field_mul(&temp, &factor, &tracker->reduced_rows[i * ncols + j], 
+                         tracker->ctx->field_id, ctx_ptr);
+                
+                // CRITICAL FIX: For non-GF(2^n) fields, we need to subtract, not add
+                // In GF(2^n), addition and subtraction are the same (XOR)
+                // In other fields, we need to negate before adding
+                if (tracker->ctx->field_id == FIELD_ID_GF28 || 
+                    tracker->ctx->field_id == FIELD_ID_GF216 ||
+                    tracker->ctx->field_id == FIELD_ID_GF232 ||
+                    tracker->ctx->field_id == FIELD_ID_GF264 ||
+                    tracker->ctx->field_id == FIELD_ID_GF2128) {
+                    // For GF(2^n), addition is subtraction
+                    field_add(&work_row[j], &work_row[j], &temp, tracker->ctx->field_id, ctx_ptr);
+                } else {
+                    // For other fields, negate before adding to perform subtraction
+                    field_neg(&temp, &temp, tracker->ctx->field_id, ctx_ptr);
+                    field_add(&work_row[j], &work_row[j], &temp, tracker->ctx->field_id, ctx_ptr);
+                }
             }
-            fq_nmod_clear(factor, ctx);
         }
     }
     
     // 检查消元后是否为零向量
     slong first_nonzero = -1;
     for (slong j = 0; j < ncols; j++) {
-        if (!fq_nmod_is_zero(work_row[j], ctx)) {
+        if (!field_is_zero(&work_row[j], tracker->ctx->field_id, ctx_ptr)) {
             first_nonzero = j;
             break;
         }
@@ -1387,22 +1369,21 @@ static int try_add_row_to_basis(row_basis_tracker_t *tracker, const fq_nmod_mat_
     if (first_nonzero == -1) {
         // 零向量，线性相关
         for (slong j = 0; j < ncols; j++) {
-            fq_nmod_clear(work_row[j], ctx);
+            field_clear_elem(&work_row[j], tracker->ctx->field_id, ctx_ptr);
         }
         flint_free(work_row);
+        field_clear_elem(&factor, tracker->ctx->field_id, ctx_ptr);
+        field_clear_elem(&temp, tracker->ctx->field_id, ctx_ptr);
         return 0;
     }
     
     // 非零向量，线性无关，标准化并添加到基中
-    fq_nmod_t leading;
-    fq_nmod_init(leading, ctx);
-    fq_nmod_set(leading, work_row[first_nonzero], ctx);
+    field_inv(&temp, &work_row[first_nonzero], tracker->ctx->field_id, ctx_ptr);
     
-    // 标准化：首个非零元素变为1
+    // 标准化并存储到 reduced_rows
     for (slong j = 0; j < ncols; j++) {
-        fq_nmod_div(work_row[j], work_row[j], leading, ctx);
-        fq_nmod_set(fq_nmod_mat_entry(tracker->reduced_rows, tracker->current_rank, j), 
-                   work_row[j], ctx);
+        field_mul(&tracker->reduced_rows[tracker->current_rank * ncols + j], 
+                 &work_row[j], &temp, tracker->ctx->field_id, ctx_ptr);
     }
     
     // 更新基信息
@@ -1411,16 +1392,19 @@ static int try_add_row_to_basis(row_basis_tracker_t *tracker, const fq_nmod_mat_
     tracker->current_rank++;
     
     // 清理
-    fq_nmod_clear(leading, ctx);
+    field_clear_elem(&factor, tracker->ctx->field_id, ctx_ptr);
+    field_clear_elem(&temp, tracker->ctx->field_id, ctx_ptr);
+    
     for (slong j = 0; j < ncols; j++) {
-        fq_nmod_clear(work_row[j], ctx);
+        field_clear_elem(&work_row[j], tracker->ctx->field_id, ctx_ptr);
     }
     flint_free(work_row);
     
     return 1;
 }
 
-// 优化的主函数 - 直接替换原有版本
+
+// 优化的 find_fq_optimal_maximal_rank_submatrix
 void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix, 
                                            slong nrows, slong ncols,
                                            slong **row_indices_out, 
@@ -1432,7 +1416,14 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
     // 获取上下文
     const fq_nmod_ctx_struct *ctx = full_matrix[0][0]->ctx;
     
-    // 1. 计算度数并排序（复用原有函数）
+    // 初始化统一字段上下文
+    field_ctx_t unified_ctx;
+    field_ctx_init(&unified_ctx, ctx);
+    void *ctx_ptr = (unified_ctx.field_id == FIELD_ID_NMOD) ? 
+                   (void*)&unified_ctx.ctx.nmod_ctx : 
+                   (void*)unified_ctx.ctx.fq_ctx;
+    
+    // 1. 计算度数并排序
     fq_index_degree_pair *row_degrees = (fq_index_degree_pair*) flint_malloc(nrows * sizeof(fq_index_degree_pair));
     fq_index_degree_pair *col_degrees = (fq_index_degree_pair*) flint_malloc(ncols * sizeof(fq_index_degree_pair));
     
@@ -1449,82 +1440,100 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
     qsort(row_degrees, nrows, sizeof(fq_index_degree_pair), compare_fq_degrees);
     qsort(col_degrees, ncols, sizeof(fq_index_degree_pair), compare_fq_degrees);
     
-    // 2. 评估矩阵
-    printf("Evaluating matrix at parameter values...\n");
+    // 2. 评估矩阵并立即转换为统一格式
+    printf("Evaluating matrix and converting to unified format...\n");
+    clock_t conv_start = clock();
+    
     fq_nmod_t *param_vals = (fq_nmod_t*) flint_malloc(npars * sizeof(fq_nmod_t));
     for (slong i = 0; i < npars; i++) {
         fq_nmod_init(param_vals[i], ctx);
         fq_nmod_set_si(param_vals[i], 2 + i, ctx);
     }
     
-    fq_nmod_mat_t eval_mat;
-    fq_nmod_mat_init(eval_mat, nrows, ncols, ctx);
+    // 直接在统一格式中存储评估结果
+    field_elem_u *unified_mat = (field_elem_u*) flint_malloc(nrows * ncols * sizeof(field_elem_u));
+    for (slong i = 0; i < nrows * ncols; i++) {
+        field_init_elem(&unified_mat[i], unified_ctx.field_id, ctx_ptr);
+    }
     
+    // 评估并转换
     for (slong i = 0; i < nrows; i++) {
         for (slong j = 0; j < ncols; j++) {
             fq_nmod_t val;
             fq_nmod_init(val, ctx);
             evaluate_fq_mvpoly_at_params(val, full_matrix[i][j], param_vals);
-            fq_nmod_set(fq_nmod_mat_entry(eval_mat, i, j), val, ctx);
+            fq_nmod_to_field_elem(&unified_mat[i * ncols + j], val, &unified_ctx);
             fq_nmod_clear(val, ctx);
         }
     }
     
-    // 3. 使用优化方法选择行
+    clock_t conv_end = clock();
+    printf("Conversion time: %.3f seconds\n", (double)(conv_end - conv_start) / CLOCKS_PER_SEC);
+    
+    // 3. 选择行 - 使用统一格式
     printf("Selecting rows using incremental Gaussian elimination...\n");
-    row_basis_tracker_t row_tracker;
-    row_basis_tracker_init(&row_tracker, FLINT_MIN(nrows, ncols), ncols, ctx);
+    clock_t row_start = clock();
+    
+    unified_row_basis_tracker_t row_tracker;
+    unified_row_basis_tracker_init(&row_tracker, FLINT_MIN(nrows, ncols), ncols, &unified_ctx);
     
     for (slong i = 0; i < nrows && row_tracker.current_rank < FLINT_MIN(nrows, ncols); i++) {
         slong row_idx = row_degrees[i].index;
-        
-        if (try_add_row_to_basis(&row_tracker, eval_mat, row_idx, ncols, ctx)) {
-            /*
-            if (row_tracker.current_rank % 10 == 0 || row_tracker.current_rank <= 10) {
-                printf("  Selected row %ld (total: %ld)\n", row_idx, row_tracker.current_rank);
-            }
-            */
-        }
+        unified_try_add_row_to_basis(&row_tracker, unified_mat, row_idx, ncols);
     }
     
-    printf("Selected %ld linearly independent rows\n", row_tracker.current_rank);
+    clock_t row_end = clock();
+    double row_time = (double)(row_end - row_start) / CLOCKS_PER_SEC;
     
-    // 4. 选择列（简化版本，基于所选行的子矩阵）
+    printf("Selected %ld linearly independent rows (time: %.3f seconds)\n", 
+           row_tracker.current_rank, row_time);
+    
+    // 4. 选择列 - 使用统一格式
     printf("Selecting columns...\n");
+    clock_t col_start = clock();
     
-    // 构建所选行的子矩阵
-    fq_nmod_mat_t selected_submat;
-    fq_nmod_mat_init(selected_submat, row_tracker.current_rank, ncols, ctx);
+    // 构建所选行的子矩阵（统一格式）
+    field_elem_u *selected_submat = (field_elem_u*) flint_malloc(row_tracker.current_rank * ncols * sizeof(field_elem_u));
+    for (slong i = 0; i < row_tracker.current_rank * ncols; i++) {
+        field_init_elem(&selected_submat[i], unified_ctx.field_id, ctx_ptr);
+    }
     
     for (slong i = 0; i < row_tracker.current_rank; i++) {
         for (slong j = 0; j < ncols; j++) {
-            fq_nmod_set(fq_nmod_mat_entry(selected_submat, i, j),
-                       fq_nmod_mat_entry(eval_mat, row_tracker.selected_indices[i], j), ctx);
+            field_set_elem(&selected_submat[i * ncols + j],
+                          &unified_mat[row_tracker.selected_indices[i] * ncols + j],
+                          unified_ctx.field_id, ctx_ptr);
+        }
+    }
+    
+    // 转置子矩阵（统一格式）
+    field_elem_u *transposed = (field_elem_u*) flint_malloc(ncols * row_tracker.current_rank * sizeof(field_elem_u));
+    for (slong i = 0; i < ncols * row_tracker.current_rank; i++) {
+        field_init_elem(&transposed[i], unified_ctx.field_id, ctx_ptr);
+    }
+    
+    for (slong i = 0; i < row_tracker.current_rank; i++) {
+        for (slong j = 0; j < ncols; j++) {
+            field_set_elem(&transposed[j * row_tracker.current_rank + i],
+                          &selected_submat[i * ncols + j],
+                          unified_ctx.field_id, ctx_ptr);
         }
     }
     
     // 选择列基
-    row_basis_tracker_t col_tracker;
-    row_basis_tracker_init(&col_tracker, ncols, row_tracker.current_rank, ctx);
-    
-    // 转置思考：选择列等价于在转置矩阵上选择行
-    fq_nmod_mat_t transposed;
-    fq_nmod_mat_init(transposed, ncols, row_tracker.current_rank, ctx);
-    fq_nmod_mat_transpose(transposed, selected_submat, ctx);
+    unified_row_basis_tracker_t col_tracker;
+    unified_row_basis_tracker_init(&col_tracker, ncols, row_tracker.current_rank, &unified_ctx);
     
     for (slong j = 0; j < ncols && col_tracker.current_rank < row_tracker.current_rank; j++) {
         slong col_idx = col_degrees[j].index;
-        
-        if (try_add_row_to_basis(&col_tracker, transposed, col_idx, row_tracker.current_rank, ctx)) {
-            /*
-            if (col_tracker.current_rank % 10 == 0 || col_tracker.current_rank <= 10) {
-                printf("  Selected col %ld (total: %ld)\n", col_idx, col_tracker.current_rank);
-            }
-            */
-        }
+        unified_try_add_row_to_basis(&col_tracker, transposed, col_idx, row_tracker.current_rank);
     }
     
-    printf("Selected %ld linearly independent columns\n", col_tracker.current_rank);
+    clock_t col_end = clock();
+    double col_time = (double)(col_end - col_start) / CLOCKS_PER_SEC;
+    
+    printf("Selected %ld linearly independent columns (time: %.3f seconds)\n", 
+           col_tracker.current_rank, col_time);
     
     // 5. 构建最终结果
     slong final_size = FLINT_MIN(row_tracker.current_rank, col_tracker.current_rank);
@@ -1545,10 +1554,12 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
     fq_nmod_mat_t final_mat;
     fq_nmod_mat_init(final_mat, final_size, final_size, ctx);
     
+    // 从统一格式转回 fq_nmod_mat
     for (slong i = 0; i < final_size; i++) {
         for (slong j = 0; j < final_size; j++) {
-            fq_nmod_set(fq_nmod_mat_entry(final_mat, i, j),
-                       fq_nmod_mat_entry(eval_mat, (*row_indices_out)[i], (*col_indices_out)[j]), ctx);
+            field_elem_to_fq_nmod(fq_nmod_mat_entry(final_mat, i, j),
+                                 &unified_mat[(*row_indices_out)[i] * ncols + (*col_indices_out)[j]], 
+                                 &unified_ctx);
         }
     }
     
@@ -1556,9 +1567,17 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
     printf("Final rank: %ld/%ld %s\n", final_rank, final_size, 
            (final_rank == final_size) ? "✓" : "✗");
     
+    // 时间统计总结
+    printf("\nTime summary:\n");
+    printf("  Matrix conversion: %.3f seconds\n", (double)(conv_end - conv_start) / CLOCKS_PER_SEC);
+    printf("  Row selection: %.3f seconds\n", row_time);
+    printf("  Column selection: %.3f seconds\n", col_time);
+    printf("  Total time: %.3f seconds\n", 
+           (double)(conv_end - conv_start) / CLOCKS_PER_SEC + row_time + col_time);
+    
     // 清理
-    row_basis_tracker_clear(&row_tracker, ctx);
-    row_basis_tracker_clear(&col_tracker, ctx);
+    unified_row_basis_tracker_clear(&row_tracker);
+    unified_row_basis_tracker_clear(&col_tracker);
     flint_free(row_degrees);
     flint_free(col_degrees);
     
@@ -1567,9 +1586,22 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
     }
     flint_free(param_vals);
     
-    fq_nmod_mat_clear(eval_mat, ctx);
-    fq_nmod_mat_clear(selected_submat, ctx);
-    fq_nmod_mat_clear(transposed, ctx);
+    // 清理统一格式的矩阵
+    for (slong i = 0; i < nrows * ncols; i++) {
+        field_clear_elem(&unified_mat[i], unified_ctx.field_id, ctx_ptr);
+    }
+    flint_free(unified_mat);
+    
+    for (slong i = 0; i < row_tracker.current_rank * ncols; i++) {
+        field_clear_elem(&selected_submat[i], unified_ctx.field_id, ctx_ptr);
+    }
+    flint_free(selected_submat);
+    
+    for (slong i = 0; i < ncols * row_tracker.current_rank; i++) {
+        field_clear_elem(&transposed[i], unified_ctx.field_id, ctx_ptr);
+    }
+    flint_free(transposed);
+    
     fq_nmod_mat_clear(final_mat, ctx);
 }
 // 优化版本的 find_fq_optimal_maximal_rank_submatrix
@@ -1918,8 +1950,11 @@ void compute_fq_cancel_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **modified_M_
 // ============ Main Dixon resultant function ============
 void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys, 
                        slong nvars, slong npars) {
+
+    printf("Dixon Resultant Computation over Finite Extension Fields\n");
+    printf("========================================================\n");
     printf("\n=== Dixon Resultant over F_{p^d} ===\n");
-    
+    cleanup_unified_workspace();
     // Step 1: Build cancellation matrix
     printf("\nStep 1: Build Cancellation Matrix\n");
     fq_mvpoly_t **M_mvpoly;
@@ -2092,43 +2127,13 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     printf("\n=== Dixon Resultant Computation Complete ===\n");
 }
 
-
-
-//#include "gf2n_flint_comparison.h"
-//#include "test_gf2n_unified.h"
-//#include "gf2n_extended_tests.h"
-//#include "gf2n_fft_mul.h"
-//#include "test_gf2n_fields.h" 
-//#include "test_unified_interface.h" 
-//#include "fq_test_performance_fixed.h"
-//#include "test_fft_debug.h"
 // Main function
 
 int main() {
-    printf("Dixon Resultant Computation over Finite Extension Fields\n");
-    printf("========================================================\n");
-    
-    //int result = test_fq_dixon_with_analysis();
-    //quick_extension_test();
-        
-//fq_test_performance_fixed();
-    //test_gf232_fft();
-    //test_gf2n_fields();
-    //gf2128_fft_mul();
-    omp_set_num_threads(64);
-    //test_gf2128_fft_specific();
-    //gf2n_tests();
-    //gf2n_extended_tests();
-    //test_gf2n_unified();
-    int testdixon = test_fq_string_interface_enhanced();
-    //test_gf2n_flint_comparison();
-    // 清理
-    //cleanup_gf28_tables();
 
-    //test_unified_interface_in_main();
+    omp_set_num_threads(32);
+    test_fq_string_interface_enhanced();
 
-    //test_fq_nmod_poly_mat_det();
-    //result = main_string_parser();
     return 0;
 }
 
