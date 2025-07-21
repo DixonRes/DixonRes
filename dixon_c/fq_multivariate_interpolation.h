@@ -873,49 +873,43 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
     slong field_degree = fq_nmod_ctx_degree(ctx);
     mp_limb_t prime = fq_nmod_ctx_prime(ctx);
     
-    // Check if we're working with a GF(2^n) field
-    int is_gf2n = (prime == 2);
-    
-    // Initialize unified field context if applicable
-    field_ctx_t *unified_ctx = NULL;
-    field_elem_u generator_unified, temp_unified, one_unified;
-    
-    if (is_gf2n && (field_degree == 8 || field_degree == 16 || 
-                    field_degree == 32 || field_degree == 64 || field_degree == 128)) {
-        // Use unified interface for supported GF(2^n) fields
-        unified_ctx = (field_ctx_t*)malloc(sizeof(field_ctx_t));
-        field_ctx_init(unified_ctx, ctx);
-        
-        // Initialize unified elements
-        void *ctx_ptr = (unified_ctx->field_id == FIELD_ID_NMOD) ? 
-                       (void*)&unified_ctx->ctx.nmod_ctx : 
-                       (void*)unified_ctx->ctx.fq_ctx;
-        
-        field_init_elem(&generator_unified, unified_ctx->field_id, ctx_ptr);
-        field_init_elem(&temp_unified, unified_ctx->field_id, ctx_ptr);
-        field_init_elem(&one_unified, unified_ctx->field_id, ctx_ptr);
-        field_set_one(&one_unified, unified_ctx->field_id, ctx_ptr);
-        
-        printf("Using optimized %s for point generation\n", unified_ctx->description);
-    }
-    
-    // Check if field is large enough
-    int field_is_large_enough = 1;
-    slong max_points_needed = 0;
-    for (slong i = 0; i < total_vars; i++) {
-        slong points_needed = degrees[i] + extra_points;
-        if (points_needed > max_points_needed) {
-            max_points_needed = points_needed;
+    // Calculate field size
+    slong field_size;
+    if (field_degree == 1) {
+        field_size = prime;
+    } else {
+        // For extension fields, field_size = prime^field_degree
+        // Be careful with overflow for large fields
+        field_size = 1;
+        for (slong i = 0; i < field_degree; i++) {
+            if (field_size > WORD_MAX / prime) {
+                // Field is too large to represent as slong
+                field_size = WORD_MAX;
+                break;
+            }
+            field_size *= prime;
         }
     }
     
-    if (field_degree == 1 && prime < max_points_needed) {
-        field_is_large_enough = 0;
-    }
+    FQ_INTERP_PRINT("Field size: %ld (prime=%lu, degree=%ld)\n", 
+                    field_size, prime, field_degree);
     
-    FQ_INTERP_PRINT("Using d+%ld points for interpolation in F_%lu^%ld\n", 
-                    extra_points, prime, field_degree);
-    FQ_INTERP_PRINT("Max points needed: %ld\n", max_points_needed);
+    // Initialize unified field context for ALL field types
+    field_ctx_t unified_ctx;
+    field_ctx_init(&unified_ctx, ctx);
+    
+    // Initialize unified elements
+    void *ctx_ptr = (unified_ctx.field_id == FIELD_ID_NMOD) ? 
+                   (void*)&unified_ctx.ctx.nmod_ctx : 
+                   (void*)unified_ctx.ctx.fq_ctx;
+    
+    field_elem_u generator_unified, temp_unified, one_unified;
+    field_init_elem(&generator_unified, unified_ctx.field_id, ctx_ptr);
+    field_init_elem(&temp_unified, unified_ctx.field_id, ctx_ptr);
+    field_init_elem(&one_unified, unified_ctx.field_id, ctx_ptr);
+    field_set_one(&one_unified, unified_ctx.field_id, ctx_ptr);
+    
+    printf("Using optimized %s for point generation\n", unified_ctx.description);
     
     // Regular FLINT elements for compatibility
     fq_nmod_t generator, temp, one;
@@ -924,38 +918,41 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
     fq_nmod_init(one, ctx);
     fq_nmod_one(one, ctx);
     
-    if (field_degree > 1) {
-        fq_nmod_gen(generator, ctx);
-        
-        // Convert generator to unified format if applicable
-        if (unified_ctx) {
-            fq_nmod_to_field_elem(&generator_unified, generator, unified_ctx);
-        }
-        
-        printf("DEBUG: Field generator = ");
-        fq_nmod_print_pretty(generator, ctx);
-        printf("\n");
-    } else {
-        fq_nmod_set_ui(generator, 2, ctx);
-    }
+    fq_nmod_gen(generator, ctx);
+    // Convert generator to unified format
+    fq_nmod_to_field_elem(&generator_unified, generator, &unified_ctx);
+    
+    FQ_INTERP_PRINT("Field generator = ");
+    fq_nmod_print_pretty(generator, ctx);
+    printf("\n");
     
     // Generate points for each variable
     for (slong i = 0; i < total_vars; i++) {
+        // Calculate desired grid size
         grid_sizes[i] = degrees[i] + extra_points;
+        
+        // IMPORTANT: Cap grid size at field size
+        if (grid_sizes[i] > field_size) {
+            FQ_INTERP_PRINT("Variable %ld: capping grid size from %ld to field size %ld\n", 
+                           i, grid_sizes[i], field_size);
+            grid_sizes[i] = field_size;
+        }
+        
         grids[i] = (fq_nmod_t*) flint_malloc(grid_sizes[i] * sizeof(fq_nmod_t));
         
-        printf("DEBUG: Generating grid for variable %ld, degree=%ld, grid_size=%ld\n", 
-               i, degrees[i], grid_sizes[i]);
+        FQ_INTERP_PRINT("Generating grid for variable %ld, degree=%ld, grid_size=%ld\n", 
+                       i, degrees[i], grid_sizes[i]);
         
         for (slong j = 0; j < grid_sizes[i]; j++) {
             fq_nmod_init(grids[i][j], ctx);
         }
         
         if (degrees[i] == 0 && extra_points == 1) {
-            printf("DEBUG: Case 1 - degree 0\n");
+            // Special case: degree 0, only need one point
+            FQ_INTERP_PRINT("Case: degree 0, using single point\n");
             fq_nmod_set(grids[i][0], one, ctx);
-        } else if (field_is_large_enough || grid_sizes[i] <= prime) {
-            printf("DEBUG: Case 2 - normal generation for %ld points\n", grid_sizes[i]);
+        } else if (grid_sizes[i] <= field_size) {
+            FQ_INTERP_PRINT("Generating %ld distinct points\n", grid_sizes[i]);
             
             // First point is 0
             fq_nmod_zero(grids[i][0], ctx);
@@ -964,49 +961,30 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
                 // Second point is 1
                 fq_nmod_one(grids[i][1], ctx);
                 
-                // Remaining points are powers of generator
+                // Remaining points are powers of generator using unified operations
                 if (grid_sizes[i] > 2) {
-                    if (unified_ctx && is_gf2n) {
-                        // Use optimized multiplication for GF(2^n)
-                        void *ctx_ptr = (unified_ctx->field_id == FIELD_ID_NMOD) ? 
-                                       (void*)&unified_ctx->ctx.nmod_ctx : 
-                                       (void*)unified_ctx->ctx.fq_ctx;
+                    // Set temp to generator
+                    field_set_elem(&temp_unified, &generator_unified, 
+                                  unified_ctx.field_id, ctx_ptr);
+                    
+                    // Generate powers using optimized multiplication
+                    for (slong j = 2; j < grid_sizes[i]; j++) {
+                        // Convert back to fq_nmod
+                        field_elem_to_fq_nmod(grids[i][j], &temp_unified, &unified_ctx);
                         
-                        // Set temp to generator
-                        field_set_elem(&temp_unified, &generator_unified, 
-                                      unified_ctx->field_id, ctx_ptr);
-                        
-                        // Generate powers using optimized multiplication
-                        for (slong j = 2; j < grid_sizes[i]; j++) {
-                            // Convert back to fq_nmod
-                            field_elem_to_fq_nmod(grids[i][j], &temp_unified, unified_ctx);
-                            
-                            // Multiply for next power
-                            field_mul(&temp_unified, &temp_unified, &generator_unified, 
-                                     unified_ctx->field_id, ctx_ptr);
-                        }
-                    } else {
-                        // Fall back to regular FLINT operations
-                        fq_nmod_set(temp, generator, ctx);
-                        for (slong j = 2; j < grid_sizes[i]; j++) {
-                            fq_nmod_set(grids[i][j], temp, ctx);
-                            fq_nmod_mul(temp, temp, generator, ctx);
-                        }
+                        // Multiply for next power
+                        field_mul(&temp_unified, &temp_unified, &generator_unified, 
+                                 unified_ctx.field_id, ctx_ptr);
                     }
                 }
             }
         } else {
-            printf("DEBUG: Case 3 - ERROR: field too small\n");
-            FQ_INTERP_PRINT("ERROR: Need %ld points but field is too small\n", 
-                           grid_sizes[i]);
-            // Fill with what we can
-            for (slong j = 0; j < grid_sizes[i] && j < prime; j++) {
-                fq_nmod_set_ui(grids[i][j], j, ctx);
-            }
+            // This case should not happen due to capping above
+            FQ_INTERP_PRINT("ERROR: grid_size > field_size after capping!\n");
         }
         
-        // Print first 10 points for debugging
-        printf("DEBUG: Final grid[%ld]: ", i);
+        // Debug: print first few points
+        FQ_INTERP_PRINT("Grid[%ld]: ", i);
         for (slong j = 0; j < grid_sizes[i] && j < 10; j++) {
             fq_nmod_print_pretty(grids[i][j], ctx);
             printf(" ");
@@ -1022,16 +1000,9 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
     fq_nmod_clear(temp, ctx);
     fq_nmod_clear(one, ctx);
     
-    if (unified_ctx) {
-        void *ctx_ptr = (unified_ctx->field_id == FIELD_ID_NMOD) ? 
-                       (void*)&unified_ctx->ctx.nmod_ctx : 
-                       (void*)unified_ctx->ctx.fq_ctx;
-        
-        field_clear_elem(&generator_unified, unified_ctx->field_id, ctx_ptr);
-        field_clear_elem(&temp_unified, unified_ctx->field_id, ctx_ptr);
-        field_clear_elem(&one_unified, unified_ctx->field_id, ctx_ptr);
-        free(unified_ctx);
-    }
+    field_clear_elem(&generator_unified, unified_ctx.field_id, ctx_ptr);
+    field_clear_elem(&temp_unified, unified_ctx.field_id, ctx_ptr);
+    field_clear_elem(&one_unified, unified_ctx.field_id, ctx_ptr);
 }
 
 void fq_compute_det_degree_bounds_optimized(slong *bounds, fq_mvpoly_t **matrix, 
