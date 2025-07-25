@@ -1,0 +1,10 @@
+Dixon Resultant Computation
+==========================
+Field: F_257
+Mode: Basic Dixon resultant
+Variables eliminated: x, y
+Polynomials: x + y + z, x*y + y*z + z*x, x*y*z + 1
+Computation time: 0.206 seconds
+
+Resultant:
+256 + 255*z^3 + 256*z^6
