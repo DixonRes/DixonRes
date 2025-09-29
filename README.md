@@ -1,230 +1,260 @@
-# Dixon Resultant Implementation for Finite Fields
+# Dixon Resultant & Polynomial System Solver
 
-A high-performance implementation of the Dixon resultant method for polynomial system solving over finite fields (both prime fields and field extensions). This implementation includes optimizations for triangular ideal reduction and is designed for cryptanalysis applications, particularly for algebraic attacks on cryptographic systems like Rescue.
-
-## Overview
-
-The Dixon resultant is a powerful algebraic technique for eliminating variables from systems of polynomial equations. This implementation provides:
-
-- Support for both prime fields F_p and extension fields F_{p^k}
-- Triangular ideal reduction for improved efficiency
-- Multiple determinant computation methods (recursive, Kronecker substitution, interpolation)
-- Specialized attack framework for the Rescue hash function
-- Command-line interface and file I/O support
+A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
 ## Features
 
-### Core Functionality
+- **Dixon Resultant Computation**: Eliminate variables from polynomial systems using the Dixon resultant method
+- **Polynomial System Solver**: Solve n×n polynomial systems (n equations in n variables)
+- **Dixon with Ideal Reduction**: Compute resultants with triangular ideal reduction
+- **Finite Field Support**: 
+  - Prime fields F_p (p < 2^63)
+  - Extension fields F_{p^k}
+  - Automatic field size parsing (e.g., `257`, `2^8`, `256`)
+- **Flexible Input**: Command line arguments or file input
+- **Silent Mode**: Background computation with file output only
+- **Parallel Computation**: OpenMP optimization for performance
 
-1. **Basic Dixon Resultant**: Eliminates variables from polynomial systems
-2. **Dixon with Ideal Reduction**: Uses triangular ideal structure to reduce polynomial degrees during computation
-3. **Multiple Field Support**: 
-   - Prime fields (e.g., F_257)
-   - Binary extension fields (e.g., F_{2^8})
-   - General extension fields (e.g., F_{p^k})
+## Dependencies
 
-### Optimizations
+### Required
+- **FLINT** (Fast Library for Number Theory) - Headers and library must be accessible
+- **GMP** (GNU Multiple Precision Arithmetic Library)
+- **MPFR** (Multiple Precision Floating-Point Reliable Library)
 
-- Parallel computation using OpenMP
-- Batch polynomial operations for large systems
-- Optimized matrix operations with early termination
-- Memory-efficient sparse polynomial representations
-- Adaptive algorithm selection based on problem size
+### Optional
+- **PML** (Polynomial Math Library) - Detected automatically if available
+
+### System Requirements
+- GCC compiler with OpenMP support
+- Standard C libraries: pthread, math, stdc++
 
 ## Building
 
-### Prerequisites
-
-- GCC compiler with C11 support
-- FLINT library (2.9.0 or later)
-- GMP library
-- MPFR library
-- OpenMP support
-- pthreads
-
-### Compilation
-
+### Quick Start
 ```bash
-make          # Build the main Dixon tool
-make all      # Build both Dixon tool and Rescue attack
-make clean    # Clean build artifacts
+make              # Build optimized executable + libraries
 ```
 
-Or compile manually:
+### Build Options
+```bash
+make                        # Default: Direct compilation (best performance)
+make dixon-static-pml       # Static PML, dynamic FLINT
+make dixon-static-all       # Fully static executable
+make libs                   # Build both static and dynamic libraries
+make static-lib             # Build static library only
+make dynamic-lib            # Build dynamic library only
+```
+
+### Configuration
+The Makefile automatically detects FLINT and PML headers using the compiler. If needed, set environment variables:
 
 ```bash
-gcc -O3 -march=native -fopenmp -o dixon dixon.c -lflint -lmpfr -lgmp -lpthread
-gcc -O3 -march=native -fopenmp -o rescue rescue_attack_dixon.c -lflint -lmpfr -lgmp -lpthread
+export C_INCLUDE_PATH="/path/to/flint/include:/path/to/pml/include"
+export LIBRARY_PATH="/path/to/flint/lib:/path/to/pml/lib"
+make
+```
+
+### Debug Information
+```bash
+make info              # Show build configuration
+make debug-headers     # Debug header detection
+make debug-libs        # Debug library detection
+make debug-structure   # Debug directory structure
 ```
 
 ## Usage
 
-### Command Line Interface
+### Polynomial System Solver (n×n systems)
 
-#### Basic Dixon Resultant
-
+**Command Line:**
 ```bash
-./dixon "polynomials" "eliminate_vars" field_size
+# Solve 2×2 system
+./dixon --solve "x + y - 3, 2*x - y" 257
+
+# Solve 3×3 system
+./dixon --solve "x^2 + y^2 + z^2 - 5, x + y + z - 3, x*y*z - 1" 257
 ```
 
-Example:
+**File Input:**
 ```bash
+./dixon --solve input.dat
+```
+
+File format:
+```
+257
+x + y - 3
+2*x - y
+```
+
+### Dixon Resultant (Basic)
+
+**Command Line:**
+```bash
+# 3 equations, eliminate 2 variables (x, y)
 ./dixon "x + y + z, x*y + y*z + z*x, x*y*z + 1" "x, y" 257
 ```
 
-This eliminates variables x and y, keeping z in the resultant over F_257.
-
-#### Dixon with Ideal Reduction
-
-```bash
-./dixon "polynomials" "eliminate_vars" "ideal_generators" "all_variables" field_size
-```
-
-#### File Input
-
-Create an input file with the following format:
-```
-field_size
-polynomial_1
-polynomial_2
-...
-polynomial_n
-variables_to_eliminate
-```
-
-Then run:
+**File Input:**
 ```bash
 ./dixon input.dat
 ```
 
-The result will be saved to `input_solution.dat`.
+File format:
+```
+257
+x + y + z
+x*y + y*z + z*x
+x*y*z + 1
+x, y
+```
 
-#### Silent Mode
+**Important**: For Dixon mode, you must eliminate exactly (n-1) variables for n equations.
 
-For batch processing without console output:
+### Dixon with Ideal Reduction
+
 ```bash
+./dixon "a1^2 + a2^2 + a3^2 + a4^2 - 10, a4^3 - a1 - a2*a3 - 5" \
+        "a4" \
+        "a2^3 = 2*a1 + 1, a3^3 = a1*a2 + 3, a4^3 = a1 + a2*a3 + 5" \
+        "a1, a2, a3, a4" \
+        257
+```
+
+### Extension Fields
+
+```bash
+# F_256 = F_2^8, 't' is the field generator
+./dixon "x + y^2 + t, x*y + t*y + 1" "x" 2^8
+```
+
+### Silent Mode
+
+```bash
+# No console output except timing
+./dixon --silent --solve "x^2 + y^2 - 1, x + y - 1" 7
 ./dixon --silent input.dat
 ```
 
-### Field Specification
+### Field Size Formats
 
-Fields can be specified in multiple formats:
-- Prime field: `257` or `997`
-- Prime power: `256` (automatically detected as 2^8)
-- Explicit format: `2^8`, `3^5`, `7^2`
+All of these are valid:
+- `257` - Prime field
+- `256` - Automatically detected as 2^8
+- `2^8` - Extension field F_{2^8}
+- `3^5` - Extension field F_{3^5}
 
-### Rescue Attack Example
+## Examples
 
-The specialized Rescue attack tool demonstrates using Dixon resultants for cryptanalysis:
-
+### Example 1: Simple Linear System
 ```bash
-./rescue
+./dixon --solve "x + y - 5, x - y - 1" 7
 ```
 
-This builds the Rescue polynomial system and performs iterative variable elimination.
-
-## File Formats
-
-### Input File Example (example.dat)
-
-```
-65537
-31511*x0^9 + 5685*x0^8*x1 + 24547*x0^8 - 5355*x0^7*x1 - 3209*x0^7*x2^2 + ...
--2596*x0^9 - 24616*x0^8*x1^2 - 5730*x0^8*x2^2 - 691*x0^7*x1*x2^2 + ...
--28950*x0^10 + 4882*x0^9*x1 + 15386*x0^9 + 27295*x0^8*x1 + ...
-x1, x2
+### Example 2: Quadratic System
+```bash
+./dixon --solve "x^2 + y^2 - 5, x + y - 3" 257
 ```
 
-### Output Format
+### Example 3: Dixon Resultant
+```bash
+# Symmetric polynomials - eliminate x and y, keep z
+./dixon "x + y + z - 6, x*y + y*z + z*x - 11, x*y*z - 6" "x, y" 257
+```
 
-The solution file contains:
+### Example 4: Extension Field
+```bash
+# Binary extension field F_256
+./dixon --solve "x^2 + x*t + t^2, x + t" 2^8
+```
+
+## Output
+
+Results are saved to files:
+- Command line input: `solution.dat`
+- File input `example.dat`: `example_solution.dat`
+
+Output includes:
 - Field information
-- Computation mode (basic or with ideal reduction)
 - Input polynomials
-- Variables eliminated
 - Computation time
-- Final resultant polynomial
+- Solutions or resultant
 
-## Implementation Details
+## Project Structure
 
-### Key Components
-
-1. **dixon_flint.h**: Core Dixon resultant implementation
-2. **dixon_with_ideal_reduction.h**: Triangular ideal reduction algorithms
-3. **fq_unified_interface.h**: Unified interface for different field types
-4. **fq_multivariate_interpolation.h**: Multivariate polynomial interpolation
-5. **fq_mpoly_mat_det.h**: Matrix determinant algorithms
-
-### Algorithm Selection
-
-The implementation automatically selects appropriate algorithms based on:
-- Field characteristics (prime vs extension)
-- Number of variables
-- Number of parameters
-- Polynomial density
-
-### Performance Considerations
-
-- For systems with many variables (>5), use ideal reduction when possible
-- Binary extension fields (F_{2^n}) use optimized GF2 arithmetic
-- Large prime fields benefit from Kronecker substitution
-- Dense systems may require significant memory (>16GB for large problems)
-
-## Testing
-
-Run the built-in test suite:
-```bash
-./dixon --test
+```
+.
+├── dixon.c              # Main program
+├── Makefile             # Build configuration
+├── src/                 # Source files
+│   ├── dixon_flint.c
+│   ├── polynomial_system_solver.c
+│   └── ...
+├── include/             # Header files
+│   ├── dixon_flint.h
+│   ├── polynomial_system_solver.h
+│   └── ...
+└── build/               # Object files (created during build)
 ```
 
-This executes various test cases including:
-- Prime field examples
-- Extension field examples
-- Triangular ideal reduction tests
-- Performance benchmarks
+## Dixon vs Solver Mode
 
-## Limitations
+### Dixon Mode
+- **Input**: n polynomials + (n-1) variables to eliminate
+- **Output**: Resultant polynomial in remaining variables
+- **Use case**: Variable elimination, implicitization
 
-- Maximum practical system size depends on available memory
-- Very high degree polynomials (>100) may require extended computation time
-- The number of variables to eliminate must equal (number of equations - 1)
+### Solver Mode
+- **Input**: n polynomials in n variables
+- **Output**: All solutions for all variables
+- **Use case**: Finding roots, solving complete systems
 
-## Environment Variables
+## Optimization
 
-- `DIXON_DET_METHOD`: Override determinant computation method (0=recursive, 1=Kronecker, 2=interpolation)
-- `OMP_NUM_THREADS`: Control parallel thread count
+The default build uses:
+- `-O3` - Maximum optimization
+- `-flto` - Link-Time Optimization
+- `-march=native` - CPU-specific optimizations
+- `-fopenmp` - Parallel computation
+- Direct compilation for best cross-module inlining
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **Memory errors**: Reduce polynomial system size or increase system RAM
-2. **Slow computation**: Enable ideal reduction or adjust OMP_NUM_THREADS
-3. **Zero resultant**: Check that the system has a non-trivial solution
-
-### Debug Mode
-
-Compile with debug flags:
+### FLINT not found
 ```bash
-gcc -g -O0 -DDEBUG_OUTPUT_D=1 -o dixon_debug dixon.c -lflint -lmpfr -lgmp
+make debug-headers  # Check header detection
+export C_INCLUDE_PATH="/path/to/flint/include:$C_INCLUDE_PATH"
 ```
 
-## Academic References
-
-This implementation is based on:
-- Dixon, A.L. "The eliminant of three quantics in two independent variables" (1908)
-- Kapur, D., Saxena, T., Yang, L. "Algebraic and geometric reasoning using Dixon resultants" (1994)
-
-## License
-
-This project is provided for academic and research purposes. Please cite appropriately if used in publications.
-
-## Contributing
-
-For bug reports or feature requests, please include:
-- System specifications
-- Input polynomials causing issues
-- Expected vs actual output
-- Compilation flags used
+### Library linking errors
+```bash
+export LD_LIBRARY_PATH="/path/to/flint/lib:$LD_LIBRARY_PATH"
 ```
+
+### Compilation errors
+```bash
+make clean
+make info  # Check configuration
+make
+```
+
+## Testing
+
+```bash
+./dixon --test           # Run Dixon tests
+./dixon --test-solver    # Run polynomial solver tests
+```
+
+## Cleaning
+
+```bash
+make clean         # Remove all build artifacts
+make clean-build   # Keep executables, remove build directory
+```
+
+- Direct compilation (default) provides best performance through full inlining and LTO
+- For large systems, parallel computation significantly reduces runtime
+- Extension fields are slower than prime fields due to polynomial arithmetic
+- Static linking increases startup time but eliminates runtime dependencies
 
