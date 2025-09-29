@@ -75,7 +75,7 @@ make debug-structure   # Debug directory structure
 ./dixon --solve "x + y - 3, 2*x - y" 257
 
 # Solve 3×3 system
-./dixon --solve "x^2 + y^2 + z^2 - 5, x + y + z - 3, x*y*z - 1" 257
+./dixon --solve "x^2 + y^2 + z^2 - 3, x + y + z - 3, x*y*z - 1" 257
 ```
 
 **File Input:**
