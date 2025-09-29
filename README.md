@@ -29,7 +29,7 @@ A high-performance C implementation for computing Dixon resultants and solving p
 - GCC compiler with OpenMP support
 - Standard C libraries: pthread, math, stdc++
 
-## Windows Version
+## Windows GUI
 
 For Windows users, a native GUI application is available at https://github.com/DixonRes/DixonRes-Windows
 
