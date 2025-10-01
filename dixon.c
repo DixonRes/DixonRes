@@ -1,7 +1,20 @@
-// gcc -O3 -march=native -o dixon main.c -lflint -lmpfr -lgmp -lpthread -L/home/suohaohai02/mylinks -lflint -lstdc++ -lpml2 -fopenmp
-//x86_64-w64-mingw32-gcc -O3 -march=native -fopenmp -static -o dixon.exe dixon.c -I../include -L../lib -lflint -lmpfr -lgmp -lm -lpthread -lstdc++
-//gcc -O3 -march=native -fopenmp -DHAVE_FLINT -DHAVE_PML -fcommon -I/home/ideal/Attack/Dixon/pml-main/flint-extras/include -I/home/ideal/Attack/Dixon/flint-main/include -o dixon *.c -L/home/ideal/Attack/Dixon/flint-main/lib -L/home/ideal/Attack/Dixon/flint-main -L/home/ideal/Attack/Dixon/pml-main/flint-extras/lib -L/home/ideal/Attack/Dixon/pml-main/flint-extras -lflint -lpml -lmpfr -lgmp -lm -lpthread -lstdc++ -fopenmp
-//x86_64-w64-mingw32-gcc -O3 -march=native -fopenmp -static -o dixon.exe *.c -mwindows -I../include -L../lib -lflint -lmpfr -lgmp -lm -lpthread -lstdc++ -lcomctl32 -lcomdlg32 -luser32 -lgdi32
+/*
+ * Dixon Resultant Computation Tool
+ * =================================
+ * 
+ * A powerful tool for computing Dixon resultants and solving polynomial systems
+ * over finite fields using the FLINT library.
+ * 
+ * Features:
+ *   - Dixon resultant computation for multivariate polynomial systems
+ *   - Dixon with ideal reduction for systems with algebraic constraints
+ *   - Polynomial system solver (n equations in n variables)
+ *   - Support for prime fields and field extensions (F_p, F_p^k)
+ *   - Parallel computation with OpenMP
+ *   - Command line and file input modes
+ * 
+ * Dependencies: FLINT, GMP, MPFR
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
