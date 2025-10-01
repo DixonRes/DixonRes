@@ -1,4 +1,4 @@
-# 显式设置默认目标 - 必须在所有变量定义和 $(info) 之前
+# Explicitly set default target - must be before all variable definitions and $(info)
 .DEFAULT_GOAL := default
 
 # Compiler
@@ -11,16 +11,16 @@ CFLAGS = -O3 -march=native -fopenmp -fPIC
 # Linker flags
 LDFLAGS = -fopenmp
 
-# Library paths (corrected)
-FLINT_LIB_PATH = /home/suohaohai02/mylinks
-PML_LIB_PATH = /home/suohaohai02/mylinks
+# Library paths
+FLINT_LIB_PATH = /usr/local/lib
+PML_LIB_PATH = /usr/local/lib
 
-# Include paths - 使用环境变量 C_INCLUDE_PATH 中的路径
-# 从环境变量中提取路径，如果未设置则使用默认值
-FLINT_INCLUDE_PATH ?= /home/suohaohai02/apps/pml/flint-extras/include
-PML_INCLUDE_PATH ?= /home/suohaohai02/apps/pml/flint-extras/include
+# Include paths - using paths from C_INCLUDE_PATH environment variable
+# Extract paths from environment variable, use default if not set
+FLINT_INCLUDE_PATH ?= /usr/local/include
+PML_INCLUDE_PATH ?= /usr/local/include
 
-# 检查是否设置了 C_INCLUDE_PATH 环境变量
+# Check if C_INCLUDE_PATH environment variable is set
 ifdef C_INCLUDE_PATH
 $(info Using C_INCLUDE_PATH: $(C_INCLUDE_PATH))
 endif
@@ -30,15 +30,15 @@ SRC_DIR = src
 INCLUDE_DIR = include
 BUILD_DIR = build
 
-# 更智能的头文件检查 - 使用编译器来查找头文件
+# Smarter header file check - use compiler to find header files
 FLINT_HEADER_CHECK := $(shell echo '\#include <flint/flint.h>' | $(CC) -E $(INCLUDE_FLAGS) -x c - >/dev/null 2>&1 && echo yes || echo no)
 PML_HEADER_CHECK := $(shell echo '\#include <pml.h>' | $(CC) -E $(INCLUDE_FLAGS) -x c - >/dev/null 2>&1 && echo yes || echo no)
 
-# 旧的目录检查（作为后备）
+# Old directory check (as fallback)
 FLINT_DIR_EXISTS := $(shell if [ -d "$(FLINT_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
 PML_DIR_EXISTS := $(shell if [ -d "$(PML_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
 
-# 验证 FLINT（必需）- 使用头文件检查而不是目录检查
+# Validate FLINT (required) - use header check instead of directory check
 ifneq ($(FLINT_HEADER_CHECK),yes)
 $(error FLINT headers not found! Compiler cannot find flint/flint.h. Check C_INCLUDE_PATH or install FLINT development packages)
 endif
@@ -47,10 +47,10 @@ endif
 SYSTEM_LIBS = -lmpfr -lgmp -lm -lpthread -lstdc++
 
 # Include flags (including local include directory)
-# 使用环境变量 C_INCLUDE_PATH，如果设置的话可以不显式指定路径
-# 因为 GCC 会自动搜索 C_INCLUDE_PATH 中的目录
+# Using C_INCLUDE_PATH environment variable if set, no need to specify paths explicitly
+# because GCC automatically searches directories in C_INCLUDE_PATH
 INCLUDE_FLAGS = -I./$(INCLUDE_DIR)
-# 如果需要显式指定，可以取消注释下面的行
+# If explicit specification needed, uncomment the lines below
 # INCLUDE_FLAGS += -I$(FLINT_INCLUDE_PATH)
 # ifeq ($(PML_DIR_EXISTS),yes)
 # INCLUDE_FLAGS += -I$(PML_INCLUDE_PATH)
@@ -59,7 +59,7 @@ INCLUDE_FLAGS = -I./$(INCLUDE_DIR)
 # Library flags
 FLINT_FLAGS = -DHAVE_FLINT
 PML_FLAGS = 
-# 使用头文件检查而不是目录检查
+# Use header check instead of directory check
 ifeq ($(PML_HEADER_CHECK),yes)
 PML_FLAGS = -DHAVE_PML
 endif
@@ -74,7 +74,7 @@ FLINT_STATIC_LIBS = $(FLINT_LIB_PATH)/libflint.a
 # PML library linking (optional)
 PML_LIBS = 
 PML_STATIC_LIBS = 
-# 使用头文件检查而不是目录检查
+# Use header check instead of directory check
 ifeq ($(PML_HEADER_CHECK),yes)
 PML_LIBS = -L$(PML_LIB_PATH) -lpml
 PML_STATIC_LIBS = $(PML_LIB_PATH)/libpml.a
@@ -133,7 +133,7 @@ $(BUILD_DIR):
 	@echo "Creating build directory..."
 	mkdir -p $(BUILD_DIR)
 
-# 默认目标 - 使用正确的依赖关系，完全模仿 static 的模式
+# Default target - using correct dependencies, fully mimicking static pattern
 default: $(DIXON_TARGET)-dynamic
 	@echo "Built dixon with dynamic library (default)"
 
@@ -263,14 +263,14 @@ debug-headers:
 	@echo "=== Manual Path Search ==="
 	@echo "Searching for FLINT headers in common locations..."
 	@for path in /usr/include /usr/local/include ~/.local/include $(subst :, ,$(C_INCLUDE_PATH)); do \
-		if [ -f "$path/flint/flint.h" ]; then \
-			echo "  FOUND: $path/flint/flint.h"; \
+		if [ -f "$$path/flint/flint.h" ]; then \
+			echo "  FOUND: $$path/flint/flint.h"; \
 		fi; \
 	done
 	@echo "Searching for PML headers in common locations..."
 	@for path in /usr/include /usr/local/include ~/.local/include $(subst :, ,$(C_INCLUDE_PATH)); do \
-		if [ -f "$path/pml.h" ]; then \
-			echo "  FOUND: $path/pml.h"; \
+		if [ -f "$$path/pml.h" ]; then \
+			echo "  FOUND: $$path/pml.h"; \
 		fi; \
 	done
 
