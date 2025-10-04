@@ -148,6 +148,28 @@ All of these are valid:
 - `2^8` - Extension field F_{2^8}
 - `3^5` - Extension field F_{3^5}
 
+## Understanding Matrix Sizes
+
+During Dixon resultant computation, you'll see two different matrix size reports:
+
+### Expected Matrix Size
+```
+Expected matrix size: 120 x 120
+```
+This represents the theoretical maximum based on individual variable degree bounds. It's calculated as the product of `(degree + 1)` for each variable. This is **not** the Fuss-Catalan bound.
+
+### Actual Dixon Matrix Size
+```
+Found 45 x-monomials and 45 ~x-monomials (after degree filtering)
+```
+This is the **actual Dixon matrix size** after degree filtering, which should conform to the Fuss-Catalan bound for the resultant. The actual size is typically much smaller than the expected size because:
+- Many monomial combinations are filtered out by total degree constraints
+- The Dixon construction naturally produces a sparse structure
+- The Fuss-Catalan bound provides a tighter estimate based on total degrees
+
+The final coefficient matrix extracted from the Dixon polynomial will be at most this size (and may be further reduced to a maximal rank submatrix).
+```
+
 ## Examples
 
 ### Example 1: Simple Linear System
