@@ -22,7 +22,6 @@ This is the **actual Dixon matrix size** after degree filtering, which should co
 - The Fuss-Catalan bound provides a tighter estimate based on total degrees
 
 The final coefficient matrix extracted from the Dixon polynomial will be at most this size (and may be further reduced to a maximal rank submatrix).
-```
 
 ## Features
 
