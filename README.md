@@ -2,7 +2,7 @@
 
 A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
-## Important Note on Matrix Sizes
+## ⚠️ Matrix Size Output Clarification
 
 During Dixon resultant computation, you'll see two different matrix size reports:
 
