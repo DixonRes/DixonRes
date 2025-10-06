@@ -2,7 +2,7 @@
 
 A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
-## ⚠️ Implementation Notes on Version 1.0.0
+## ⚠️ Implementation Notes for Version 1.0.0
 
 ### Automatic Algorithm Selection
 
