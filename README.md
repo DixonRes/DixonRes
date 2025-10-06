@@ -2,26 +2,39 @@
 
 A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
-## ⚠️ Important Note on Matrix Sizes
+# ⚠️ Implementation Notes on Version 1.0.0
 
-During Dixon resultant computation, you'll see two different matrix size reports:
+## Automatic Algorithm Selection
+
+This implementation automatically selects the optimal resultant computation method based on input configuration:
+
+- **2 polynomials, 1 elimination variable** → FLINT's optimized bivariate resultant
+- **3+ polynomials, n-1 elimination variables** → Dixon matrix construction
+
+## Bivariate Resultant (FLINT Built-in)
+
+For the bivariate case, we leverage FLINT's highly optimized resultant algorithms based on **optimizations of the subresultant algorithm**, which provide superior performance compared to Dixon matrix methods for two-polynomial systems. These algorithms are specifically designed for efficiency over finite fields and avoid the computational overhead of constructing and solving Dixon matrices.
+
+## Dixon Matrix Size Reporting (3+ Polynomials)
+
+When using the Dixon method for systems with 3 or more polynomials, you'll observe two distinct matrix size reports:
 
 ### Expected Matrix Size
 ```
 Expected matrix size: 120 x 120
 ```
-This represents the theoretical maximum based on individual variable degree bounds. It's calculated as the product of `(degree + 1)` for each variable. This is **not** the Fuss-Catalan bound.
+This theoretical maximum is computed as the product of `(degree + 1)` for each elimination variable, representing an upper bound before degree filtering. **This is not the Fuss-Catalan bound.**
 
 ### Actual Dixon Matrix Size
 ```
 Found 45 x-monomials and 45 ~x-monomials (after degree filtering)
 ```
-This is the **actual Dixon matrix size** after degree filtering, which should conform to the Fuss-Catalan bound for the resultant. The actual size is typically much smaller than the expected size because:
-- Many monomial combinations are filtered out by total degree constraints
-- The Dixon construction naturally produces a sparse structure
-- The Fuss-Catalan bound provides a tighter estimate based on total degrees
+This is the **actual matrix dimension** after applying total degree constraints. The reduction from expected to actual size occurs because:
+- Total degree filtering eliminates invalid monomial combinations
+- Dixon construction inherently produces sparse structures
+- The final size conforms to the Fuss-Catalan bound for multivariate resultants
 
-The final coefficient matrix extracted from the Dixon polynomial will be at most this size (and may be further reduced to a maximal rank submatrix).
+The coefficient matrix extracted from the Dixon polynomial has this reduced dimension and may be further compressed to a maximal rank submatrix during computation.
 
 ## Features
 
