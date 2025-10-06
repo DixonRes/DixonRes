@@ -2,30 +2,30 @@
 
 A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
-# ⚠️ Implementation Notes on Version 1.0.0
+## ⚠️ Implementation Notes on Version 1.0.0
 
-## Automatic Algorithm Selection
+### Automatic Algorithm Selection
 
 This implementation automatically selects the optimal resultant computation method based on input configuration:
 
 - **2 polynomials, 1 elimination variable** → FLINT's optimized bivariate resultant
 - **3+ polynomials, n-1 elimination variables** → Dixon matrix construction
 
-## Bivariate Resultant (FLINT Built-in)
+### Bivariate Resultant (FLINT Built-in)
 
 For the bivariate case, we leverage FLINT's highly optimized resultant algorithms based on **optimizations of the subresultant algorithm**, which provide superior performance compared to Dixon matrix methods for two-polynomial systems. These algorithms are specifically designed for efficiency over finite fields and avoid the computational overhead of constructing and solving Dixon matrices.
 
-## Dixon Matrix Size Reporting (3+ Polynomials)
+#### Dixon Matrix Size Reporting (3+ Polynomials)
 
 When using the Dixon method for systems with 3 or more polynomials, you'll observe two distinct matrix size reports:
 
-### Expected Matrix Size
+#### Expected Matrix Size
 ```
 Expected matrix size: 120 x 120
 ```
 This theoretical maximum is computed as the product of `(degree + 1)` for each elimination variable, representing an upper bound before degree filtering. **This is not the Fuss-Catalan bound.**
 
-### Actual Dixon Matrix Size
+#### Actual Dixon Matrix Size
 ```
 Found 45 x-monomials and 45 ~x-monomials (after degree filtering)
 ```
