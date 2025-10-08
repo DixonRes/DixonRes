@@ -4,7 +4,7 @@ A high-performance C implementation for computing Dixon resultants and solving p
 
 ## Implementation Notes for Version 1.0.0
 
-This release (`v1.0.0`) is the version submitted to EUROCRYPT 2025. Please note that the `main` branch is under active development.
+This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note that the `main` branch is under active development.
 
 ### Automatic Algorithm Selection
 
