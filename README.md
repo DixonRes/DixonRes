@@ -31,12 +31,7 @@ This theoretical maximum is computed as the product of `(degree + 1)` for each e
 ```
 Found 45 x-monomials and 45 ~x-monomials (after degree filtering)
 ```
-This is the **actual matrix dimension** after applying total degree constraints. The reduction from expected to actual size occurs because:
-- Total degree filtering eliminates invalid monomial combinations
-- Dixon construction inherently produces sparse structures
-- The final size conforms to the Fuss-Catalan bound for multivariate resultants
-
-The coefficient matrix extracted from the Dixon polynomial has this reduced dimension and may be further compressed to a maximal rank submatrix during computation.
+This is the **actual Dixon matrix size** after applying total degree constraints. This size conforms to the Fuss-Catalan bound for multivariate resultants and may be further compressed to a maximal rank submatrix during computation.
 
 ## Features
 
