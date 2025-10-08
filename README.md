@@ -2,7 +2,9 @@
 
 A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
-## ⚠️ Implementation Notes for Version 1.0.0
+## Implementation Notes for Version 1.0.0
+
+This version (`v1.0.0`) represents the code state at the time of EUROCRYPT 2025 submission. Please note that the `main` branch is under active development.
 
 ### Automatic Algorithm Selection
 
