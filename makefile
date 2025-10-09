@@ -208,21 +208,30 @@ DIXON_SHARED_LIB = libdixon.so
 # Output executable (in current directory)
 DIXON_TARGET = dixon
 
+# Attack programs directory and files
+ATTACK_DIR = ../Attack
+# Find all C files recursively in Attack directory and subdirectories
+ATTACK_C_FILES := $(shell find $(ATTACK_DIR) -name "*.c" 2>/dev/null | grep -v ".ipynb_checkpoints" || echo "")
+ATTACK_EXECUTABLES := $(patsubst %.c,%,$(ATTACK_C_FILES))
+
 # Create build directory
 $(BUILD_DIR):
 	@echo "Creating build directory..."
 	mkdir -p $(BUILD_DIR)
 
-# Default target - first build libraries, then compile all sources with LTO for maximum inlining
+# Default target - first build libraries, then compile all sources with LTO for maximum inlining, then build attack programs
 default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	@echo "Building $(DIXON_TARGET) with LTO (Link Time Optimization)..."
 	@echo "Libraries built, now compiling all sources together for maximum inlining..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (LTO optimized with libraries available)"
+	@echo ""
+	@echo "Now building Attack programs..."
+	@$(MAKE) attack-programs-verbose
 
 # Also build libraries with LTO for better performance
 all: default
-	@echo "Built dixon executable and libraries with LTO optimization"
+	@echo "Built dixon executable, libraries, and attack programs with LTO optimization"
 
 # LTO target - compile all sources together for maximum optimization (same as default now)
 $(DIXON_TARGET)-lto: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
@@ -278,13 +287,110 @@ $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) $(EXTERNAL_STATIC_ALL_LIBS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
 
+# Attack programs compilation with verbose output
+attack-programs-verbose: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
+	@echo "Building Attack programs with verbose output..."
+	@if [ -z "$(ATTACK_C_FILES)" ]; then \
+		echo "No C files found in $(ATTACK_DIR)"; \
+		echo "Checked directory: $(ATTACK_DIR)"; \
+		if [ ! -d "$(ATTACK_DIR)" ]; then \
+			echo "Directory $(ATTACK_DIR) does not exist!"; \
+		fi; \
+	else \
+		echo "Found $(words $(ATTACK_C_FILES)) C files:"; \
+		for cfile in $(ATTACK_C_FILES); do \
+			echo "  $$cfile"; \
+		done; \
+		echo ""; \
+		success_count=0; \
+		fail_count=0; \
+		for cfile in $(ATTACK_C_FILES); do \
+			if [ -f "$$cfile" ]; then \
+				executable="$${cfile%.c}"; \
+				echo "Compiling $$cfile -> $$executable"; \
+				echo "Command: $(CC) $(ALL_CFLAGS) -o \"$$executable\" \"$$cfile\" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)"; \
+				if $(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS) 2>&1; then \
+					echo "Successfully compiled: $$executable"; \
+					ls -la "$$executable" | sed 's/^/  /'; \
+					success_count=$$((success_count + 1)); \
+				else \
+					echo "Failed to compile $$cfile"; \
+					fail_count=$$((fail_count + 1)); \
+				fi; \
+				echo ""; \
+			else \
+				echo "File not found: $$cfile"; \
+				fail_count=$$((fail_count + 1)); \
+			fi; \
+		done; \
+		echo "Attack programs compilation summary:"; \
+		echo "  Success: $$success_count"; \
+		echo "  Failed: $$fail_count"; \
+		echo "  Total: $(words $(ATTACK_C_FILES))"; \
+	fi
+
+# Attack programs compilation (silent version for default target)
+attack-programs: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
+	@echo "Building Attack programs..."
+	@if [ -z "$(ATTACK_C_FILES)" ]; then \
+		echo "No C files found in $(ATTACK_DIR)"; \
+	else \
+		echo "Found C files: $(ATTACK_C_FILES)"; \
+		for cfile in $(ATTACK_C_FILES); do \
+			if [ -f "$$cfile" ]; then \
+				executable="$${cfile%.c}"; \
+				echo ""; \
+				echo "Compiling $$cfile -> $$executable"; \
+				echo "Command: $(CC) $(ALL_CFLAGS) -o \"$$executable\" \"$$cfile\" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)"; \
+				if $(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS); then \
+					echo "Successfully compiled: $$executable"; \
+					ls -la "$$executable" | sed 's/^/  /'; \
+				else \
+					echo "Failed to compile $$cfile"; \
+				fi; \
+			fi; \
+		done; \
+		echo ""; \
+		echo "Attack programs compilation complete"; \
+	fi
+
+# Attack programs with static dixon library
+attack-static: $(DIXON_STATIC_LIB)
+	@echo "Building Attack programs with static dixon library..."
+	@if [ -z "$(ATTACK_C_FILES)" ]; then \
+		echo "No C files found in $(ATTACK_DIR)"; \
+	else \
+		echo "Found C files: $(ATTACK_C_FILES)"; \
+		for cfile in $(ATTACK_C_FILES); do \
+			if [ -f "$$cfile" ]; then \
+				executable="$${cfile%.c}"; \
+				echo "Compiling $$cfile -> $$executable (static dixon)"; \
+				$(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" $(DIXON_STATIC_LIB) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS) || echo "Failed to compile $$cfile"; \
+			fi; \
+		done; \
+		echo "Attack programs compilation complete (static dixon)"; \
+	fi
+
+# Clean attack programs
+clean-attack:
+	@echo "Cleaning Attack programs..."
+	@if [ -n "$(ATTACK_EXECUTABLES)" ]; then \
+		for exe in $(ATTACK_EXECUTABLES); do \
+			if [ -f "$$exe" ]; then \
+				echo "Removing $$exe"; \
+				rm -f "$$exe"; \
+			fi; \
+		done; \
+	fi
+	@echo "Attack programs cleaned"
+
 # Object file compilation (src/*.c -> build/*.o)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	$(CC) $(ALL_CFLAGS) -c -o $@ $<
 
 # Clean
-clean:
+clean: clean-attack
 	rm -f $(DIXON_TARGET) $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	rm -rf $(BUILD_DIR)
 	@echo "Cleaned all build artifacts"
@@ -304,6 +410,16 @@ test-paths:
 	@echo "PML_SO_PATH: $(PML_SO_PATH)"
 	@echo "PML_A_PATH: $(PML_A_PATH)"
 	@echo "PML_AVAILABLE: $(PML_AVAILABLE)"
+
+# Test Attack directory detection
+test-attack:
+	@echo "Testing attack detection..."
+	@echo "ATTACK_DIR: $(ATTACK_DIR)"
+	@echo "ATTACK_C_FILES: $(ATTACK_C_FILES)"
+	@echo "ATTACK_EXECUTABLES: $(ATTACK_EXECUTABLES)"
+	@echo ""
+	@echo "Manual find test:"
+	@find $(ATTACK_DIR) -name "*.c" 2>/dev/null | grep -v ".ipynb_checkpoints" || echo "No files found or directory doesn't exist"
 
 # Show configuration
 info:
@@ -348,7 +464,22 @@ info:
 	@echo "PML dynamic: $(PML_LIBS)"
 	@echo "PML static: $(PML_STATIC_LIBS)"
 	@echo ""
-	@echo "=== Combined Settings ==="
+	@echo "=== Attack Directory Structure ==="
+	@echo "Attack directory: $(ATTACK_DIR)"
+	@echo -n "Directory exists: "
+	@if [ -d "$(ATTACK_DIR)" ]; then \
+		echo "YES"; \
+		echo "C files found:"; \
+		if [ -n "$(ATTACK_C_FILES)" ]; then \
+			for cfile in $(ATTACK_C_FILES); do \
+				echo "  $$cfile"; \
+			done; \
+		else \
+			echo "  No C files found"; \
+		fi; \
+	else \
+		echo "NO"; \
+	fi
 	@echo "EXTERNAL_LIBS (dynamic): $(EXTERNAL_LIBS)"
 	@echo "EXTERNAL_STATIC_PML_LIBS: $(EXTERNAL_STATIC_PML_LIBS)"
 	@echo "EXTERNAL_STATIC_ALL_LIBS: $(EXTERNAL_STATIC_ALL_LIBS)"
@@ -465,7 +596,58 @@ debug-libs:
 	@echo "Selected PML SO path: $(PML_SO_PATH)"
 	@echo "Selected PML A path: $(PML_A_PATH)"
 
-# Debug local directory structure
+# Debug attack directory structure
+debug-attack:
+	@echo "=== Attack Directory Debug ==="
+	@echo ""
+	@echo "=== Attack Directory Analysis ==="
+	@echo "Attack directory: $(ATTACK_DIR)"
+	@echo -n "Directory exists: "
+	@if [ -d "$(ATTACK_DIR)" ]; then \
+		echo "YES"; \
+		echo "Directory contents:"; \
+		find $(ATTACK_DIR) -type f -name "*.c" 2>/dev/null | grep -v ".ipynb_checkpoints" | sed 's/^/  /' || echo "  No C files found"; \
+		echo ""; \
+		echo "Subdirectories:"; \
+		find $(ATTACK_DIR) -type d 2>/dev/null | sed 's/^/  /' || echo "  No subdirectories"; \
+		echo ""; \
+		echo "All files (including checkpoints):"; \
+		find $(ATTACK_DIR) -type f -name "*.c" 2>/dev/null | sed 's/^/  /' || echo "  No C files found"; \
+	else \
+		echo "NO"; \
+	fi
+	@echo ""
+	@echo "=== Detected Variables ==="
+	@echo "ATTACK_C_FILES: $(ATTACK_C_FILES)"
+	@echo "ATTACK_EXECUTABLES: $(ATTACK_EXECUTABLES)"
+	@echo ""
+	@echo "=== Test Compilation Check ==="
+	@echo "Current directory dixon library status:"
+	@if [ -f "$(DIXON_STATIC_LIB)" ]; then \
+		echo "  $(DIXON_STATIC_LIB): EXISTS"; \
+	else \
+		echo "  $(DIXON_STATIC_LIB): MISSING (run 'make static-lib' first)"; \
+	fi
+	@if [ -f "$(DIXON_SHARED_LIB)" ]; then \
+		echo "  $(DIXON_SHARED_LIB): EXISTS"; \
+	else \
+		echo "  $(DIXON_SHARED_LIB): MISSING (run 'make dynamic-lib' first)"; \
+	fi
+	@echo ""
+	@echo "=== Compiled Attack Programs Status ==="
+	@if [ -n "$(ATTACK_EXECUTABLES)" ]; then \
+		for exe in $(ATTACK_EXECUTABLES); do \
+			if [ -f "$$exe" ]; then \
+				echo "  $$exe: EXISTS"; \
+				ls -la "$$exe" | sed 's/^/    /'; \
+			else \
+				echo "  $$exe: NOT COMPILED"; \
+			fi; \
+		done; \
+	else \
+		echo "  No attack executables expected"; \
+	fi
+
 debug-structure:
 	@echo "=== Local Directory Structure Debug ==="
 	@echo ""
@@ -516,12 +698,18 @@ help:
 	@echo "  make static-all      - Build dixon with all static libraries (fully static)"
 	@echo "  make dynamic-lib     - Build dynamic dixon library only"
 	@echo "  make static-lib      - Build static dixon library only"
+	@echo "  make attack-programs - Build all C programs in ../Attack directory (using dynamic dixon library)"
+	@echo "  make attack-programs-verbose - Build Attack programs with detailed output"
+	@echo "  make attack-static   - Build all C programs in ../Attack directory (using static dixon library)"
+	@echo "  make clean-attack    - Clean all compiled Attack programs"
 	@echo "  make test-paths      - Test library path detection"
+	@echo "  make test-attack     - Test Attack directory detection"
 	@echo "  make info            - Show build configuration"
 	@echo "  make debug-headers   - Debug header file detection (recommended)"
 	@echo "  make debug-libs      - Debug external library detection"
 	@echo "  make debug-structure - Debug local directory structure"
-	@echo "  make clean           - Clean all build artifacts"
+	@echo "  make debug-attack    - Debug Attack directory structure and C files"
+	@echo "  make clean           - Clean all build artifacts (including Attack programs)"
 	@echo "  make clean-build     - Clean only build directory"
 	@echo "  make help            - Show this help"
 	@echo ""
@@ -529,7 +717,17 @@ help:
 	@echo "  $(SRC_DIR)/          - Source files (.c)"
 	@echo "  $(INCLUDE_DIR)/      - Header files (.h)"
 	@echo "  $(BUILD_DIR)/        - Object files (.o) [created during build]"
+	@echo "  $(ATTACK_DIR)/       - Attack programs (.c files with main())"
 	@echo "  ./               - Executables and libraries"
+	@echo ""
+	@echo "Attack programs workflow:"
+	@echo "  1. Run 'make' to build dixon libraries AND all Attack programs automatically"
+	@echo "  2. Or run 'make attack-programs' to build only Attack programs with dynamic library"
+	@echo "  3. Or run 'make attack-programs-verbose' for detailed compilation output"
+	@echo "  4. Or run 'make attack-static' to build with static dixon library"
+	@echo "  5. Each .c file in ../Attack becomes an executable with the same name"
+	@echo "  6. Use 'make debug-attack' to check compilation status"
+	@echo "  7. .ipynb_checkpoints directories are automatically excluded"
 	@echo ""
 	@echo "Compilation strategy:"
 	@echo "  default - Build libraries first, then compile all sources with LTO for maximum inlining"
@@ -541,6 +739,7 @@ help:
 	@echo "Library structure:"
 	@echo "  Dixon library: $(words $(MATH_SOURCES)) math source files"
 	@echo "  Main program: dixon.c links against dixon library OR compiles with all sources"
+	@echo "  Attack programs: Each .c in ../Attack links against dixon library + external libraries"
 	@echo "  External deps: FLINT (required), PML (optional - auto-detected)"
 	@echo ""
 	@echo "PML Detection:"
@@ -553,4 +752,4 @@ help:
 lto: $(DIXON_TARGET)-lto
 dynamic: $(DIXON_TARGET)-dynamic
 
-.PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib clean clean-build test-paths info debug-headers debug-libs debug-structure help
+.PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib attack-programs attack-programs-verbose attack-static clean-attack clean clean-build test-paths test-attack info debug-headers debug-libs debug-structure debug-attack help
