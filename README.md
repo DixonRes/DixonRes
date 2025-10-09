@@ -8,7 +8,7 @@ This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note 
 
 ### Missing File `dixon_test.h`
 
-**Due to our oversight, this version is missing the `dixon_test.h` file.** This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can either download the dixon_test.h file from the main branch (this file has never been modified), or:
+Due to our oversight, this version is missing the `dixon_test.h` file (The version submitted to EUROCRYPT 2026 contains the complete file - this issue only affects the GitHub v1.0.0 release). This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can either download the dixon_test.h file from the main branch (this file has never been modified), or:
 
 1. **Create an empty `dixon_test.h` file** in the `include/` directory containing only:
    ```c
