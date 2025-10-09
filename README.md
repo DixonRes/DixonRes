@@ -2,6 +2,18 @@
 
 A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
+## Release v1.0.1
+
+### Summary
+
+This is a maintenance release that addresses the missing file issue from v1.0.0 and modifies the makefile. **No implementation code has been modified.**
+
+### Makefile Improvements
+
+1. **Graceful PML handling**: Build succeeds even when PML library is unavailable
+2. **Default LTO compilation**: The `dixon` executable now uses `-flto` by default for better performance  
+3. **Attack programs auto-compilation**: Automatically finds and compiles all `.c` files in `../Attack/` with LTO optimization
+
 ## Implementation Notes for Version 1.0.0
 
 This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note that the `main` branch is under active development.
