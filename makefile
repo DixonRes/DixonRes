@@ -287,9 +287,9 @@ $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) $(EXTERNAL_STATIC_ALL_LIBS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
 
-# Attack programs compilation with verbose output
-attack-programs-verbose: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
-	@echo "Building Attack programs with verbose output..."
+# Attack programs compilation with verbose output (LTO with all sources)
+attack-programs-verbose:
+	@echo "Building Attack programs with LTO optimization (compiling with all sources)..."
 	@if [ -z "$(ATTACK_C_FILES)" ]; then \
 		echo "No C files found in $(ATTACK_DIR)"; \
 		echo "Checked directory: $(ATTACK_DIR)"; \
@@ -297,7 +297,7 @@ attack-programs-verbose: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 			echo "Directory $(ATTACK_DIR) does not exist!"; \
 		fi; \
 	else \
-		echo "Found $(words $(ATTACK_C_FILES)) C files:"; \
+		echo "Found C files in $(ATTACK_DIR):"; \
 		for cfile in $(ATTACK_C_FILES); do \
 			echo "  $$cfile"; \
 		done; \
@@ -307,9 +307,9 @@ attack-programs-verbose: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 		for cfile in $(ATTACK_C_FILES); do \
 			if [ -f "$$cfile" ]; then \
 				executable="$${cfile%.c}"; \
-				echo "Compiling $$cfile -> $$executable"; \
-				echo "Command: $(CC) $(ALL_CFLAGS) -o \"$$executable\" \"$$cfile\" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)"; \
-				if $(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS) 2>&1; then \
+				echo "Compiling $$cfile -> $$executable (LTO with all sources)"; \
+				echo "Command: $(CC) $(ALL_CFLAGS) -o \"$$executable\" \"$$cfile\" $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)"; \
+				if $(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS) 2>&1; then \
 					echo "Successfully compiled: $$executable"; \
 					ls -la "$$executable" | sed 's/^/  /'; \
 					success_count=$$((success_count + 1)); \
@@ -326,12 +326,13 @@ attack-programs-verbose: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 		echo "Attack programs compilation summary:"; \
 		echo "  Success: $$success_count"; \
 		echo "  Failed: $$fail_count"; \
-		echo "  Total: $(words $(ATTACK_C_FILES))"; \
+		total_files=`echo "$(ATTACK_C_FILES)" | wc -w`; \
+		echo "  Total: $$total_files"; \
 	fi
 
-# Attack programs compilation (silent version for default target)
-attack-programs: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
-	@echo "Building Attack programs..."
+# Attack programs compilation (silent version for default target, LTO with all sources)
+attack-programs:
+	@echo "Building Attack programs with LTO optimization..."
 	@if [ -z "$(ATTACK_C_FILES)" ]; then \
 		echo "No C files found in $(ATTACK_DIR)"; \
 	else \
@@ -340,9 +341,9 @@ attack-programs: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 			if [ -f "$$cfile" ]; then \
 				executable="$${cfile%.c}"; \
 				echo ""; \
-				echo "Compiling $$cfile -> $$executable"; \
-				echo "Command: $(CC) $(ALL_CFLAGS) -o \"$$executable\" \"$$cfile\" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)"; \
-				if $(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS); then \
+				echo "Compiling $$cfile -> $$executable (LTO)"; \
+				echo "Command: $(CC) $(ALL_CFLAGS) -o \"$$executable\" \"$$cfile\" $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)"; \
+				if $(CC) $(ALL_CFLAGS) -o "$$executable" "$$cfile" $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS); then \
 					echo "Successfully compiled: $$executable"; \
 					ls -la "$$executable" | sed 's/^/  /'; \
 				else \
@@ -354,7 +355,7 @@ attack-programs: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 		echo "Attack programs compilation complete"; \
 	fi
 
-# Attack programs with static dixon library
+# Attack programs with static dixon library (kept for compatibility)
 attack-static: $(DIXON_STATIC_LIB)
 	@echo "Building Attack programs with static dixon library..."
 	@if [ -z "$(ATTACK_C_FILES)" ]; then \
@@ -698,8 +699,8 @@ help:
 	@echo "  make static-all      - Build dixon with all static libraries (fully static)"
 	@echo "  make dynamic-lib     - Build dynamic dixon library only"
 	@echo "  make static-lib      - Build static dixon library only"
-	@echo "  make attack-programs - Build all C programs in ../Attack directory (using dynamic dixon library)"
-	@echo "  make attack-programs-verbose - Build Attack programs with detailed output"
+	@echo "  make attack-programs - Build all C programs in ../Attack directory (LTO with all sources)"
+	@echo "  make attack-programs-verbose - Build Attack programs with detailed output (LTO)"
 	@echo "  make attack-static   - Build all C programs in ../Attack directory (using static dixon library)"
 	@echo "  make clean-attack    - Clean all compiled Attack programs"
 	@echo "  make test-paths      - Test library path detection"
@@ -722,12 +723,16 @@ help:
 	@echo ""
 	@echo "Attack programs workflow:"
 	@echo "  1. Run 'make' to build dixon libraries AND all Attack programs automatically"
-	@echo "  2. Or run 'make attack-programs' to build only Attack programs with dynamic library"
+	@echo "  2. Or run 'make attack-programs' to build only Attack programs with LTO optimization"
 	@echo "  3. Or run 'make attack-programs-verbose' for detailed compilation output"
-	@echo "  4. Or run 'make attack-static' to build with static dixon library"
+	@echo "  4. Or run 'make attack-static' to build with static dixon library (legacy)"
 	@echo "  5. Each .c file in ../Attack becomes an executable with the same name"
 	@echo "  6. Use 'make debug-attack' to check compilation status"
 	@echo "  7. .ipynb_checkpoints directories are automatically excluded"
+	@echo ""
+	@echo "Attack programs compilation strategy:"
+	@echo "  default - Compile Attack programs with all dixon sources using LTO (best performance)"
+	@echo "  attack-static - Use pre-built static dixon library (legacy compatibility)"
 	@echo ""
 	@echo "Compilation strategy:"
 	@echo "  default - Build libraries first, then compile all sources with LTO for maximum inlining"
@@ -739,7 +744,7 @@ help:
 	@echo "Library structure:"
 	@echo "  Dixon library: $(words $(MATH_SOURCES)) math source files"
 	@echo "  Main program: dixon.c links against dixon library OR compiles with all sources"
-	@echo "  Attack programs: Each .c in ../Attack links against dixon library + external libraries"
+	@echo "  Attack programs: Each .c in ../Attack compiles with all dixon sources (LTO optimization)"
 	@echo "  External deps: FLINT (required), PML (optional - auto-detected)"
 	@echo ""
 	@echo "PML Detection:"
