@@ -4,7 +4,7 @@ A high-performance C implementation for computing Dixon resultants and solving p
 
 ## Version v1.0.1 Updates
 
-This is a maintenance release that addresses the missing file issue from v1.0.0 and modifies the makefile. **No implementation code has been modified.**
+This is a maintenance release that addresses the missing file issue from v1.0.0 and modifies the makefile. No implementation code has been modified.
 
 ## Implementation Notes for Version 1.0.0
 
