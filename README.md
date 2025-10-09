@@ -6,6 +6,20 @@ A high-performance C implementation for computing Dixon resultants and solving p
 
 This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note that the `main` branch is under active development.
 
+### Missing File `dixon_test.h`
+
+**Due to our oversight, this version is missing the `dixon_test.h` file.** This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can:
+
+1. **Create an empty `dixon_test.h` file** in the `include/` directory containing only:
+   ```c
+   void dixon_test();
+   ```
+
+2. **Clear the `dixon_test.c` file** in the `src/` directory (or implement your own test functions as needed)
+
+This will allow normal compilation and usage of the Dixon program.
+
+
 ### Automatic Algorithm Selection
 
 This implementation automatically selects the optimal resultant computation method based on input configuration:
