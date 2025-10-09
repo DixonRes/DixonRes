@@ -16,19 +16,6 @@ This is a maintenance release that addresses the missing file issue from v1.0.0 
 
 This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note that the `main` branch is under active development.
 
-### Missing File `dixon_test.h`
-
-Due to our oversight, this version is missing the `dixon_test.h` file (The version submitted to EUROCRYPT 2026 contains the complete file — this issue only affects the GitHub v1.0.0 release). This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can either download the dixon_test.h file from the main branch (this file has never been modified), or:
-
-1. **Create an empty `dixon_test.h` file** in the `include/` directory containing only:
-   ```c
-   void dixon_test();
-   ```
-
-2. **Clear the `dixon_test.c` file** in the `src/` directory (or implement your own test functions as needed)
-
-This will allow normal compilation and usage of the Dixon program.
-
 ### Automatic Algorithm Selection
 
 This implementation automatically selects the optimal resultant computation method based on input configuration:
@@ -55,6 +42,19 @@ This theoretical maximum is computed as the product of `(degree + 1)` for each e
 Found 45 x-monomials and 45 ~x-monomials (after degree filtering)
 ```
 This is the **actual Dixon matrix size** after applying total degree constraints. This size conforms to the Fuss-Catalan bound for multivariate resultants and may be further compressed to a maximal rank submatrix during computation.
+
+### Missing File `dixon_test.h`
+
+Due to our oversight, this version is missing the `dixon_test.h` file (The version submitted to EUROCRYPT 2026 contains the complete file — this issue only affects the GitHub v1.0.0 release). This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can either download the dixon_test.h file from the main branch (this file has never been modified), or:
+
+1. **Create an empty `dixon_test.h` file** in the `include/` directory containing only:
+   ```c
+   void dixon_test();
+   ```
+
+2. **Clear the `dixon_test.c` file** in the `src/` directory (or implement your own test functions as needed)
+
+This will allow normal compilation and usage of the Dixon program.
 
 ## Features
 
