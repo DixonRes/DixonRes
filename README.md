@@ -8,7 +8,7 @@ This is a maintenance release that addresses the missing file issue from v1.0.0 
 
 ### Makefile Improvements
 
-1. **Graceful PML handling**: Build succeeds even when PML library is unavailable
+1. **Robust PML handling**: Build succeeds even when PML library is unavailable
 2. **Default LTO compilation**: The `dixon` executable now uses `-flto` by default for better performance  
 3. **Attack programs auto-compilation**: Automatically finds and compiles all `.c` files in `../Attack/` with LTO optimization
 
