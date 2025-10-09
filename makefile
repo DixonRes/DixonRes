@@ -4,12 +4,12 @@
 # Compiler
 CC = gcc
 
-# Compiler flags
-CFLAGS = -O3 -march=native -fopenmp -fPIC
+# Compiler flags with parallel LTO
+CFLAGS = -O3 -march=native -fopenmp -fPIC -flto=auto
 # -fsanitize=address -static-libasan
 
-# Linker flags
-LDFLAGS = -fopenmp
+# Linker flags with parallel LTO
+LDFLAGS = -fopenmp -flto=auto
 
 # Library paths
 FLINT_LIB_PATH = /usr/local/lib
@@ -30,9 +30,79 @@ SRC_DIR = src
 INCLUDE_DIR = include
 BUILD_DIR = build
 
+# Get system library paths in a simple way
+SYSTEM_LIB_PATHS := $(shell echo "$$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib:/usr/lib64:/usr/local/lib64:/lib:/lib64:/usr/lib/x86_64-linux-gnu" | tr ':' ' ' | tr -s ' ')
+
 # Smarter header file check - use compiler to find header files
-FLINT_HEADER_CHECK := $(shell echo '\#include <flint/flint.h>' | $(CC) -E $(INCLUDE_FLAGS) -x c - >/dev/null 2>&1 && echo yes || echo no)
-PML_HEADER_CHECK := $(shell echo '\#include <pml.h>' | $(CC) -E $(INCLUDE_FLAGS) -x c - >/dev/null 2>&1 && echo yes || echo no)
+# Include C_INCLUDE_PATH in the test if it's set
+ifdef C_INCLUDE_PATH
+HEADER_TEST_FLAGS := -I./$(INCLUDE_DIR) $(foreach path,$(subst :, ,$(C_INCLUDE_PATH)),-I$(path))
+else
+HEADER_TEST_FLAGS := -I./$(INCLUDE_DIR)
+endif
+
+# Use a simple test file approach for more reliable detection
+TEMP_TEST_FILE := .header_test.c
+
+# Helper function to test header availability
+define test_header
+$(shell echo '#include <$(1)>' > $(TEMP_TEST_FILE) && $(CC) -E $(HEADER_TEST_FLAGS) $(TEMP_TEST_FILE) >/dev/null 2>&1 && echo yes || echo no; rm -f $(TEMP_TEST_FILE))
+endef
+
+# Simple library search functions
+define find_pml_so
+$(shell for path in $(SYSTEM_LIB_PATHS); do \
+	if [ -n "$$path" ] && [ -d "$$path" ]; then \
+		if [ -f "$$path/libpml.so" ]; then echo "$$path/libpml.so"; exit 0; fi; \
+		for f in "$$path"/libpml.so.*; do \
+			if [ -f "$$f" ]; then echo "$$f"; exit 0; fi; \
+		done; \
+	fi; \
+done)
+endef
+
+define find_pml_a
+$(shell for path in $(SYSTEM_LIB_PATHS); do \
+	if [ -n "$$path" ] && [ -f "$$path/libpml.a" ]; then \
+		echo "$$path/libpml.a"; exit 0; \
+	fi; \
+done)
+endef
+
+define check_pml_so
+$(shell for path in $(SYSTEM_LIB_PATHS); do \
+	if [ -n "$$path" ] && [ -d "$$path" ]; then \
+		if [ -f "$$path/libpml.so" ]; then echo yes; exit 0; fi; \
+		for f in "$$path"/libpml.so.*; do \
+			if [ -f "$$f" ]; then echo yes; exit 0; fi; \
+		done; \
+	fi; \
+done; echo no)
+endef
+
+define check_pml_a
+$(shell for path in $(SYSTEM_LIB_PATHS); do \
+	if [ -n "$$path" ] && [ -f "$$path/libpml.a" ]; then \
+		echo yes; exit 0; \
+	fi; \
+done; echo no)
+endef
+
+FLINT_HEADER_CHECK := $(call test_header,flint/flint.h)
+PML_HEADER_CHECK := $(call test_header,pml.h)
+NMOD_POLY_MAT_UTILS_CHECK := $(call test_header,nmod_poly_mat_utils.h)
+NMOD_POLY_MAT_EXTRA_CHECK := $(call test_header,nmod_poly_mat_extra.h)
+
+# Check for PML library files in all system library paths
+PML_DYNAMIC_LIB_CHECK := $(call check_pml_so)
+PML_STATIC_LIB_CHECK := $(call check_pml_a)
+
+# Find actual PML library paths for linking
+PML_SO_PATH := $(call find_pml_so)
+PML_A_PATH := $(call find_pml_a)
+
+# PML is only available if ALL required headers AND at least one library file are found
+PML_AVAILABLE := $(shell if [ "$(PML_HEADER_CHECK)" = "yes" ] && [ "$(NMOD_POLY_MAT_UTILS_CHECK)" = "yes" ] && [ "$(NMOD_POLY_MAT_EXTRA_CHECK)" = "yes" ] && ([ "$(PML_DYNAMIC_LIB_CHECK)" = "yes" ] || [ "$(PML_STATIC_LIB_CHECK)" = "yes" ]); then echo yes; else echo no; fi)
 
 # Old directory check (as fallback)
 FLINT_DIR_EXISTS := $(shell if [ -d "$(FLINT_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
@@ -47,20 +117,17 @@ endif
 SYSTEM_LIBS = -lmpfr -lgmp -lm -lpthread -lstdc++
 
 # Include flags (including local include directory)
-# Using C_INCLUDE_PATH environment variable if set, no need to specify paths explicitly
-# because GCC automatically searches directories in C_INCLUDE_PATH
+# Add C_INCLUDE_PATH directories if set
 INCLUDE_FLAGS = -I./$(INCLUDE_DIR)
-# If explicit specification needed, uncomment the lines below
-# INCLUDE_FLAGS += -I$(FLINT_INCLUDE_PATH)
-# ifeq ($(PML_DIR_EXISTS),yes)
-# INCLUDE_FLAGS += -I$(PML_INCLUDE_PATH)
-# endif
+ifdef C_INCLUDE_PATH
+INCLUDE_FLAGS += $(foreach path,$(subst :, ,$(C_INCLUDE_PATH)),-I$(path))
+endif
 
 # Library flags
 FLINT_FLAGS = -DHAVE_FLINT
 PML_FLAGS = 
-# Use header check instead of directory check
-ifeq ($(PML_HEADER_CHECK),yes)
+# Use our improved PML availability check
+ifeq ($(PML_AVAILABLE),yes)
 PML_FLAGS = -DHAVE_PML
 endif
 
@@ -71,13 +138,23 @@ ALL_CFLAGS = $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS)
 FLINT_LIBS = -L$(FLINT_LIB_PATH) -lflint
 FLINT_STATIC_LIBS = $(FLINT_LIB_PATH)/libflint.a
 
-# PML library linking (optional)
+# PML library linking (optional) - use found paths or fallback to -lpml
 PML_LIBS = 
 PML_STATIC_LIBS = 
-# Use header check instead of directory check
-ifeq ($(PML_HEADER_CHECK),yes)
-PML_LIBS = -L$(PML_LIB_PATH) -lpml
+# Use our improved PML availability check
+ifeq ($(PML_AVAILABLE),yes)
+ifneq ($(PML_SO_PATH),)
+# Use specific path if found
+PML_LIBS = $(PML_SO_PATH)
+else
+# Fallback to -lpml (let linker find it)
+PML_LIBS = -lpml
+endif
+ifneq ($(PML_A_PATH),)
+PML_STATIC_LIBS = $(PML_A_PATH)
+else
 PML_STATIC_LIBS = $(PML_LIB_PATH)/libpml.a
+endif
 endif
 
 # Combined external libraries
@@ -87,7 +164,7 @@ EXTERNAL_STATIC_ALL_LIBS = $(FLINT_STATIC_LIBS) $(PML_STATIC_LIBS) $(SYSTEM_LIBS
 
 # Runtime library path (rpath) flags
 RPATH_FLAGS = -Wl,-rpath,$(FLINT_LIB_PATH) -Wl,-rpath,.
-ifeq ($(PML_HEADER_CHECK),yes)
+ifeq ($(PML_AVAILABLE),yes)
 RPATH_FLAGS += -Wl,-rpath,$(PML_LIB_PATH)
 endif
 
@@ -121,6 +198,9 @@ MATH_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(MATH_SOURCES))
 # Main source file (in current directory)
 DIXON_SRC = dixon.c
 
+# All source files (for LTO compilation)
+ALL_SOURCES = $(DIXON_SRC) $(MATH_SOURCES)
+
 # Library names (in current directory)
 DIXON_STATIC_LIB = libdixon.a
 DIXON_SHARED_LIB = libdixon.so
@@ -133,10 +213,25 @@ $(BUILD_DIR):
 	@echo "Creating build directory..."
 	mkdir -p $(BUILD_DIR)
 
-# Default target - using correct dependencies, fully mimicking static pattern
-default: $(DIXON_TARGET)-dynamic
-	@echo "Built dixon with dynamic library (default)"
+# Default target - first build libraries, then compile all sources with LTO for maximum inlining
+default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
+	@echo "Building $(DIXON_TARGET) with LTO (Link Time Optimization)..."
+	@echo "Libraries built, now compiling all sources together for maximum inlining..."
+	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
+	@echo "Build complete: $(DIXON_TARGET) (LTO optimized with libraries available)"
 
+# Also build libraries with LTO for better performance
+all: default
+	@echo "Built dixon executable and libraries with LTO optimization"
+
+# LTO target - compile all sources together for maximum optimization (same as default now)
+$(DIXON_TARGET)-lto: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
+	@echo "Building $(DIXON_TARGET) with LTO (Link Time Optimization)..."
+	@echo "Libraries built, now compiling all sources together for maximum inlining..."
+	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
+	@echo "Build complete: $(DIXON_TARGET) (LTO optimized)"
+
+# Traditional dynamic library target
 $(DIXON_TARGET)-dynamic: $(DIXON_SRC) $(DIXON_SHARED_LIB)
 	@echo "Building $(DIXON_TARGET) with dynamic dixon library..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
@@ -199,6 +294,17 @@ clean-build:
 	rm -rf $(BUILD_DIR)
 	@echo "Cleaned build directory"
 
+# Test library detection
+test-paths:
+	@echo "Testing library path detection..."
+	@echo "LD_LIBRARY_PATH: $$LD_LIBRARY_PATH"
+	@echo "SYSTEM_LIB_PATHS: $(SYSTEM_LIB_PATHS)"
+	@echo "PML_DYNAMIC_LIB_CHECK: $(PML_DYNAMIC_LIB_CHECK)"
+	@echo "PML_STATIC_LIB_CHECK: $(PML_STATIC_LIB_CHECK)"
+	@echo "PML_SO_PATH: $(PML_SO_PATH)"
+	@echo "PML_A_PATH: $(PML_A_PATH)"
+	@echo "PML_AVAILABLE: $(PML_AVAILABLE)"
+
 # Show configuration
 info:
 	@echo "=== Build Configuration ==="
@@ -213,11 +319,24 @@ info:
 	@echo "Build directory: $(BUILD_DIR)/"
 	@echo "Output directory: ./"
 	@echo ""
+	@echo "=== System Library Paths ==="
+	@echo "LD_LIBRARY_PATH: $$LD_LIBRARY_PATH"
+	@echo "Library search paths: $(SYSTEM_LIB_PATHS)"
+	@echo ""
 	@echo "=== Library Status ==="
 	@echo "FLINT headers found: $(FLINT_HEADER_CHECK)"
 	@echo "FLINT directory exists: $(FLINT_DIR_EXISTS) at $(FLINT_INCLUDE_PATH)"
 	@echo "PML headers found: $(PML_HEADER_CHECK)"
+	@echo "nmod_poly_mat_utils.h found: $(NMOD_POLY_MAT_UTILS_CHECK)"
+	@echo "nmod_poly_mat_extra.h found: $(NMOD_POLY_MAT_EXTRA_CHECK)"
+	@echo "PML dynamic library found: $(PML_DYNAMIC_LIB_CHECK)"
+	@echo "PML static library found: $(PML_STATIC_LIB_CHECK)"
+	@echo "PML available (all headers + libraries): $(PML_AVAILABLE)"
 	@echo "PML directory exists: $(PML_DIR_EXISTS) at $(PML_INCLUDE_PATH)"
+	@echo ""
+	@echo "=== Found Library Paths ==="
+	@echo "PML dynamic library path: $(PML_SO_PATH)"
+	@echo "PML static library path: $(PML_A_PATH)"
 	@echo ""
 	@echo "=== Library Paths ==="
 	@echo "FLINT lib: $(FLINT_LIB_PATH)"
@@ -248,17 +367,38 @@ debug-headers:
 	@echo ""
 	@echo "=== Header File Tests ==="
 	@echo -n "FLINT headers (flint/flint.h): "
-	@if echo '\#include <flint/flint.h>' | $(CC) -E $(INCLUDE_FLAGS) -x c - >/dev/null 2>&1; then \
-		echo "FOUND"; \
-	else \
-		echo "NOT FOUND"; \
-	fi
+	@echo '#include <flint/flint.h>' > .header_test.c && \
+		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
+			echo "FOUND"; \
+		else \
+			echo "NOT FOUND"; \
+		fi; \
+		rm -f .header_test.c
 	@echo -n "PML headers (pml.h): "
-	@if echo '\#include <pml.h>' | $(CC) -E $(INCLUDE_FLAGS) -x c - >/dev/null 2>&1; then \
-		echo "FOUND"; \
-	else \
-		echo "NOT FOUND"; \
-	fi
+	@echo '#include <pml.h>' > .header_test.c && \
+		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
+			echo "FOUND"; \
+		else \
+			echo "NOT FOUND"; \
+		fi; \
+		rm -f .header_test.c
+	@echo -n "nmod_poly_mat_utils.h: "
+	@echo '#include <nmod_poly_mat_utils.h>' > .header_test.c && \
+		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
+			echo "FOUND"; \
+		else \
+			echo "NOT FOUND"; \
+		fi; \
+		rm -f .header_test.c
+	@echo -n "nmod_poly_mat_extra.h: "
+	@echo '#include <nmod_poly_mat_extra.h>' > .header_test.c && \
+		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
+			echo "FOUND"; \
+		else \
+			echo "NOT FOUND"; \
+		fi; \
+		rm -f .header_test.c
+	@echo "PML Available (all required headers + libraries): $(PML_AVAILABLE)"
 	@echo ""
 	@echo "=== Manual Path Search ==="
 	@echo "Searching for FLINT headers in common locations..."
@@ -273,62 +413,57 @@ debug-headers:
 			echo "  FOUND: $$path/pml.h"; \
 		fi; \
 	done
+	@echo "Searching for nmod_poly_mat_utils.h in common locations..."
+	@for path in /usr/include /usr/local/include ~/.local/include $(subst :, ,$(C_INCLUDE_PATH)); do \
+		if [ -f "$$path/nmod_poly_mat_utils.h" ]; then \
+			echo "  FOUND: $$path/nmod_poly_mat_utils.h"; \
+		fi; \
+	done
+	@echo "Searching for nmod_poly_mat_extra.h in common locations..."
+	@for path in /usr/include /usr/local/include ~/.local/include $(subst :, ,$(C_INCLUDE_PATH)); do \
+		if [ -f "$$path/nmod_poly_mat_extra.h" ]; then \
+			echo "  FOUND: $$path/nmod_poly_mat_extra.h"; \
+		fi; \
+	done
 
-# Debug library detection
+# Debug library detection with simple shell commands
 debug-libs:
 	@echo "=== Library Detection Debug ==="
 	@echo ""
-	@echo "=== FLINT ==="
-	@echo "Include path: $(FLINT_INCLUDE_PATH)"
-	@echo -n "Directory exists: "
-	@if [ -d "$(FLINT_INCLUDE_PATH)" ]; then \
-		echo "YES"; \
-		echo "Sample files:"; \
-		ls "$(FLINT_INCLUDE_PATH)" | head -5 | sed 's/^/  /'; \
-	else \
-		echo "NO"; \
-	fi
-	@echo "Library path: $(FLINT_LIB_PATH)"
-	@echo -n "libflint.so: "
-	@if ls $(FLINT_LIB_PATH)/libflint.so* 2>/dev/null | head -1 >/dev/null; then \
-		echo "FOUND"; \
-		ls $(FLINT_LIB_PATH)/libflint.so* | sed 's/^/  /'; \
-	else \
-		echo "NOT FOUND"; \
-	fi
-	@echo -n "libflint.a: "
-	@if [ -f "$(FLINT_LIB_PATH)/libflint.a" ]; then \
-		echo "FOUND"; \
-		ls -la $(FLINT_LIB_PATH)/libflint.a | sed 's/^/  /'; \
-	else \
-		echo "NOT FOUND"; \
-	fi
+	@echo "=== System Library Paths ==="
+	@echo "LD_LIBRARY_PATH: $$LD_LIBRARY_PATH"
+	@echo "Detected paths: $(SYSTEM_LIB_PATHS)"
 	@echo ""
-	@echo "=== PML ==="
-	@echo "Include path: $(PML_INCLUDE_PATH)"
-	@echo -n "Directory exists: "
-	@if [ -d "$(PML_INCLUDE_PATH)" ]; then \
-		echo "YES"; \
-		echo "Sample files:"; \
-		ls "$(PML_INCLUDE_PATH)" | head -5 | sed 's/^/  /'; \
-	else \
-		echo "NO"; \
-	fi
-	@echo "Library path: $(PML_LIB_PATH)"
-	@echo -n "libpml.so: "
-	@if ls $(PML_LIB_PATH)/libpml.so* 2>/dev/null | head -1 >/dev/null; then \
-		echo "FOUND"; \
-		ls $(PML_LIB_PATH)/libpml.so* | sed 's/^/  /'; \
-	else \
-		echo "NOT FOUND"; \
-	fi
-	@echo -n "libpml.a: "
-	@if [ -f "$(PML_LIB_PATH)/libpml.a" ]; then \
-		echo "FOUND"; \
-		ls -la $(PML_LIB_PATH)/libpml.a | sed 's/^/  /'; \
-	else \
-		echo "NOT FOUND"; \
-	fi
+	@echo "=== PML Library Search ==="
+	@echo "Searching for PML libraries in all system paths..."
+	@echo -n "Dynamic libraries (libpml.so*): "
+	@found=no; for path in $(SYSTEM_LIB_PATHS); do \
+		if [ -n "$$path" ] && [ -d "$$path" ]; then \
+			if ls "$$path"/libpml.so* >/dev/null 2>&1; then \
+				echo "FOUND"; \
+				ls "$$path"/libpml.so* 2>/dev/null | sed 's/^/  /'; \
+				found=yes; break; \
+			fi; \
+		fi; \
+	done; if [ "$$found" = "no" ]; then echo "NOT FOUND"; fi
+	@echo -n "Static libraries (libpml.a): "
+	@found=no; for path in $(SYSTEM_LIB_PATHS); do \
+		if [ -n "$$path" ] && [ -f "$$path/libpml.a" ]; then \
+			echo "FOUND"; \
+			echo "  $$path/libpml.a"; \
+			found=yes; break; \
+		fi; \
+	done; if [ "$$found" = "no" ]; then echo "NOT FOUND"; fi
+	@echo ""
+	@echo "=== Detection Results ==="
+	@echo "PML headers found: $(PML_HEADER_CHECK)"
+	@echo "nmod_poly_mat_utils.h found: $(NMOD_POLY_MAT_UTILS_CHECK)"
+	@echo "nmod_poly_mat_extra.h found: $(NMOD_POLY_MAT_EXTRA_CHECK)"
+	@echo "PML dynamic library found: $(PML_DYNAMIC_LIB_CHECK)"
+	@echo "PML static library found: $(PML_STATIC_LIB_CHECK)"
+	@echo "PML available (all requirements met): $(PML_AVAILABLE)"
+	@echo "Selected PML SO path: $(PML_SO_PATH)"
+	@echo "Selected PML A path: $(PML_A_PATH)"
 
 # Debug local directory structure
 debug-structure:
@@ -372,12 +507,16 @@ debug-structure:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  make (default)       - Build dixon with dynamic dixon library"
+	@echo "  make (default)       - Build libraries first, then dixon with LTO (all sources compiled together)"
+	@echo "  make all             - Same as default"
+	@echo "  make lto             - Same as default - Build with Link Time Optimization"
+	@echo "  make dynamic         - Build dixon with dynamic dixon library"
 	@echo "  make static          - Build dixon with static dixon library (dynamic FLINT/PML)"
 	@echo "  make static-pml      - Build dixon with static dixon+PML libraries (dynamic FLINT)"
 	@echo "  make static-all      - Build dixon with all static libraries (fully static)"
 	@echo "  make dynamic-lib     - Build dynamic dixon library only"
 	@echo "  make static-lib      - Build static dixon library only"
+	@echo "  make test-paths      - Test library path detection"
 	@echo "  make info            - Show build configuration"
 	@echo "  make debug-headers   - Debug header file detection (recommended)"
 	@echo "  make debug-libs      - Debug external library detection"
@@ -392,14 +531,26 @@ help:
 	@echo "  $(BUILD_DIR)/        - Object files (.o) [created during build]"
 	@echo "  ./               - Executables and libraries"
 	@echo ""
-	@echo "Static compilation options:"
-	@echo "  static      - Static dixon + dynamic FLINT/PML (needs rpath)"
+	@echo "Compilation strategy:"
+	@echo "  default - Build libraries first, then compile all sources with LTO for maximum inlining"
+	@echo "  dynamic - Traditional library-based compilation using pre-built library"
+	@echo "  static  - Static dixon + dynamic FLINT/PML (needs rpath)"
 	@echo "  static-pml  - Static dixon+PML + dynamic FLINT (needs rpath for FLINT)"
 	@echo "  static-all  - Fully static (no runtime dependencies)"
 	@echo ""
 	@echo "Library structure:"
 	@echo "  Dixon library: $(words $(MATH_SOURCES)) math source files"
-	@echo "  Main program: dixon.c links against dixon library"
-	@echo "  External deps: FLINT (required), PML (optional)"
+	@echo "  Main program: dixon.c links against dixon library OR compiles with all sources"
+	@echo "  External deps: FLINT (required), PML (optional - auto-detected)"
+	@echo ""
+	@echo "PML Detection:"
+	@echo "  PML support requires ALL of: pml.h, nmod_poly_mat_utils.h, nmod_poly_mat_extra.h"
+	@echo "  PLUS at least one library file: libpml.so OR libpml.a"
+	@echo "  If any requirement is missing, PML support is disabled automatically"
+	@echo "  Use 'make test-paths' and 'make debug-libs' to check availability"
 
-.PHONY: default static static-pml static-all dynamic-lib static-lib clean clean-build info debug-headers debug-libs debug-structure help
+# Aliases for convenience
+lto: $(DIXON_TARGET)-lto
+dynamic: $(DIXON_TARGET)-dynamic
+
+.PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib clean clean-build test-paths info debug-headers debug-libs debug-structure help
