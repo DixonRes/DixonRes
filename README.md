@@ -6,9 +6,9 @@ A high-performance C implementation for computing Dixon resultants and solving p
 
 This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note that the `main` branch is under active development.
 
-### Missing File `dixon_test.h`
+## Missing File `dixon_test.h`
 
-**Due to our oversight, this version is missing the `dixon_test.h` file.** This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can:
+**Due to our oversight, this version is missing the `dixon_test.h` file.** This does not affect the core functionality implementation. To compile and use the `./dixon` program normally, you can either download the latest dixon_test.h file from the main branch, or:
 
 1. **Create an empty `dixon_test.h` file** in the `include/` directory containing only:
    ```c
@@ -18,6 +18,10 @@ This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note 
 2. **Clear the `dixon_test.c` file** in the `src/` directory (or implement your own test functions as needed)
 
 This will allow normal compilation and usage of the Dixon program.
+
+---
+
+A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
 
 
 ### Automatic Algorithm Selection
