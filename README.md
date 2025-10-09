@@ -26,11 +26,11 @@ This implementation automatically selects the optimal resultant computation meth
 - **2 polynomials, 1 elimination variable** → FLINT's optimized bivariate resultant
 - **3+ polynomials, n-1 elimination variables** → Dixon matrix construction
 
-### Bivariate Resultant (FLINT Built-in)
+#### Bivariate Resultant (FLINT Built-in)
 
 For the bivariate case, we leverage FLINT's highly optimized resultant algorithms based on **optimizations of the subresultant algorithm**, which provide superior performance compared to Dixon matrix methods for two-polynomial systems.
 
-#### Dixon Matrix Size Reporting (3+ Polynomials)
+### Dixon Matrix Size Reporting (3+ Polynomials)
 
 When using the Dixon method for systems with 3 or more polynomials, you'll observe two distinct matrix size reports:
 
