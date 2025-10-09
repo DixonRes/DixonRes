@@ -19,11 +19,6 @@ This release (`v1.0.0`) is the version submitted to EUROCRYPT 2026. Please note 
 
 This will allow normal compilation and usage of the Dixon program.
 
----
-
-A high-performance C implementation for computing Dixon resultants and solving polynomial systems over finite fields using FLINT library.
-
-
 ### Automatic Algorithm Selection
 
 This implementation automatically selects the optimal resultant computation method based on input configuration:
