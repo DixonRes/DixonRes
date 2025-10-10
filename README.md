@@ -25,7 +25,7 @@ This implementation automatically selects the optimal resultant computation meth
 
 #### Bivariate Resultant (FLINT Built-in)
 
-For the bivariate case, we leverage FLINT's highly optimized resultant algorithms based on **optimizations of the subresultant algorithm**, which provide superior performance compared to Dixon matrix methods for two-polynomial systems.
+For the bivariate case, we leverage FLINT's highly optimized resultant algorithms based on *"Optimizations of the Subresultant Algorithm"* [citation], which provide superior performance compared to Dixon matrix methods for two-polynomial systems.
 
 ### Dixon Matrix Size Reporting (3+ Polynomials)
 
