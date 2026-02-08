@@ -14,9 +14,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 - Finite fields:
   - Prime fields F_p (p < 2^63)
   - Extension fields F_{p^k} (e.g. 2^8, 3^5)
-- Command line input or file input
-- Silent mode for batch computation
-- Automatic output to solution files
+- Command line input or file input. Automatic output to solution files
 
 ---
 
