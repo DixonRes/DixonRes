@@ -151,4 +151,4 @@ Each output file contains:
 
 * All computation modes generate a solution file by default
 * Extension fields are slower than prime fields due to polynomial arithmetic
-* The solver computes complete solutions for all variables
+* The optional PML library only accelerates well-determined systems over prime fields
