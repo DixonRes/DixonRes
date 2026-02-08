@@ -75,7 +75,7 @@ Example:
 ./dixon "x + y^2 + t, x*y + t*y + 1" "x" 2^8
 ```
 
-`t` is used as the extension field generator by default.
+The default settings use t as the extension field generator and FLINT's built-in field polynomial.
 
 ```bash
 ./dixon --solve "x^2 + t*y, x*y + t^2" "2^8: t^8 + t^4 + t^3 + t + 1"
@@ -152,5 +152,3 @@ Each output file contains:
 * All computation modes generate a solution file by default
 * Extension fields are slower than prime fields due to polynomial arithmetic
 * The solver computes complete solutions for all variables
-
-```
