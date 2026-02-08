@@ -22,7 +22,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 
 ## Dependencies
 
-- **FLINT**
+- **FLINT** (recommended version: 3.4.0)
 
 Optional:
 - **PML** (used automatically if available)
