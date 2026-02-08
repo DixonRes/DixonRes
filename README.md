@@ -85,8 +85,6 @@ Example:
 
 ---
 
----
-
 ### Dixon with Ideal Reduction
 
 ```bash
@@ -99,7 +97,8 @@ Example:
 ./dixon "a1^2 + a2^2 + a3^2 + a4^2 - 10, a4^3 - a1 - a2*a3 - 5" "a4" "a2^3 = 2*a1 + 1, a3^3 = a1*a2 + 3, a4^3 = a1 + a2*a3 + 5" 257"
 ```
 
-```
+---
+
 ### Silent Mode
 
 ```bash
@@ -154,5 +153,4 @@ Each output file contains:
 * Extension fields are slower than prime fields due to polynomial arithmetic
 * The solver computes complete solutions for all variables
 
-诉别人论文该怎么引你的代码。
 ```
