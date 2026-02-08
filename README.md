@@ -2,8 +2,6 @@
 
 A C implementation for computing Dixon resultants and solving polynomial systems over finite fields, based on the FLINT library.
 
-**Version:** v0.0.1
-
 ---
 
 ## Features
