@@ -116,6 +116,12 @@ Last   : variables to ELIMINATE (comma-separated)
          (#eliminate = #equations - 1)
 ```
 
+Example:
+
+```bash
+./dixon example.dat
+```
+
 ### Polynomial Solver Mode (multiline)
 
 ```
