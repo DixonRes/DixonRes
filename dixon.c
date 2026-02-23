@@ -29,6 +29,11 @@ static void print_usage(const char *prog_name) {
     printf("===============================================\n");
     printf("DixonRes v%s\n", PROGRAM_VERSION);
     printf("FLINT version: %s (Recommended: 3.4.0)\n", FLINT_VERSION);
+    #ifdef HAVE_PML
+    printf("PML support: ENABLED\n");
+    #else
+    printf("PML support: DISABLED\n");
+    #endif
     printf("===============================================\n");
 
     printf("USAGE:\n");
@@ -795,6 +800,11 @@ int main(int argc, char *argv[]) {
         printf("=================================================\n");
         printf("Dixon Resultant & Polynomial Solver v%s\n", PROGRAM_VERSION);
         printf("FLINT version: %s\n", FLINT_VERSION);
+        #ifdef HAVE_PML
+        printf("PML support: ENABLED\n");
+        #else
+        printf("PML support: DISABLED\n");
+        #endif
         printf("=================================================\n\n");
     }
     
