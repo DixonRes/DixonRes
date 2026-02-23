@@ -104,6 +104,13 @@ PML_A_PATH := $(call find_pml_a)
 # PML is only available if ALL required headers AND at least one library file are found
 PML_AVAILABLE := $(shell if [ "$(PML_HEADER_CHECK)" = "yes" ] && [ "$(NMOD_POLY_MAT_UTILS_CHECK)" = "yes" ] && [ "$(NMOD_POLY_MAT_EXTRA_CHECK)" = "yes" ] && ([ "$(PML_DYNAMIC_LIB_CHECK)" = "yes" ] || [ "$(PML_STATIC_LIB_CHECK)" = "yes" ]); then echo yes; else echo no; fi)
 
+# Print PML detection status
+ifeq ($(PML_AVAILABLE),yes)
+$(info *** PML library FOUND - Building with PML support ***)
+else
+$(info *** PML library NOT FOUND - Building without PML support ***)
+endif
+
 # Old directory check (as fallback)
 FLINT_DIR_EXISTS := $(shell if [ -d "$(FLINT_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
 PML_DIR_EXISTS := $(shell if [ -d "$(PML_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
@@ -225,12 +232,25 @@ default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (LTO optimized with libraries available)"
 	@echo ""
+	@echo "=== Build Configuration ==="
+ifeq ($(PML_AVAILABLE),yes)
+	@echo "PML support: ENABLED"
+else
+	@echo "PML support: DISABLED"
+endif
+	@echo "==========================="
+	@echo ""
 	@echo "Now building Attack programs..."
 	@$(MAKE) attack-programs-verbose
 
 # Also build libraries with LTO for better performance
 all: default
 	@echo "Built dixon executable, libraries, and attack programs with LTO optimization"
+ifeq ($(PML_AVAILABLE),yes)
+	@echo "PML support: ENABLED"
+else
+	@echo "PML support: DISABLED"
+endif
 
 # LTO target - compile all sources together for maximum optimization (same as default now)
 $(DIXON_TARGET)-lto: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
