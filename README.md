@@ -19,7 +19,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 ## Dependencies
 
 - **FLINT** (recommended version: 3.4.0)  
-  https://flintlib.org/
+  https://github.com/flintlib/flint
 
 Optional:
 - **PML** (used automatically if available)  
