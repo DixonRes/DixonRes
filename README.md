@@ -1,6 +1,6 @@
 # Dixon Resultant & Polynomial System Solver
 
-A C implementation for computing Dixon resultants and solving polynomial systems over finite fields, based on the FLINT library.
+A C implementation for computing Dixon resultants and solving polynomial systems over finite fields, based on the FLINT and PML library.
 
 ---
 
