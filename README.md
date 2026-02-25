@@ -156,3 +156,10 @@ Each output file contains:
 * All computation modes generate a solution file by default
 * Extension fields are slower than prime fields due to polynomial arithmetic
 * The optional PML library only accelerates well-determined systems over prime fields
+
+---
+
+## License
+
+DixonRes is distributed under the GNU General Public License version 3.0. See the file COPYING.
+
