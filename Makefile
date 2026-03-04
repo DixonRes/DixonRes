@@ -29,6 +29,22 @@ INCLUDE_DIR = include
 BUILD_DIR = build
 
 # ============================================================
+# Install directories (overridable via make install PREFIX=/custom)
+# ============================================================
+PREFIX      ?= /usr/local
+EXEC_PREFIX ?= $(PREFIX)
+BINDIR      ?= $(EXEC_PREFIX)/bin
+LIBDIR      ?= $(EXEC_PREFIX)/lib
+INCLUDEDIR  ?= $(PREFIX)/include/dixon
+MANDIR      ?= $(PREFIX)/share/man/man1
+
+# Install tool
+INSTALL         ?= install
+INSTALL_PROGRAM ?= $(INSTALL) -m 755
+INSTALL_DATA    ?= $(INSTALL) -m 644
+INSTALL_DIR     ?= $(INSTALL) -d -m 755
+
+# ============================================================
 # Combined CFLAGS
 # ============================================================
 ALL_CFLAGS = $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS)
@@ -194,6 +210,90 @@ $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
 
 # ============================================================
+# Install / Uninstall
+# ============================================================
+
+# install: copies binary, libraries, and headers to $(PREFIX)
+# Usage:
+#   make install              -> installs to /usr/local  (default)
+#   make install PREFIX=~/.local
+#   sudo make install PREFIX=/usr
+install: default
+	@echo "Installing to PREFIX=$(PREFIX) ..."
+	@echo ""
+	@echo "--- Creating directories ---"
+	$(INSTALL_DIR) "$(DESTDIR)$(BINDIR)"
+	$(INSTALL_DIR) "$(DESTDIR)$(LIBDIR)"
+	$(INSTALL_DIR) "$(DESTDIR)$(INCLUDEDIR)"
+	@echo ""
+	@echo "--- Installing executable: $(DIXON_TARGET) -> $(DESTDIR)$(BINDIR)/ ---"
+	$(INSTALL_PROGRAM) $(DIXON_TARGET) "$(DESTDIR)$(BINDIR)/$(DIXON_TARGET)"
+	@echo ""
+	@echo "--- Installing shared library: $(DIXON_SHARED_LIB) -> $(DESTDIR)$(LIBDIR)/ ---"
+	$(INSTALL_DATA) $(DIXON_SHARED_LIB) "$(DESTDIR)$(LIBDIR)/$(DIXON_SHARED_LIB)"
+	@# Create versioned symlink (libdixon.so.1 -> libdixon.so) if ldconfig available
+	@if command -v ldconfig >/dev/null 2>&1; then \
+		echo "Running ldconfig to update shared library cache..."; \
+		ldconfig "$(DESTDIR)$(LIBDIR)" 2>/dev/null || true; \
+	fi
+	@echo ""
+	@echo "--- Installing static library: $(DIXON_STATIC_LIB) -> $(DESTDIR)$(LIBDIR)/ ---"
+	$(INSTALL_DATA) $(DIXON_STATIC_LIB) "$(DESTDIR)$(LIBDIR)/$(DIXON_STATIC_LIB)"
+	@if command -v ranlib >/dev/null 2>&1; then \
+		ranlib "$(DESTDIR)$(LIBDIR)/$(DIXON_STATIC_LIB)"; \
+	fi
+	@echo ""
+	@echo "--- Installing headers: $(INCLUDE_DIR)/*.h -> $(DESTDIR)$(INCLUDEDIR)/ ---"
+	@for h in $(INCLUDE_DIR)/*.h; do \
+		if [ -f "$$h" ]; then \
+			echo "  $$h -> $(DESTDIR)$(INCLUDEDIR)/"; \
+			$(INSTALL_DATA) "$$h" "$(DESTDIR)$(INCLUDEDIR)/"; \
+		fi; \
+	done
+	@echo ""
+	@echo "=== Installation complete ==="
+	@echo "  Binary  : $(DESTDIR)$(BINDIR)/$(DIXON_TARGET)"
+	@echo "  Shared  : $(DESTDIR)$(LIBDIR)/$(DIXON_SHARED_LIB)"
+	@echo "  Static  : $(DESTDIR)$(LIBDIR)/$(DIXON_STATIC_LIB)"
+	@echo "  Headers : $(DESTDIR)$(INCLUDEDIR)/"
+
+# install-strip: same as install but strips debug symbols from binary and shared lib
+install-strip: default
+	@$(MAKE) install INSTALL_PROGRAM='$(INSTALL_PROGRAM) -s' \
+	                 INSTALL_DATA='$(INSTALL_DATA)'
+	@echo "Stripping installed shared library..."
+	@strip --strip-unneeded "$(DESTDIR)$(LIBDIR)/$(DIXON_SHARED_LIB)" 2>/dev/null || true
+
+# install-headers: install only the header files (useful for dev packages)
+install-headers:
+	@echo "Installing headers only..."
+	$(INSTALL_DIR) "$(DESTDIR)$(INCLUDEDIR)"
+	@for h in $(INCLUDE_DIR)/*.h; do \
+		if [ -f "$$h" ]; then \
+			echo "  $$h -> $(DESTDIR)$(INCLUDEDIR)/"; \
+			$(INSTALL_DATA) "$$h" "$(DESTDIR)$(INCLUDEDIR)/"; \
+		fi; \
+	done
+	@echo "Headers installed to $(DESTDIR)$(INCLUDEDIR)/"
+
+# uninstall: remove everything that 'make install' put in place
+uninstall:
+	@echo "Uninstalling from PREFIX=$(PREFIX) ..."
+	@echo ""
+	@echo "--- Removing executable ---"
+	rm -f "$(DESTDIR)$(BINDIR)/$(DIXON_TARGET)"
+	@echo "--- Removing libraries ---"
+	rm -f "$(DESTDIR)$(LIBDIR)/$(DIXON_SHARED_LIB)"
+	rm -f "$(DESTDIR)$(LIBDIR)/$(DIXON_STATIC_LIB)"
+	@if command -v ldconfig >/dev/null 2>&1; then \
+		ldconfig "$(DESTDIR)$(LIBDIR)" 2>/dev/null || true; \
+	fi
+	@echo "--- Removing headers ---"
+	rm -rf "$(DESTDIR)$(INCLUDEDIR)"
+	@echo ""
+	@echo "=== Uninstall complete ==="
+
+# ============================================================
 # Attack programs
 # ============================================================
 
@@ -355,6 +455,12 @@ info:
 ifeq ($(ENABLE_ASAN),yes)
 	@echo "AddressSanitizer: ENABLED"
 endif
+	@echo ""
+	@echo "=== Install Paths ==="
+	@echo "PREFIX:     $(PREFIX)"
+	@echo "BINDIR:     $(BINDIR)"
+	@echo "LIBDIR:     $(LIBDIR)"
+	@echo "INCLUDEDIR: $(INCLUDEDIR)"
 	@echo ""
 	@echo "=== Directory Structure ==="
 	@echo "Source directory: $(SRC_DIR)/"
@@ -609,7 +715,7 @@ help:
 	@echo "  make clean-attack    - Clean all compiled Attack programs"
 	@echo "  make test-paths      - Test library path detection"
 	@echo "  make test-attack     - Test Attack directory detection"
-	@echo "  make info            - Show build configuration"
+	@echo "  make info            - Show build configuration (including install paths)"
 	@echo "  make debug-headers   - Debug header file detection"
 	@echo "  make debug-libs      - Debug external library detection"
 	@echo "  make debug-structure - Debug local directory structure"
@@ -617,11 +723,22 @@ help:
 	@echo "  make clean           - Clean all build artifacts (including Attack programs)"
 	@echo "  make clean-build     - Clean only build directory"
 	@echo "  make distclean       - Clean all build artifacts and config.mk"
-	@echo "  make help            - Show this help"
+	@echo ""
+	@echo "Install targets:"
+	@echo "  make install         - Install binary, libraries, and headers to PREFIX (default: /usr/local)"
+	@echo "  make install-strip   - Same as install but strips debug symbols"
+	@echo "  make install-headers - Install header files only"
+	@echo "  make uninstall       - Remove all installed files"
+	@echo ""
+	@echo "Install path overrides (all optional):"
+	@echo "  make install PREFIX=~/.local"
+	@echo "  make install PREFIX=/usr LIBDIR=/usr/lib/x86_64-linux-gnu"
+	@echo "  make install DESTDIR=/tmp/staging PREFIX=/usr  # for package staging"
 	@echo ""
 	@echo "Build workflow:"
 	@echo "  1. ./configure       - Detect libraries, generate config.mk"
 	@echo "  2. make              - Build everything"
+	@echo "  3. sudo make install - Install to /usr/local"
 	@echo ""
 	@echo "Directory structure:"
 	@echo "  $(SRC_DIR)/          - Source files (.c)"
@@ -671,4 +788,5 @@ dynamic: $(DIXON_TARGET)-dynamic
 .PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib \
         attack-programs attack-programs-verbose attack-static clean-attack \
         clean clean-build distclean test-paths test-attack info \
-        debug-headers debug-libs debug-structure debug-attack help
+        debug-headers debug-libs debug-structure debug-attack help \
+        install install-strip install-headers uninstall
