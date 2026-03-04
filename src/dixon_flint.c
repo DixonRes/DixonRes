@@ -2074,7 +2074,6 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         printf("Warning: Empty coefficient matrix, resultant is 0\n");
     }
     
-    /* FIX: 释放 row_indices 和 col_indices */
     flint_free(row_indices);
     flint_free(col_indices);
     
@@ -2093,3 +2092,4 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     
     printf("\n=== Dixon Resultant Computation Complete ===\n");
 }
+
