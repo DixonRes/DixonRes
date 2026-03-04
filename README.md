@@ -19,17 +19,18 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 ## Dependencies
 
 - **FLINT** (recommended version: 3.4.0)  
-  https://github.com/flintlib/flint
+  <https://github.com/flintlib/flint>
 
 Optional:
 - **PML** (used automatically if available)  
-  https://github.com/vneiger/pml
+  <https://github.com/vneiger/pml>
 
 ---
 
 ## Build
 
 ```bash
+./configure
 make
 ```
 
