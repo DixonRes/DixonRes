@@ -696,7 +696,6 @@ void fq_mvpoly_sub_optimized(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq
 
 /* Also optimize fq_mvpoly_add function */
 void fq_mvpoly_add(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t *b) {
-    /* Handle special cases */
     if (a->nterms == 0 && b->nterms == 0) {
         if (result->terms != NULL) {
             fq_mvpoly_clear(result);
@@ -706,9 +705,7 @@ void fq_mvpoly_add(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
     }
     
     if (a->nterms == 0) {
-        if (result == b) {
-            return; // already correct result
-        }
+        if (result == b) return;
         if (result->terms != NULL) {
             fq_mvpoly_clear(result);
         }
@@ -717,9 +714,7 @@ void fq_mvpoly_add(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
     }
     
     if (b->nterms == 0) {
-        if (result == a) {
-            return; // already correct result
-        }
+        if (result == a) return;
         if (result->terms != NULL) {
             fq_mvpoly_clear(result);
         }
@@ -727,18 +722,15 @@ void fq_mvpoly_add(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
         return;
     }
     
-    /* Create mpoly context */
     slong total_vars = a->nvars + a->npars;
     fq_nmod_mpoly_ctx_t mpoly_ctx;
     fq_nmod_mpoly_ctx_init(mpoly_ctx, total_vars, ORD_LEX, a->ctx);
     
-    /* Create mpoly variables */
     fq_nmod_mpoly_t mpoly_a, mpoly_b, mpoly_result;
     fq_nmod_mpoly_init(mpoly_a, mpoly_ctx);
     fq_nmod_mpoly_init(mpoly_b, mpoly_ctx);
     fq_nmod_mpoly_init(mpoly_result, mpoly_ctx);
     
-    /* Convert to mpoly format */
     fq_mvpoly_to_fq_nmod_mpoly(mpoly_a, a, mpoly_ctx);
     fq_mvpoly_to_fq_nmod_mpoly(mpoly_b, b, mpoly_ctx);
     
@@ -747,15 +739,9 @@ void fq_mvpoly_add(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
     fq_mvpoly_t temp;
     fq_nmod_mpoly_to_fq_mvpoly(&temp, mpoly_result, a->nvars, a->npars, mpoly_ctx, a->ctx);
 
-    if (result != a && result != b) {
-        // If result is not one of the inputs, initialize it fresh
-        memset(result, 0, sizeof(fq_mvpoly_t));
-        fq_mvpoly_init(result, a->nvars, a->npars, a->ctx);
-    }
-    
     if (result == a || result == b) {
         fq_mvpoly_clear(result);
-    } 
+    }
     *result = temp;
     
     fq_nmod_mpoly_clear(mpoly_a, mpoly_ctx);
@@ -775,7 +761,6 @@ void fq_mvpoly_sub(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
     }
     
     if (a->nterms == 0) {
-        // result = -b
         fq_mvpoly_t temp;
         fq_mvpoly_init(&temp, b->nvars, b->npars, b->ctx);
         
@@ -795,10 +780,7 @@ void fq_mvpoly_sub(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
     }
     
     if (b->nterms == 0) {
-        // result = a
-        if (result == a) {
-            return; 
-        }
+        if (result == a) return;
         
         if (result->terms != NULL) {
             fq_mvpoly_clear(result);
@@ -824,12 +806,6 @@ void fq_mvpoly_sub(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
     fq_mvpoly_t temp;
     fq_nmod_mpoly_to_fq_mvpoly(&temp, mpoly_result, a->nvars, a->npars, mpoly_ctx, a->ctx);
 
-    if (result != a && result != b) {
-        // If result is not one of the inputs, initialize it fresh
-        memset(result, 0, sizeof(fq_mvpoly_t));
-        fq_mvpoly_init(result, a->nvars, a->npars, a->ctx);
-    }
-    
     if (result == a || result == b) {
         fq_mvpoly_clear(result);
     }
@@ -1176,76 +1152,61 @@ void divide_by_fq_linear_factor_improved(fq_mvpoly_t *quotient, const fq_mvpoly_
 // Division using FLINT's built-in functions (alternative approach)
 void divide_by_fq_linear_factor_flint(fq_mvpoly_t *quotient, const fq_mvpoly_t *dividend,
                                      slong var_idx, slong nvars, slong npars) {
-    // Initialize the quotient
     fq_mvpoly_init(quotient, nvars, npars, dividend->ctx);
     
     if (dividend->nterms == 0) return;
     
-    // Create mpoly context for the combined variable and parameter space
     slong total_vars = nvars + npars;
     fq_nmod_mpoly_ctx_t mpoly_ctx;
     fq_nmod_mpoly_ctx_init(mpoly_ctx, total_vars, ORD_LEX, dividend->ctx);
     
-    // Convert dividend to FLINT mpoly format
     fq_nmod_mpoly_t dividend_mpoly;
     fq_nmod_mpoly_init(dividend_mpoly, mpoly_ctx);
     fq_mvpoly_to_fq_nmod_mpoly(dividend_mpoly, dividend, mpoly_ctx);
     
-    // Create the linear factor (x_i - ~x_i) as an mpoly
     fq_nmod_mpoly_t divisor;
     fq_nmod_mpoly_init(divisor, mpoly_ctx);
     
-    slong actual_nvars = nvars / 2;  // Since we have dual variables
+    slong actual_nvars = nvars / 2;
     
-    // Create coefficient constants
     fq_nmod_t one, neg_one;
     fq_nmod_init(one, dividend->ctx);
     fq_nmod_init(neg_one, dividend->ctx);
     fq_nmod_one(one, dividend->ctx);
     fq_nmod_neg(neg_one, one, dividend->ctx);
     
-    // Allocate exponent array
     ulong *exps = (ulong*) flint_calloc(total_vars, sizeof(ulong));
     
-    // Add x_i term: coefficient = 1, exponent vector has 1 at position var_idx
     memset(exps, 0, total_vars * sizeof(ulong));
-    exps[var_idx] = 1;  // x_i^1
+    exps[var_idx] = 1;
     fq_nmod_mpoly_push_term_fq_nmod_ui(divisor, one, exps, mpoly_ctx);
     
-    // Add -~x_i term: coefficient = -1, exponent vector has 1 at dual position
     memset(exps, 0, total_vars * sizeof(ulong));
-    exps[var_idx + actual_nvars] = 1;  // ~x_i^1
+    exps[var_idx + actual_nvars] = 1;
     fq_nmod_mpoly_push_term_fq_nmod_ui(divisor, neg_one, exps, mpoly_ctx);
     
-    // Finalize the divisor polynomial
     fq_nmod_mpoly_sort_terms(divisor, mpoly_ctx);
     fq_nmod_mpoly_combine_like_terms(divisor, mpoly_ctx);
     
-    // Perform the division using FLINT's exact division
     fq_nmod_mpoly_t quotient_mpoly;
     fq_nmod_mpoly_init(quotient_mpoly, mpoly_ctx);
     
-    // Try exact division first
     int divides = fq_nmod_mpoly_divides(quotient_mpoly, dividend_mpoly, divisor, mpoly_ctx);
     
     if (divides) {
-        // Successful exact division - convert result back to fq_mvpoly_t
+
+        fq_mvpoly_clear(quotient);
         fq_nmod_mpoly_to_fq_mvpoly(quotient, quotient_mpoly, nvars, npars, mpoly_ctx, dividend->ctx);
-        
-        //printf("    FLINT exact division successful\n");
     } else {
-        // Exact division failed - try general division and check remainder
         fq_nmod_mpoly_t remainder;
         fq_nmod_mpoly_init(remainder, mpoly_ctx);
         
         fq_nmod_mpoly_divrem(quotient_mpoly, remainder, dividend_mpoly, divisor, mpoly_ctx);
         
         if (fq_nmod_mpoly_is_zero(remainder, mpoly_ctx)) {
-            // Division is exact despite divides() returning false
+            fq_mvpoly_clear(quotient);
             fq_nmod_mpoly_to_fq_mvpoly(quotient, quotient_mpoly, nvars, npars, mpoly_ctx, dividend->ctx);
-            //printf("    FLINT general division successful (zero remainder)\n");
         } else {
-            // Division is not exact - fall back to direct method
             printf("    Warning: FLINT division not exact, falling back to direct method\n");
             fq_mvpoly_clear(quotient);
             divide_by_fq_linear_factor_improved(quotient, dividend, var_idx, nvars, npars);
@@ -1254,7 +1215,6 @@ void divide_by_fq_linear_factor_flint(fq_mvpoly_t *quotient, const fq_mvpoly_t *
         fq_nmod_mpoly_clear(remainder, mpoly_ctx);
     }
     
-    // Cleanup
     flint_free(exps);
     fq_nmod_clear(one, dividend->ctx);
     fq_nmod_clear(neg_one, dividend->ctx);
