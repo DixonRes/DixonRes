@@ -1,181 +1,48 @@
-# Explicitly set default target - must be before all variable definitions and $(info)
+# Explicitly set default target - must be before all includes
 .DEFAULT_GOAL := default
 
-# Compiler
-CC = gcc
+# ============================================================
+# Include generated configuration (run ./configure if missing)
+# ============================================================
+ifeq ($(wildcard config.mk),)
+$(info config.mk not found, running ./configure...)
+_DUMMY := $(shell ./configure >&2)
+ifeq ($(wildcard config.mk),)
+$(error ./configure did not generate config.mk)
+endif
+endif
+include config.mk
 
+# ============================================================
 # Compiler flags with parallel LTO
-CFLAGS = -O3 -march=native -fopenmp -fPIC -flto=auto
-# -fsanitize=address -static-libasan
+# ============================================================
+CFLAGS = -O3 -march=native -fopenmp -fPIC -flto=auto $(ASAN_CFLAGS)
 
 # Linker flags with parallel LTO
-LDFLAGS = -fopenmp -flto=auto
+LDFLAGS = -fopenmp -flto=auto $(ASAN_LDFLAGS)
 
-# Library paths
-FLINT_LIB_PATH = /usr/local/lib
-PML_LIB_PATH = /usr/local/lib
-
-# Include paths - using paths from C_INCLUDE_PATH environment variable
-# Extract paths from environment variable, use default if not set
-FLINT_INCLUDE_PATH ?= /usr/local/include
-PML_INCLUDE_PATH ?= /usr/local/include
-
-# Check if C_INCLUDE_PATH environment variable is set
-ifdef C_INCLUDE_PATH
-$(info Using C_INCLUDE_PATH: $(C_INCLUDE_PATH))
-endif
-
+# ============================================================
 # Local directories
+# ============================================================
 SRC_DIR = src
 INCLUDE_DIR = include
 BUILD_DIR = build
 
-# Get system library paths in a simple way
-SYSTEM_LIB_PATHS := $(shell echo "$$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib:/usr/lib64:/usr/local/lib64:/lib:/lib64:/usr/lib/x86_64-linux-gnu" | tr ':' ' ' | tr -s ' ')
-
-# Smarter header file check - use compiler to find header files
-# Include C_INCLUDE_PATH in the test if it's set
-ifdef C_INCLUDE_PATH
-HEADER_TEST_FLAGS := -I./$(INCLUDE_DIR) $(foreach path,$(subst :, ,$(C_INCLUDE_PATH)),-I$(path))
-else
-HEADER_TEST_FLAGS := -I./$(INCLUDE_DIR)
-endif
-
-# Use a simple test file approach for more reliable detection
-TEMP_TEST_FILE := .header_test.c
-
-# Helper function to test header availability
-define test_header
-$(shell echo '#include <$(1)>' > $(TEMP_TEST_FILE) && $(CC) -E $(HEADER_TEST_FLAGS) $(TEMP_TEST_FILE) >/dev/null 2>&1 && echo yes || echo no; rm -f $(TEMP_TEST_FILE))
-endef
-
-# Simple library search functions
-define find_pml_so
-$(shell for path in $(SYSTEM_LIB_PATHS); do \
-	if [ -n "$$path" ] && [ -d "$$path" ]; then \
-		if [ -f "$$path/libpml.so" ]; then echo "$$path/libpml.so"; exit 0; fi; \
-		for f in "$$path"/libpml.so.*; do \
-			if [ -f "$$f" ]; then echo "$$f"; exit 0; fi; \
-		done; \
-	fi; \
-done)
-endef
-
-define find_pml_a
-$(shell for path in $(SYSTEM_LIB_PATHS); do \
-	if [ -n "$$path" ] && [ -f "$$path/libpml.a" ]; then \
-		echo "$$path/libpml.a"; exit 0; \
-	fi; \
-done)
-endef
-
-define check_pml_so
-$(shell for path in $(SYSTEM_LIB_PATHS); do \
-	if [ -n "$$path" ] && [ -d "$$path" ]; then \
-		if [ -f "$$path/libpml.so" ]; then echo yes; exit 0; fi; \
-		for f in "$$path"/libpml.so.*; do \
-			if [ -f "$$f" ]; then echo yes; exit 0; fi; \
-		done; \
-	fi; \
-done; echo no)
-endef
-
-define check_pml_a
-$(shell for path in $(SYSTEM_LIB_PATHS); do \
-	if [ -n "$$path" ] && [ -f "$$path/libpml.a" ]; then \
-		echo yes; exit 0; \
-	fi; \
-done; echo no)
-endef
-
-FLINT_HEADER_CHECK := $(call test_header,flint/flint.h)
-PML_HEADER_CHECK := $(call test_header,pml.h)
-NMOD_POLY_MAT_UTILS_CHECK := $(call test_header,nmod_poly_mat_utils.h)
-NMOD_POLY_MAT_EXTRA_CHECK := $(call test_header,nmod_poly_mat_extra.h)
-
-# Check for PML library files in all system library paths
-PML_DYNAMIC_LIB_CHECK := $(call check_pml_so)
-PML_STATIC_LIB_CHECK := $(call check_pml_a)
-
-# Find actual PML library paths for linking
-PML_SO_PATH := $(call find_pml_so)
-PML_A_PATH := $(call find_pml_a)
-
-# PML is only available if ALL required headers AND at least one library file are found
-PML_AVAILABLE := $(shell if [ "$(PML_HEADER_CHECK)" = "yes" ] && [ "$(NMOD_POLY_MAT_UTILS_CHECK)" = "yes" ] && [ "$(NMOD_POLY_MAT_EXTRA_CHECK)" = "yes" ] && ([ "$(PML_DYNAMIC_LIB_CHECK)" = "yes" ] || [ "$(PML_STATIC_LIB_CHECK)" = "yes" ]); then echo yes; else echo no; fi)
-
-# Print PML detection status
-ifeq ($(PML_AVAILABLE),yes)
-$(info *** PML library FOUND - Building with PML support ***)
-else
-$(info *** PML library NOT FOUND - Building without PML support ***)
-endif
-
-# Old directory check (as fallback)
-FLINT_DIR_EXISTS := $(shell if [ -d "$(FLINT_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
-PML_DIR_EXISTS := $(shell if [ -d "$(PML_INCLUDE_PATH)" ]; then echo yes; else echo no; fi)
-
-# Validate FLINT (required) - use header check instead of directory check
-ifneq ($(FLINT_HEADER_CHECK),yes)
-$(error FLINT headers not found! Compiler cannot find flint/flint.h. Check C_INCLUDE_PATH or install FLINT development packages)
-endif
-
-# System libraries
-SYSTEM_LIBS = -lmpfr -lgmp -lm -lpthread -lstdc++
-
-# Include flags (including local include directory)
-# Add C_INCLUDE_PATH directories if set
-INCLUDE_FLAGS = -I./$(INCLUDE_DIR)
-ifdef C_INCLUDE_PATH
-INCLUDE_FLAGS += $(foreach path,$(subst :, ,$(C_INCLUDE_PATH)),-I$(path))
-endif
-
-# Library flags
-FLINT_FLAGS = -DHAVE_FLINT
-PML_FLAGS = 
-# Use our improved PML availability check
-ifeq ($(PML_AVAILABLE),yes)
-PML_FLAGS = -DHAVE_PML
-endif
-
+# ============================================================
 # Combined CFLAGS
+# ============================================================
 ALL_CFLAGS = $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS)
 
-# FLINT library linking
-FLINT_LIBS = -L$(FLINT_LIB_PATH) -lflint
-FLINT_STATIC_LIBS = $(FLINT_LIB_PATH)/libflint.a
-
-# PML library linking (optional) - use found paths or fallback to -lpml
-PML_LIBS = 
-PML_STATIC_LIBS = 
-# Use our improved PML availability check
-ifeq ($(PML_AVAILABLE),yes)
-ifneq ($(PML_SO_PATH),)
-# Use specific path if found
-PML_LIBS = $(PML_SO_PATH)
-else
-# Fallback to -lpml (let linker find it)
-PML_LIBS = -lpml
-endif
-ifneq ($(PML_A_PATH),)
-PML_STATIC_LIBS = $(PML_A_PATH)
-else
-PML_STATIC_LIBS = $(PML_LIB_PATH)/libpml.a
-endif
-endif
-
-# Combined external libraries
+# ============================================================
+# External library sets
+# ============================================================
 EXTERNAL_LIBS = $(FLINT_LIBS) $(PML_LIBS) $(SYSTEM_LIBS)
 EXTERNAL_STATIC_PML_LIBS = $(FLINT_LIBS) $(PML_STATIC_LIBS) $(SYSTEM_LIBS)
 EXTERNAL_STATIC_ALL_LIBS = $(FLINT_STATIC_LIBS) $(PML_STATIC_LIBS) $(SYSTEM_LIBS)
 
-# Runtime library path (rpath) flags
-RPATH_FLAGS = -Wl,-rpath,$(FLINT_LIB_PATH) -Wl,-rpath,.
-ifeq ($(PML_AVAILABLE),yes)
-RPATH_FLAGS += -Wl,-rpath,$(PML_LIB_PATH)
-endif
-
+# ============================================================
 # Source files for the math library (in src directory)
+# ============================================================
 MATH_SOURCES = $(SRC_DIR)/dixon_complexity.c \
                $(SRC_DIR)/dixon_flint.c \
                $(SRC_DIR)/dixon_interface_flint.c \
@@ -214,18 +81,24 @@ DIXON_SHARED_LIB = libdixon.so
 # Output executable (in current directory)
 DIXON_TARGET = dixon
 
+# ============================================================
 # Attack programs directory and files
+# ============================================================
 ATTACK_DIR = ../Attack
 # Find all C files recursively in Attack directory and subdirectories
 ATTACK_C_FILES := $(shell find $(ATTACK_DIR) -name "*.c" 2>/dev/null | grep -v ".ipynb_checkpoints" || echo "")
 ATTACK_EXECUTABLES := $(patsubst %.c,%,$(ATTACK_C_FILES))
 
+# ============================================================
 # Create build directory
+# ============================================================
 $(BUILD_DIR):
 	@echo "Creating build directory..."
 	mkdir -p $(BUILD_DIR)
 
-# Default target - first build libraries, then compile all sources with LTO for maximum inlining, then build attack programs
+# ============================================================
+# Default target
+# ============================================================
 default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	@echo "Building $(DIXON_TARGET) with LTO (Link Time Optimization)..."
 	@echo "Libraries built, now compiling all sources together for maximum inlining..."
@@ -237,6 +110,9 @@ ifeq ($(PML_AVAILABLE),yes)
 	@echo "PML support: ENABLED"
 else
 	@echo "PML support: DISABLED"
+endif
+ifeq ($(ENABLE_ASAN),yes)
+	@echo "AddressSanitizer: ENABLED"
 endif
 	@echo "==========================="
 	@echo ""
@@ -251,6 +127,9 @@ ifeq ($(PML_AVAILABLE),yes)
 else
 	@echo "PML support: DISABLED"
 endif
+ifeq ($(ENABLE_ASAN),yes)
+	@echo "AddressSanitizer: ENABLED"
+endif
 
 # LTO target - compile all sources together for maximum optimization (same as default now)
 $(DIXON_TARGET)-lto: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
@@ -264,6 +143,10 @@ $(DIXON_TARGET)-dynamic: $(DIXON_SRC) $(DIXON_SHARED_LIB)
 	@echo "Building $(DIXON_TARGET) with dynamic dixon library..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< -L. -ldixon $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (dynamic dixon, dynamic FLINT/PML)"
+
+# ============================================================
+# Library targets
+# ============================================================
 
 # Build dynamic dixon library
 dynamic-lib: $(DIXON_SHARED_LIB)
@@ -280,6 +163,10 @@ $(DIXON_STATIC_LIB): $(MATH_OBJECTS)
 	@echo "Building static dixon library..."
 	ar rcs $@ $^
 	@echo "Static library built: $(DIXON_STATIC_LIB)"
+
+# ============================================================
+# Static linking variants
+# ============================================================
 
 # Build with static dixon library (but dynamic FLINT/PML)
 static: $(DIXON_TARGET)-static
@@ -305,6 +192,10 @@ $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	@echo "Building $(DIXON_TARGET) with all static libraries..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) $(EXTERNAL_STATIC_ALL_LIBS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
+
+# ============================================================
+# Attack programs
+# ============================================================
 
 # Attack programs compilation with verbose output (LTO with all sources)
 attack-programs-verbose:
@@ -349,7 +240,7 @@ attack-programs-verbose:
 		echo "  Total: $$total_files"; \
 	fi
 
-# Attack programs compilation (silent version for default target, LTO with all sources)
+# Attack programs compilation (silent version, LTO with all sources)
 attack-programs:
 	@echo "Building Attack programs with LTO optimization..."
 	@if [ -z "$(ATTACK_C_FILES)" ]; then \
@@ -404,12 +295,16 @@ clean-attack:
 	fi
 	@echo "Attack programs cleaned"
 
+# ============================================================
 # Object file compilation (src/*.c -> build/*.o)
+# ============================================================
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	$(CC) $(ALL_CFLAGS) -c -o $@ $<
 
+# ============================================================
 # Clean
+# ============================================================
 clean: clean-attack
 	rm -f $(DIXON_TARGET) $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	rm -rf $(BUILD_DIR)
@@ -419,6 +314,15 @@ clean: clean-attack
 clean-build:
 	rm -rf $(BUILD_DIR)
 	@echo "Cleaned build directory"
+
+# Clean everything including config.mk
+distclean: clean
+	rm -f config.mk
+	@echo "Cleaned all build artifacts and configuration"
+
+# ============================================================
+# Test / debug / info targets
+# ============================================================
 
 # Test library detection
 test-paths:
@@ -448,6 +352,9 @@ info:
 	@echo "CFLAGS: $(ALL_CFLAGS)"
 	@echo "LDFLAGS: $(LDFLAGS)"
 	@echo "RPATH_FLAGS: $(RPATH_FLAGS)"
+ifeq ($(ENABLE_ASAN),yes)
+	@echo "AddressSanitizer: ENABLED"
+endif
 	@echo ""
 	@echo "=== Directory Structure ==="
 	@echo "Source directory: $(SRC_DIR)/"
@@ -517,38 +424,14 @@ debug-headers:
 	@echo "CPLUS_INCLUDE_PATH: $(CPLUS_INCLUDE_PATH)"
 	@echo ""
 	@echo "=== Header File Tests ==="
-	@echo -n "FLINT headers (flint/flint.h): "
-	@echo '#include <flint/flint.h>' > .header_test.c && \
-		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
-			echo "FOUND"; \
-		else \
-			echo "NOT FOUND"; \
-		fi; \
-		rm -f .header_test.c
-	@echo -n "PML headers (pml.h): "
-	@echo '#include <pml.h>' > .header_test.c && \
-		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
-			echo "FOUND"; \
-		else \
-			echo "NOT FOUND"; \
-		fi; \
-		rm -f .header_test.c
-	@echo -n "nmod_poly_mat_utils.h: "
-	@echo '#include <nmod_poly_mat_utils.h>' > .header_test.c && \
-		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
-			echo "FOUND"; \
-		else \
-			echo "NOT FOUND"; \
-		fi; \
-		rm -f .header_test.c
-	@echo -n "nmod_poly_mat_extra.h: "
-	@echo '#include <nmod_poly_mat_extra.h>' > .header_test.c && \
-		if $(CC) -E $(HEADER_TEST_FLAGS) .header_test.c >/dev/null 2>&1; then \
-			echo "FOUND"; \
-		else \
-			echo "NOT FOUND"; \
-		fi; \
-		rm -f .header_test.c
+	@echo -n "FLINT headers (flint/flint.h): $(FLINT_HEADER_CHECK)"
+	@echo ""
+	@echo -n "PML headers (pml.h): $(PML_HEADER_CHECK)"
+	@echo ""
+	@echo -n "nmod_poly_mat_utils.h: $(NMOD_POLY_MAT_UTILS_CHECK)"
+	@echo ""
+	@echo -n "nmod_poly_mat_extra.h: $(NMOD_POLY_MAT_EXTRA_CHECK)"
+	@echo ""
 	@echo "PML Available (all required headers + libraries): $(PML_AVAILABLE)"
 	@echo ""
 	@echo "=== Manual Path Search ==="
@@ -577,7 +460,7 @@ debug-headers:
 		fi; \
 	done
 
-# Debug library detection with simple shell commands
+# Debug library detection
 debug-libs:
 	@echo "=== Library Detection Debug ==="
 	@echo ""
@@ -706,7 +589,9 @@ debug-structure:
 		echo "NO (will be created during build)"; \
 	fi
 
+# ============================================================
 # Help
+# ============================================================
 help:
 	@echo "Available targets:"
 	@echo "  make (default)       - Build libraries first, then dixon with LTO (all sources compiled together)"
@@ -725,13 +610,18 @@ help:
 	@echo "  make test-paths      - Test library path detection"
 	@echo "  make test-attack     - Test Attack directory detection"
 	@echo "  make info            - Show build configuration"
-	@echo "  make debug-headers   - Debug header file detection (recommended)"
+	@echo "  make debug-headers   - Debug header file detection"
 	@echo "  make debug-libs      - Debug external library detection"
 	@echo "  make debug-structure - Debug local directory structure"
 	@echo "  make debug-attack    - Debug Attack directory structure and C files"
 	@echo "  make clean           - Clean all build artifacts (including Attack programs)"
 	@echo "  make clean-build     - Clean only build directory"
+	@echo "  make distclean       - Clean all build artifacts and config.mk"
 	@echo "  make help            - Show this help"
+	@echo ""
+	@echo "Build workflow:"
+	@echo "  1. ./configure       - Detect libraries, generate config.mk"
+	@echo "  2. make              - Build everything"
 	@echo ""
 	@echo "Directory structure:"
 	@echo "  $(SRC_DIR)/          - Source files (.c)"
@@ -764,16 +654,21 @@ help:
 	@echo "  Dixon library: $(words $(MATH_SOURCES)) math source files"
 	@echo "  Main program: dixon.c links against dixon library OR compiles with all sources"
 	@echo "  Attack programs: Each .c in ../Attack compiles with all dixon sources (LTO optimization)"
-	@echo "  External deps: FLINT (required), PML (optional - auto-detected)"
+	@echo "  External deps: FLINT (required), PML (optional - detected by ./configure)"
 	@echo ""
 	@echo "PML Detection:"
 	@echo "  PML support requires ALL of: pml.h, nmod_poly_mat_utils.h, nmod_poly_mat_extra.h"
 	@echo "  PLUS at least one library file: libpml.so OR libpml.a"
 	@echo "  If any requirement is missing, PML support is disabled automatically"
-	@echo "  Use 'make test-paths' and 'make debug-libs' to check availability"
+	@echo "  Re-run ./configure to re-detect, then 'make test-paths' to verify"
 
+# ============================================================
 # Aliases for convenience
+# ============================================================
 lto: $(DIXON_TARGET)-lto
 dynamic: $(DIXON_TARGET)-dynamic
 
-.PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib attack-programs attack-programs-verbose attack-static clean-attack clean clean-build test-paths test-attack info debug-headers debug-libs debug-structure debug-attack help
+.PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib \
+        attack-programs attack-programs-verbose attack-static clean-attack \
+        clean clean-build distclean test-paths test-attack info \
+        debug-headers debug-libs debug-structure debug-attack help
