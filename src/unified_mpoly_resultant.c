@@ -268,23 +268,17 @@ void unified_mpoly_univar_to_mpoly_univar(mpoly_univar_t A,
     
     /* Clear and initialize A */
     mpoly_univar_zero(A, R);
+
     mpoly_univar_fit_length(A, B->length, R);
     A->length = B->length;
     
-    /* Create temporary polynomials that will be owned by A */
     for (i = 0; i < B->length; i++) {
-        /* Copy exponent */
         fmpz_set(A->exps + i, B->exps + i);
         
-        /* Get pointer to the i-th coefficient in A */
         void *coeff_ptr = (char *)A->coeffs + i * R->elem_size;
-        
-        /* Initialize a new polynomial and copy the value */
-        R->init(coeff_ptr, R->ctx);
         R->set(coeff_ptr, &(B->coeffs[i]), R->ctx);
     }
 }
-
 /* ============================================================================
    MAIN RESULTANT FUNCTION USING GENERIC RING INTERFACE
    ============================================================================ */
