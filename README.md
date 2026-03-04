@@ -32,6 +32,7 @@ Optional:
 ```bash
 ./configure
 make
+make install                       # optional
 ```
 
 The Makefile automatically detects required libraries. For more options, run `make help`.
