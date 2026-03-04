@@ -56,7 +56,6 @@ void perform_fq_matrix_row_operations_mvpoly(fq_mvpoly_t ***new_matrix, fq_mvpol
                                                    slong nvars, slong npars) {
     slong n = nvars + 1;
     
-    // Allocate new matrix space
     *new_matrix = (fq_mvpoly_t**) flint_malloc(n * sizeof(fq_mvpoly_t*));
     for (slong i = 0; i < n; i++) {
         (*new_matrix)[i] = (fq_mvpoly_t*) flint_malloc(n * sizeof(fq_mvpoly_t));
@@ -64,27 +63,21 @@ void perform_fq_matrix_row_operations_mvpoly(fq_mvpoly_t ***new_matrix, fq_mvpol
     
     printf("Performing row operations on matrix\n");
     
-    // First row remains unchanged
-    //printf("Row 0: unchanged\n");
     for (slong j = 0; j < n; j++) {
         fq_mvpoly_copy(&(*new_matrix)[0][j], &(*original_matrix)[0][j]);
     }
     
-    // Process remaining rows
     for (slong i = 1; i < n; i++) {
-        //printf("Row %ld: (row[%ld] - row[%ld]) / (x%ld - ~x%ld)\n", i, i, i-1, i-1, i-1);
-        
         for (slong j = 0; j < n; j++) {
-            // Directly use fq_mvpoly_sub to compute difference
             fq_mvpoly_t diff;
             fq_mvpoly_sub(&diff, &(*original_matrix)[i][j], &(*original_matrix)[i-1][j]);
-            
-            // Perform division
-            fq_mvpoly_init(&(*new_matrix)[i][j], 2*nvars, npars, diff.ctx);
-            
+      
             if (diff.nterms > 0) {
+
                 divide_by_fq_linear_factor_flint(&(*new_matrix)[i][j], &diff, 
                                                i-1, 2*nvars, npars);
+            } else {
+                fq_mvpoly_init(&(*new_matrix)[i][j], 2*nvars, npars, diff.ctx);
             }
             
             fq_mvpoly_clear(&diff);
@@ -136,10 +129,9 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         return;
     }
     
-    fq_mvpoly_init(result, 0, npars, ctx);
-    
     if (npars == 0) {
-        // No parameters - scalar entries
+        fq_mvpoly_init(result, 0, npars, ctx);
+        
         fq_nmod_mat_t scalar_mat;
         fq_nmod_mat_init(scalar_mat, size, size, ctx);
         
@@ -174,31 +166,27 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         fq_nmod_mat_clear(scalar_mat, ctx);
         
     } else if (npars == 1) {
-        // One parameter - use Mulders-Storjohann algorithm
         printf("\nComputing Resultant using Mulders-Storjohann algorithm (univariate case)\n");
         clock_t start = clock();
+        
         if (method == DET_METHOD_INTERPOLATION) {
             printf("\nMultiple parameters detected. Using fq_nmod interpolation method.\n");
             printf("  Parameters: %ld\n", npars);
             printf("  Matrix size: %ld x %ld\n", size, size);
             
-            // Use the interpolation method
             fq_compute_det_by_interpolation(result, coeff_matrix, size,
                                            0, npars, ctx, res_deg_bound);
-        }
-        
-        else {
-            // Create polynomial matrix using our fq_nmod_poly_mat_t structure
+        } else {
+            fq_mvpoly_init(result, 0, npars, ctx);
+            
             fq_nmod_poly_mat_t poly_mat;
             fq_nmod_poly_mat_init(poly_mat, size, size, ctx);
             
-            // Convert mvpoly coefficients to polynomial matrix
             for (slong i = 0; i < size; i++) {
                 for (slong j = 0; j < size; j++) {
                     fq_nmod_poly_struct *entry = fq_nmod_poly_mat_entry(poly_mat, i, j);
                     fq_nmod_poly_zero(entry, ctx);
                     
-                    // Convert mvpoly to fq_nmod_poly (using parameter as polynomial variable)
                     for (slong t = 0; t < coeff_matrix[i][j].nterms; t++) {
                         slong deg = coeff_matrix[i][j].terms[t].par_exp ? 
                                    coeff_matrix[i][j].terms[t].par_exp[0] : 0;
@@ -208,7 +196,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 }
             }
             
-            // Compute determinant using Mulders-Storjohann algorithm
             fq_nmod_poly_t det_poly;
             fq_nmod_poly_init(det_poly, ctx);
             
@@ -217,7 +204,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
             
             fq_nmod_poly_mat_det_iter(det_poly, poly_mat, ctx);
             
-            // Convert result back to fq_mvpoly
             slong det_deg = fq_nmod_poly_degree(det_poly, ctx);
             if (det_deg >= 0) {
                 for (slong i = 0; i <= det_deg; i++) {
@@ -235,11 +221,9 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
             printf("  Determinant degree: %ld\n", det_deg);
             printf("  Result terms: %ld\n", result->nterms);
             
-            // Cleanup
             fq_nmod_poly_clear(det_poly, ctx);
             fq_nmod_poly_mat_clear(poly_mat, ctx);
         }
-
         
         clock_t end = clock();
         double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
@@ -253,7 +237,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 printf("  Parameters: %ld\n", npars);
                 printf("  Matrix size: %ld x %ld\n", size, size);
                 
-                // Use the interpolation method
                 fq_compute_det_by_interpolation(result, coeff_matrix, size,
                                                0, npars, ctx, res_deg_bound);
                 break;
@@ -263,7 +246,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 printf("  Parameters: %ld\n", npars);
                 printf("  Matrix size: %ld x %ld\n", size, size);
                 
-                // Use the recursive algorithm
                 compute_fq_det_recursive(result, coeff_matrix, size);
                 break;
                 
@@ -272,7 +254,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 printf("  Parameters: %ld\n", npars);
                 printf("  Matrix size: %ld x %ld\n", size, size);
                 
-                // Use the Kronecker algorithm
                 compute_fq_det_kronecker(result, coeff_matrix, size);
                 break;
 
@@ -281,7 +262,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 printf("  Parameters: %ld\n", npars);
                 printf("  Matrix size: %ld x %ld\n", size, size);
                 
-                // Use the Kronecker algorithm
                 compute_fq_det_huang_interpolation(result, coeff_matrix, size);
                 break;
                 
@@ -296,7 +276,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         printf("End (%.3f seconds)\n", elapsed);
     }
 }
-
 
 // Extended tracker structure with pre-allocated workspace
 // Initialize optimized tracker
@@ -1266,28 +1245,45 @@ void collect_unique_monomials(
         return;
     }
     
-    // Simple hash table size - power of 2 for fast modulo
+    /* Simple hash table size - power of 2 for fast modulo */
     slong hash_size = 1024;
     while (hash_size < dixon_poly->nterms) hash_size <<= 1;
     
-    // Hash tables for x and dual monomials
+    /* Hash tables for tracking unique monomials */
     hash_entry_t **x_buckets = (hash_entry_t**) flint_calloc(hash_size, sizeof(hash_entry_t*));
     hash_entry_t **dual_buckets = (hash_entry_t**) flint_calloc(hash_size, sizeof(hash_entry_t*));
     
-    // Pre-allocate storage
-    monom_t *x_monoms = (monom_t*) flint_malloc(dixon_poly->nterms * sizeof(monom_t));
-    monom_t *dual_monoms = (monom_t*) flint_malloc(dixon_poly->nterms * sizeof(monom_t));
-    slong *x_exp_storage = (slong*) flint_calloc(dixon_poly->nterms * nvars, sizeof(slong));
-    slong *dual_exp_storage = (slong*) flint_calloc(dixon_poly->nterms * nvars, sizeof(slong));
+    /* * COALESCED ALLOCATION STRATEGY:
+     * We allocate a single block for both the monom_t array and the exponent data.
+     * This ensures that when the caller frees the returned pointer, all associated 
+     * memory is released without needing extra arguments.
+     */
+    slong max_terms = dixon_poly->nterms;
     
+    /* Calculate sizes for X-monomials */
+    slong x_structs_size = max_terms * sizeof(monom_t);
+    slong x_data_size = max_terms * nvars * sizeof(slong);
+    char *x_combined = (char *) flint_malloc(x_structs_size + x_data_size);
+    
+    monom_t *x_monoms = (monom_t *) x_combined;
+    slong *x_exp_storage = (slong *) (x_combined + x_structs_size);
+    
+    /* Calculate sizes for Dual-monomials */
+    slong dual_structs_size = max_terms * sizeof(monom_t);
+    slong dual_data_size = max_terms * nvars * sizeof(slong);
+    char *dual_combined = (char *) flint_malloc(dual_structs_size + dual_data_size);
+    
+    monom_t *dual_monoms = (monom_t *) dual_combined;
+    slong *dual_exp_storage = (slong *) (dual_combined + dual_structs_size);
+
     slong nx_monoms = 0, ndual_monoms = 0;
     
-    // Process each term
+    /* Process each term in the Dixon polynomial */
     for (slong i = 0; i < dixon_poly->nterms; i++) {
         const slong *var_exp = dixon_poly->terms[i].var_exp;
         if (!var_exp) continue;
         
-        // Check degree bounds
+        /* Check degree bounds d0 and d1 */
         int valid = 1;
         for (slong k = 0; k < nvars && valid; k++) {
             if (var_exp[k] >= d0[k] || var_exp[nvars + k] >= d1[k]) {
@@ -1296,15 +1292,13 @@ void collect_unique_monomials(
         }
         if (!valid) continue;
         
-        // Process x-monomial (first nvars components)
-        // Simple hash: sum of exponents * prime
+        /* 1. Process x-monomial (first nvars components) */
         ulong x_hash = 0;
         for (slong k = 0; k < nvars; k++) {
             x_hash = x_hash * 31 + var_exp[k];
         }
-        x_hash &= (hash_size - 1); // Fast modulo for power of 2
+        x_hash &= (hash_size - 1);
         
-        // Check if x-monomial already exists
         hash_entry_t *entry = x_buckets[x_hash];
         int found = 0;
         while (entry && !found) {
@@ -1316,14 +1310,14 @@ void collect_unique_monomials(
         }
         
         if (!found) {
-            // Add new x-monomial
+            /* Map the .exp pointer to the correct offset in the storage block */
             slong *x_exp = &x_exp_storage[nx_monoms * nvars];
             memcpy(x_exp, var_exp, nvars * sizeof(slong));
             
             x_monoms[nx_monoms].exp = x_exp;
             x_monoms[nx_monoms].idx = nx_monoms;
             
-            // Insert into hash table
+            /* Add to hash table for future lookup */
             hash_entry_t *new_entry = (hash_entry_t*) flint_malloc(sizeof(hash_entry_t));
             new_entry->exp = x_exp;
             new_entry->idx = nx_monoms;
@@ -1333,17 +1327,14 @@ void collect_unique_monomials(
             nx_monoms++;
         }
         
-        // Process dual monomial (next nvars components)
+        /* 2. Process dual monomial (next nvars components) */
         const slong *dual_exp_src = &var_exp[nvars];
-        
-        // Hash for dual monomial
         ulong dual_hash = 0;
         for (slong k = 0; k < nvars; k++) {
             dual_hash = dual_hash * 31 + dual_exp_src[k];
         }
         dual_hash &= (hash_size - 1);
         
-        // Check if dual monomial already exists
         entry = dual_buckets[dual_hash];
         found = 0;
         while (entry && !found) {
@@ -1355,14 +1346,12 @@ void collect_unique_monomials(
         }
         
         if (!found) {
-            // Add new dual monomial
             slong *dual_exp = &dual_exp_storage[ndual_monoms * nvars];
             memcpy(dual_exp, dual_exp_src, nvars * sizeof(slong));
             
             dual_monoms[ndual_monoms].exp = dual_exp;
             dual_monoms[ndual_monoms].idx = ndual_monoms;
             
-            // Insert into hash table
             hash_entry_t *new_entry = (hash_entry_t*) flint_malloc(sizeof(hash_entry_t));
             new_entry->exp = dual_exp;
             new_entry->idx = ndual_monoms;
@@ -1373,43 +1362,36 @@ void collect_unique_monomials(
         }
     }
     
-    // Resize to actual size
-    if (nx_monoms > 0) {
-        x_monoms = (monom_t*) flint_realloc(x_monoms, nx_monoms * sizeof(monom_t));
-    } else {
-        flint_free(x_monoms);
-        x_monoms = NULL;
-        flint_free(x_exp_storage);
-    }
-    
-    if (ndual_monoms > 0) {
-        dual_monoms = (monom_t*) flint_realloc(dual_monoms, ndual_monoms * sizeof(monom_t));
-    } else {
-        flint_free(dual_monoms);
-        dual_monoms = NULL;
-        flint_free(dual_exp_storage);
-    }
-    
-    // Clean up hash tables
+    /* Clean up hash table metadata (actual monom data is in combined blocks) */
     for (slong i = 0; i < hash_size; i++) {
-        hash_entry_t *entry = x_buckets[i];
-        while (entry) {
-            hash_entry_t *next = entry->next;
-            flint_free(entry);
-            entry = next;
+        hash_entry_t *curr;
+        curr = x_buckets[i];
+        while (curr) {
+            hash_entry_t *next = curr->next;
+            flint_free(curr);
+            curr = next;
         }
-        
-        entry = dual_buckets[i];
-        while (entry) {
-            hash_entry_t *next = entry->next;
-            flint_free(entry);
-            entry = next;
+        curr = dual_buckets[i];
+        while (curr) {
+            hash_entry_t *next = curr->next;
+            flint_free(curr);
+            curr = next;
         }
     }
     flint_free(x_buckets);
     flint_free(dual_buckets);
     
-    // Set outputs
+    /* Handle empty results */
+    if (nx_monoms == 0) {
+        flint_free(x_combined);
+        x_monoms = NULL;
+    }
+    if (ndual_monoms == 0) {
+        flint_free(dual_combined);
+        dual_monoms = NULL;
+    }
+    
+    /* Final output assignment */
     *x_monoms_out = x_monoms;
     *nx_monoms_out = nx_monoms;
     *dual_monoms_out = dual_monoms;
@@ -1490,20 +1472,16 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                                               slong nvars, slong npars) {
     printf("Extracting coefficient matrix from Dixon polynomial\n");
     
-    // First compute degree bounds
     slong *d0 = (slong*) flint_calloc(nvars, sizeof(slong));
     slong *d1 = (slong*) flint_calloc(nvars, sizeof(slong));
     
-    // Find maximum degree for each variable
     for (slong i = 0; i < dixon_poly->nterms; i++) {
         if (dixon_poly->terms[i].var_exp) {
-            // Check x variables (first nvars)
             for (slong j = 0; j < nvars; j++) {
                 if (dixon_poly->terms[i].var_exp[j] > d0[j]) {
                     d0[j] = dixon_poly->terms[i].var_exp[j];
                 }
             }
-            // Check ~x variables (next nvars)
             for (slong j = 0; j < nvars; j++) {
                 if (dixon_poly->terms[i].var_exp[nvars + j] > d1[j]) {
                     d1[j] = dixon_poly->terms[i].var_exp[nvars + j];
@@ -1512,7 +1490,6 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         }
     }
     
-    // Add 1 to each degree bound
     for (slong i = 0; i < nvars; i++) {
         d0[i]++;
         d1[i]++;
@@ -1524,17 +1501,15 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
     for (slong i = 0; i < nvars; i++) printf("%ld ", d1[i]);
     printf("\n");
     
-    // Calculate expected matrix dimensions
     slong expected_rows = 1;
     slong expected_cols = 1;
     for (slong i = 0; i < nvars; i++) {
         expected_rows *= d0[i];
         expected_cols *= d1[i];
     }
-    // printf("matrix size: %ld x %ld\n", expected_rows, expected_cols);
-    
-    monom_t *x_monoms = (monom_t*) flint_malloc(dixon_poly->nterms * sizeof(monom_t));
-    monom_t *dual_monoms = (monom_t*) flint_malloc(dixon_poly->nterms * sizeof(monom_t));
+
+    monom_t *x_monoms = NULL;
+    monom_t *dual_monoms = NULL;
     slong nx_monoms = 0, ndual_monoms = 0;
     
     collect_unique_monomials(&x_monoms, &nx_monoms,
@@ -1546,44 +1521,38 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         *matrix_size = 0;
         flint_free(d0);
         flint_free(d1);
-        flint_free(x_monoms);
-        flint_free(dual_monoms);
+        if (x_monoms) flint_free(x_monoms);
+        if (dual_monoms) flint_free(dual_monoms);
         return;
     }
-    // Build full coefficient matrix (entries are polynomials in parameters)
+
     fq_mvpoly_t ***full_matrix = (fq_mvpoly_t***) flint_malloc(nx_monoms * sizeof(fq_mvpoly_t**));
     for (slong i = 0; i < nx_monoms; i++) {
         full_matrix[i] = (fq_mvpoly_t**) flint_calloc(ndual_monoms, sizeof(fq_mvpoly_t*));
-        // Note: use calloc to initialize to NULL
     }
-    // Fill the coefficient matrix
- fill_coefficient_matrix_optimized(full_matrix, x_monoms, nx_monoms, 
-                                 dual_monoms, ndual_monoms, dixon_poly, 
-                                 d0, d1, nvars, npars);
-    // Find maximal rank submatrix
+
+    fill_coefficient_matrix_optimized(full_matrix, x_monoms, nx_monoms, 
+                                     dual_monoms, ndual_monoms, dixon_poly, 
+                                     d0, d1, nvars, npars);
+
     slong *row_idx_array = NULL;
     slong *col_idx_array = NULL;
     slong num_rows, num_cols;
     
     if (npars == 0) {
-        // Special case: no parameters, directly find rank
         fq_nmod_mat_t eval_mat;
         fq_nmod_mat_init(eval_mat, nx_monoms, ndual_monoms, dixon_poly->ctx);
         for (slong i = 0; i < nx_monoms; i++) {
             for (slong j = 0; j < ndual_monoms; j++) {
-                // **CRITICAL FIX: Check for NULL pointer before dereferencing**
                 if (full_matrix[i][j] != NULL && full_matrix[i][j]->nterms > 0) {
-                    // Entry exists and has terms - use the coefficient
                     fq_nmod_set(fq_nmod_mat_entry(eval_mat, i, j), 
                                full_matrix[i][j]->terms[0].coeff, dixon_poly->ctx);
                 } else {
-                    // Entry is NULL (never allocated) or empty - set to zero
                     fq_nmod_zero(fq_nmod_mat_entry(eval_mat, i, j), dixon_poly->ctx);
                 }
             }
         }
         slong rank = fq_nmod_mat_rank(eval_mat, dixon_poly->ctx);
-        // Create identity selection for square case
         slong min_size = FLINT_MIN(nx_monoms, ndual_monoms);
         slong actual_size = FLINT_MIN(rank, min_size);
         
@@ -1598,17 +1567,14 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         num_cols = actual_size;
         
         fq_nmod_mat_clear(eval_mat, dixon_poly->ctx);
-
     } else {
-        // Check if matrix is small enough to use directly
         slong small_size = 1;
-        if (nx_monoms < small_size && ndual_monoms < small_size && expected_rows < small_size && expected_cols < small_size) {
+        if (nx_monoms < small_size && ndual_monoms < small_size && 
+            expected_rows < small_size && expected_cols < small_size) {
             printf("Small matrix detected (%ld x %ld), using original matrix directly\n", 
                    nx_monoms, ndual_monoms);
             
-            // Create identity selection for the original matrix
             slong min_size = FLINT_MIN(nx_monoms, ndual_monoms);
-            
             row_idx_array = (slong*) flint_malloc(min_size * sizeof(slong));
             col_idx_array = (slong*) flint_malloc(min_size * sizeof(slong));
             
@@ -1616,30 +1582,27 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                 row_idx_array[i] = i;
                 col_idx_array[i] = i;
             }
-            
             num_rows = min_size;
             num_cols = min_size;
         } else {
-            // Call submatrix finding function for larger matrices
             find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
                                                   &row_idx_array, &col_idx_array, 
                                                   &num_rows, &num_cols,
                                                   npars);
         }
     }
-    // Take square part if needed
+
     slong submat_rank = FLINT_MIN(num_rows, num_cols);
     
     if (submat_rank == 0) {
         printf("Warning: Matrix has rank 0\n");
         *matrix_size = 0;
         
-        // Cleanup full_matrix with NULL checks (lazy allocation)
         if (full_matrix) {
             for (slong i = 0; i < nx_monoms; i++) {
                 if (full_matrix[i]) {
                     for (slong j = 0; j < ndual_monoms; j++) {
-                        if (full_matrix[i][j] != NULL) {  // **CRITICAL: Check for NULL**
+                        if (full_matrix[i][j] != NULL) {
                             fq_mvpoly_clear(full_matrix[i][j]);
                             flint_free(full_matrix[i][j]);
                         }
@@ -1650,56 +1613,41 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
             flint_free(full_matrix);
         }
         
-        // Cleanup index arrays
         if (row_idx_array) flint_free(row_idx_array);
         if (col_idx_array) flint_free(col_idx_array);
-        
-        // Just free the monomial arrays themselves
         if (x_monoms) flint_free(x_monoms);
         if (dual_monoms) flint_free(dual_monoms);
-        
-        // Free degree bound arrays
         if (d0) flint_free(d0);
         if (d1) flint_free(d1);
-        
         return;
     }
-    
 
-    // Safe cleanup code - fix NULL pointer segfault
-    
     printf("Extracted submatrix of size %ld x %ld\n", submat_rank, submat_rank);
     
-    // Build the output submatrix
     *coeff_matrix = (fq_mvpoly_t**) flint_malloc(submat_rank * sizeof(fq_mvpoly_t*));
     for (slong i = 0; i < submat_rank; i++) {
         (*coeff_matrix)[i] = (fq_mvpoly_t*) flint_malloc(submat_rank * sizeof(fq_mvpoly_t));
         for (slong j = 0; j < submat_rank; j++) {
-            // Safe copy: check if source matrix element is NULL
             fq_mvpoly_t *source = full_matrix[row_idx_array[i]][col_idx_array[j]];
             if (source != NULL) {
                 fq_mvpoly_copy(&(*coeff_matrix)[i][j], source);
             } else {
-                // NULL element represents zero polynomial, directly initialize to zero
                 fq_mvpoly_init(&(*coeff_matrix)[i][j], 0, npars, dixon_poly->ctx);
             }
         }
     }
     
-    // Copy indices
     for (slong i = 0; i < submat_rank; i++) {
         row_indices[i] = row_idx_array[i];
         col_indices[i] = col_idx_array[i];
     }
     *matrix_size = submat_rank;
     
-    // Safe cleanup - add NULL checks
-    // printf("Cleaning up matrix...\n");
     if (full_matrix) {
         for (slong i = 0; i < nx_monoms; i++) {
             if (full_matrix[i]) {
                 for (slong j = 0; j < ndual_monoms; j++) {
-                    if (full_matrix[i][j]) {  // Critical: check NULL pointer
+                    if (full_matrix[i][j]) {
                         fq_mvpoly_clear(full_matrix[i][j]);
                         flint_free(full_matrix[i][j]);
                     }
@@ -1710,26 +1658,12 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         flint_free(full_matrix);
     }
     
-    // Safe cleanup of other arrays
     if (row_idx_array) flint_free(row_idx_array);
     if (col_idx_array) flint_free(col_idx_array);
-    
-    // Clean up monomial arrays - note memory management here
-    if (x_monoms) {
-        // x_monoms[i].exp points to contiguous storage, no need to free individually
-        flint_free(x_monoms);
-    }
-    if (dual_monoms) {
-        // dual_monoms[j].exp points to contiguous storage, no need to free individually  
-        flint_free(dual_monoms);
-    }
-    
-    // Clean up degree bound arrays
+    if (x_monoms) flint_free(x_monoms);
+    if (dual_monoms) flint_free(dual_monoms);
     if (d0) flint_free(d0);
     if (d1) flint_free(d1);
-    
-    //printf("Cleanup completed safely\n");
-
 }
 
 // Compute determinant of cancellation matrix
@@ -2037,17 +1971,14 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     printf("\n=== Dixon Resultant over F_{p^d} ===\n");
     cleanup_unified_workspace();
     
-    // Step 1: Build cancellation matrix
     printf("\nStep 1: Build Cancellation Matrix\n");
     fq_mvpoly_t **M_mvpoly;
     build_fq_cancellation_matrix_mvpoly(&M_mvpoly, polys, nvars, npars);
     
-    // Step 2: Perform row operations
     printf("\nStep 2: Perform Matrix Row Operations\n");
     fq_mvpoly_t **modified_M_mvpoly;
     perform_fq_matrix_row_operations_mvpoly(&modified_M_mvpoly, &M_mvpoly, nvars, npars);
-    //print_fq_matrix_mvpoly(modified_M_mvpoly, nvars + 1, nvars + 1, "After Row Operations (Detailed)", 1);
-    // Step 3: Compute determinant of modified matrix
+
     printf("\nStep 3: Compute determinant of modified matrix\n");
     fq_mvpoly_t d_poly;
     compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, DET_METHOD_RECURSIVE);
@@ -2055,23 +1986,22 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     printf("Dixon polynomial has %ld terms\n", d_poly.nterms);
     
     if (d_poly.nterms <= 100) {
-        // Use the enhanced print function with proper names
         fq_mvpoly_print_with_names(&d_poly, "Dixon", var_names, par_names, gen_name, 1);
     } else {
         printf("Dixon polynomial too large to display (%ld terms)\n", d_poly.nterms);
     }
     
-    // Step 4: Extract coefficient matrix
     printf("\nStep 4: Extract coefficient matrix\n");
     
     fq_mvpoly_t **coeff_matrix;
-    slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
-    slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
+    slong max_indices = d_poly.nterms > 0 ? d_poly.nterms : 1;
+    slong *row_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
+    slong *col_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
     slong matrix_size;
     
     extract_fq_coefficient_matrix_from_dixon(&coeff_matrix, row_indices, col_indices,
                                             &matrix_size, &d_poly, nvars, npars);
-    //print_fq_matrix_mvpoly(coeff_matrix, matrix_size, matrix_size, "Dixon Matrix", 1);
+    
     if (matrix_size > 0) {
         printf("\nStep 5: Compute determinant of coefficient matrix (fq_nmod)\n");
         
@@ -2089,7 +2019,6 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         } else {
             coeff_method = DET_METHOD_KRONECKER;
         }
-        //coeff_method = DET_METHOD_INTERPOLATION;
         if (dixon_global_method != -1) {
             coeff_method = dixon_global_method;
             printf("Method overridden by global variable: %d\n", dixon_global_method);
@@ -2101,12 +2030,10 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         
         printf("Resultant polynomial has %ld terms\n", result->nterms);
         if (result->nterms <= 100) {
-            // Use enhanced print with original parameter names
             fq_mvpoly_print_with_names(result, "Final Resultant", NULL, par_names, gen_name, 0);
         } else {
             printf("Final resultant too large to display (%ld terms)\n", result->nterms);
             
-            // Display degree information
             slong max_par_deg = 0;
             for (slong i = 0; i < result->nterms; i++) {
                 if (result->terms[i].par_exp && result->npars > 0) {
@@ -2119,7 +2046,7 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
             }
             printf("Maximum parameter degree in resultant: %ld\n", max_par_deg);
 
-            //slong max_par_deg = 0;
+            max_par_deg = 0;
             for (slong i = 0; i < result->nterms; i++) {
                 slong term_total_deg = 0;
                 if (result->terms[i].par_exp && result->npars > 0) {
@@ -2132,11 +2059,9 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                 }
             }
             printf("Maximum total degree in resultant: %ld\n", max_par_deg);
-            
         }
         fq_mvpoly_make_monic(result);
         
-        // Cleanup coefficient matrix
         for (slong i = 0; i < matrix_size; i++) {
             for (slong j = 0; j < matrix_size; j++) {
                 fq_mvpoly_clear(&coeff_matrix[i][j]);
@@ -2149,13 +2074,12 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         printf("Warning: Empty coefficient matrix, resultant is 0\n");
     }
     
-    // Cleanup
+    /* FIX: 释放 row_indices 和 col_indices */
     flint_free(row_indices);
     flint_free(col_indices);
     
     fq_mvpoly_clear(&d_poly);
     
-    // Cleanup matrices
     for (slong i = 0; i <= nvars; i++) {
         for (slong j = 0; j <= nvars; j++) {
             fq_mvpoly_clear(&M_mvpoly[i][j]);
@@ -2169,4 +2093,3 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     
     printf("\n=== Dixon Resultant Computation Complete ===\n");
 }
-
