@@ -795,6 +795,15 @@ int main(int argc, char *argv[]) {
         }
     }
     
+
+    // Check if help is needed
+    if ((argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) ||
+        (argc - arg_offset == 1 && (strcmp(argv[1+arg_offset], "--help") == 0 || 
+                                    strcmp(argv[1+arg_offset], "-h") == 0))) {
+        if (!silent_mode) print_usage(argv[0]);
+        return 0;
+    }
+    
     // Display version information
     if (!silent_mode) {
         printf("=================================================\n");
@@ -808,13 +817,6 @@ int main(int argc, char *argv[]) {
         printf("=================================================\n\n");
     }
     
-    // Check if help is needed
-    if ((argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) ||
-        (argc - arg_offset == 1 && (strcmp(argv[1+arg_offset], "--help") == 0 || 
-                                    strcmp(argv[1+arg_offset], "-h") == 0))) {
-        if (!silent_mode) print_usage(argv[0]);
-        return 0;
-    }
 
     // Check for test modes
      if (argc >= 2 && strcmp(argv[1], "--test") == 0) {
