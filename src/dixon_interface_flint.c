@@ -310,23 +310,20 @@ void parse_expression(parser_state_t *state, fq_mvpoly_t *poly) {
 
 
 void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, parser_state_t *state) {
-    // Check if there are elimination variables
     if (result->nvars != 0) {
-        return;  // Still has elimination variables, not final result
+        return;
     }
     
-    // Check actual number of parameters used
     int *par_used = (int*) calloc(result->npars, sizeof(int));
     slong actual_par_count = 0;
     slong main_par_idx = -1;
     
-    // Iterate through all terms to count actually used parameters
     for (slong t = 0; t < result->nterms; t++) {
         if (result->terms[t].par_exp) {
             for (slong p = 0; p < result->npars; p++) {
                 if (result->terms[t].par_exp[p] > 0 && !par_used[p]) {
                     par_used[p] = 1;
-                    main_par_idx = p;  // Remember the last used parameter
+                    main_par_idx = p;
                     actual_par_count++;
                 }
             }
@@ -362,14 +359,11 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
         return;
     }
     
-    // actual_par_count == 1, proceed with root finding
     printf("Single parameter detected! Finding roots...\n");
     
-    // Convert fq_mvpoly_t to fq_nmod_poly_t
     fq_nmod_poly_t poly;
     fq_nmod_poly_init(poly, result->ctx);
     
-    // Convert: transform parameter polynomial to univariate polynomial
     for (slong i = 0; i < result->nterms; i++) {
         slong degree = 0;
         if (result->terms[i].par_exp && result->terms[i].par_exp[main_par_idx] > 0) {
@@ -394,92 +388,80 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
         free(par_used);
         return;
     }
-    
-// Use FLINT's root finding algorithm - optimized version, detect field type
-printf("\nFinding roots using appropriate algorithm...\n");
 
-degree = fq_nmod_poly_degree(poly, result->ctx);
-if (degree <= 0) {
-    printf("  Polynomial is constant or zero, no roots to find.\n");
-    fq_nmod_poly_clear(poly, result->ctx);
-    free(par_used);
-    return;
-}
+    printf("\nFinding roots using appropriate algorithm...\n");
 
-// Detect field type
-slong field_degree = fq_nmod_ctx_degree(result->ctx);
-printf("Field degree: %ld\n", field_degree);
-slong root_count = 0;
-slong total_multiplicity = 0;
+    degree = fq_nmod_poly_degree(poly, result->ctx);
+    if (degree <= 0) {
+        printf("  Polynomial is constant or zero, no roots to find.\n");
+        fq_nmod_poly_clear(poly, result->ctx);
+        free(par_used);
+        return;
+    }
 
-if (field_degree == 1) {
-    // Prime field case - use more efficient nmod_poly_roots
-    printf("Prime field detected, using nmod_poly_roots...\n");
-    
-    mp_limb_t prime = fq_nmod_ctx_prime(result->ctx);
-    
-    // Convert to nmod_poly_t
-    nmod_poly_t nmod_poly;
-    nmod_poly_init(nmod_poly, prime);
-    
-    // Copy coefficients
-    for (slong i = 0; i <= degree; i++) {
-        fq_nmod_t coeff;
-        fq_nmod_init(coeff, result->ctx);
-        fq_nmod_poly_get_coeff(coeff, poly, i, result->ctx);
+    slong field_degree = fq_nmod_ctx_degree(result->ctx);
+    printf("Field degree: %ld\n", field_degree);
+
+    if (field_degree == 1) {
+        printf("Prime field detected, using nmod_poly_roots...\n");
         
-        // Extract from fq_nmod_t as mp_limb_t
-        nmod_poly_t temp_poly;
-        nmod_poly_init(temp_poly, prime);
-        fq_nmod_get_nmod_poly(temp_poly, coeff, result->ctx);
+        mp_limb_t prime = fq_nmod_ctx_prime(result->ctx);
         
-        mp_limb_t coeff_ui = 0;
-        if (nmod_poly_degree(temp_poly) >= 0) {
-            coeff_ui = nmod_poly_get_coeff_ui(temp_poly, 0);
+        nmod_poly_t nmod_poly;
+        nmod_poly_init(nmod_poly, prime);
+        
+        for (slong i = 0; i <= degree; i++) {
+            fq_nmod_t coeff;
+            fq_nmod_init(coeff, result->ctx);
+            fq_nmod_poly_get_coeff(coeff, poly, i, result->ctx);
+            
+            nmod_poly_t temp_poly;
+            nmod_poly_init(temp_poly, prime);
+            fq_nmod_get_nmod_poly(temp_poly, coeff, result->ctx);
+            
+            mp_limb_t coeff_ui = 0;
+            if (nmod_poly_degree(temp_poly) >= 0) {
+                coeff_ui = nmod_poly_get_coeff_ui(temp_poly, 0);
+            }
+            
+            nmod_poly_set_coeff_ui(nmod_poly, i, coeff_ui);
+            
+            fq_nmod_clear(coeff, result->ctx);
+            nmod_poly_clear(temp_poly);
         }
         
-        nmod_poly_set_coeff_ui(nmod_poly, i, coeff_ui);
+        nmod_roots_t nmod_roots;
+        nmod_roots_init(nmod_roots);
+        slong num_roots = our_nmod_poly_roots(nmod_roots, nmod_poly, 1);
         
-        fq_nmod_clear(coeff, result->ctx);
-        nmod_poly_clear(temp_poly);
+        printf("\nRoots found:\n");
+        printf("Find %ld roots:\n", num_roots);
+        for (slong i = 0; i < nmod_roots->num; i++) {
+            printf("  Root %ld: %lu (Multiplicity: %ld)\n", i + 1, 
+                   nmod_roots->roots[i], nmod_roots->mult[i]);
+        }
+        
+        /* FIX: 释放 nmod_roots 内部分配的内存 */
+        nmod_roots_clear(nmod_roots);
+        nmod_poly_clear(nmod_poly);
+        
+    } else {
+        printf("Extension field detected, using fq_nmod_poly_roots...\n");
+        
+        fq_nmod_roots_t roots;
+        fq_nmod_roots_init(roots, result->ctx);
+        slong num_roots = our_fq_nmod_poly_roots(roots, poly, 1, result->ctx);
+        
+        printf("Find %ld roots:\n", num_roots);
+        for (slong i = 0; i < roots->num; i++) {
+            printf("  root %ld: ", i + 1);
+            fq_nmod_print_pretty(roots->roots + i, result->ctx);
+            printf(" (Multiplicity: %ld)\n", roots->mult[i]);
+        }
+        
+        fq_nmod_roots_clear(roots, result->ctx);
     }
-    
-    // Use nmod_poly_roots for root finding
-    nmod_roots_t nmod_roots;
-    nmod_roots_init(nmod_roots);
-    slong num_roots = our_nmod_poly_roots(nmod_roots, nmod_poly, 1);  // with_multiplicity = 1
-    
-    // Output found roots
-    printf("\nRoots found:\n");
-    
-    printf("Find %ld roots:\n", num_roots);
-    for (slong i = 0; i < nmod_roots->num; i++) {
-        printf("  Root %ld: %lu (Multiplicity: %ld)\n", i + 1, 
-               nmod_roots->roots[i], nmod_roots->mult[i]);
-    }
-    
-    // Clean up nmod related structures
-    nmod_poly_clear(nmod_poly);
-    
-} else {
-    // Extension field case - use original fq_nmod_poly_roots
-    printf("Extension field detected, using fq_nmod_poly_roots...\n");
-    
-    fq_nmod_roots_t roots;
-    fq_nmod_roots_init(roots, result->ctx);
-    slong num_roots = our_fq_nmod_poly_roots(roots, poly, 1, result->ctx);
-    
-    printf("Find %ld roots:\n", num_roots);
-    for (slong i = 0; i < roots->num; i++) {
-        printf("  root %ld: ", i + 1);
-        fq_nmod_print_pretty(roots->roots + i, result->ctx);
-        printf(" (Multiplicity: %ld)\n", roots->mult[i]);
-    }
-    
-    // Clean up
-}
 
-    // Clean up
     fq_nmod_poly_clear(poly, result->ctx);
     free(par_used);
 }
@@ -1050,7 +1032,6 @@ char** split_string(const char *input, slong *count) {
     
     size_t input_len = strlen(input);
     
-    // Copy input string for modification - use dynamic allocation for large strings
     char *work_str = (char*) malloc(input_len + 1);
     if (!work_str) {
         *count = 0;
@@ -1058,7 +1039,6 @@ char** split_string(const char *input, slong *count) {
     }
     memcpy(work_str, input, input_len + 1);
     
-    // First pass: count how many elements (look for commas)
     slong num_elements = 1;
     int in_parentheses = 0;
     for (size_t i = 0; i < input_len; i++) {
@@ -1069,7 +1049,6 @@ char** split_string(const char *input, slong *count) {
         }
     }
     
-    // Allocate result array
     char **result = (char**) malloc(num_elements * sizeof(char*));
     if (!result) {
         free(work_str);
@@ -1077,7 +1056,6 @@ char** split_string(const char *input, slong *count) {
         return NULL;
     }
     
-    // Second pass: split string (manual handling, don't use strtok)
     slong idx = 0;
     size_t start = 0;
     in_parentheses = 0;
@@ -1094,10 +1072,10 @@ char** split_string(const char *input, slong *count) {
             memcpy(poly, input + start, poly_len);
             poly[poly_len] = '\0';
             
-            // Trim whitespace
             char *trimmed = trim_whitespace(poly);
             result[idx++] = strdup(trimmed);
-            if (poly != trimmed) free(poly);
+
+            free(poly);
             
             start = i + 1;
         }
@@ -1526,51 +1504,37 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     return result_string;
 }
 
-char* dixon_str(const char *poly_string,    // comma-separated polynomials
-                const char *vars_string,     // comma-separated variables
+char* dixon_str(const char *poly_string,
+                const char *vars_string,
                 const fq_nmod_ctx_t ctx) {
     
     printf("\n=== Dixon/Resultant Computation (String Interface) ===\n");
     
-    // Split input strings
     slong num_polys, num_vars;
     char **poly_array = split_string(poly_string, &num_polys);
     char **vars_array = split_string(vars_string, &num_vars);
     
     char *result = NULL;
     
-    // Check if it's bivariate case
     if (num_polys == 2 && num_vars == 1) {
         printf("Using unified bivariate resultant for 2 polynomials...\n");
-
-        
-        // Call unified interface bivariate resultant computation
         result = bivariate_resultant(poly_array[0], poly_array[1], 
-                                                    vars_array[0], ctx);        
+                                     vars_array[0], ctx);        
     } else {
-        // Use original Dixon method
         printf("Using Dixon resultant for %ld polynomials...\n", num_polys);
         
-        // Convert to const char**
         const char **poly_strings = (const char**) malloc(num_polys * sizeof(char*));
-        const char **elim_vars = (const char**) malloc(num_vars * sizeof(char*));
+        const char **elim_vars   = (const char**) malloc(num_vars  * sizeof(char*));
         
-        for (slong i = 0; i < num_polys; i++) {
-            poly_strings[i] = poly_array[i];
-        }
-        for (slong i = 0; i < num_vars; i++) {
-            elim_vars[i] = vars_array[i];
-        }
+        for (slong i = 0; i < num_polys; i++) poly_strings[i] = poly_array[i];
+        for (slong i = 0; i < num_vars;  i++) elim_vars[i]    = vars_array[i];
         
-        // Call original dixon function
         result = dixon(poly_strings, num_polys, elim_vars, num_vars, ctx);
         
-        // Clean up
         free(poly_strings);
         free(elim_vars);
     }
     
-    // Clean up split strings
     free_split_strings(poly_array, num_polys);
     free_split_strings(vars_array, num_vars);
     
