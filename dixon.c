@@ -206,11 +206,6 @@ static int parse_field_polynomial(nmod_poly_t modulus, const char *poly_str,
     return 1;
 }
 
-// =============================================================================
-// STEP 2: Replace parse_field_size() function
-// =============================================================================
-// REPLACE the existing parse_field_size() with this version:
-
 static int parse_field_size(const char *field_str, fmpz_t prime, ulong *power, 
                            char **field_poly, char **gen_var) {
     if (!field_str || strlen(field_str) == 0) return 0;
