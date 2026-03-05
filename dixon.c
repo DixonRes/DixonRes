@@ -763,9 +763,6 @@ static int count_comma_separated_items(const char *str) {
     return count;
 }
 
-// Version information
-#define PROGRAM_VERSION "0.0.1"
-
 int main(int argc, char *argv[]) {
     clock_t start_time = clock();
     
