@@ -11,7 +11,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 - Dixon with triangular ideal reduction
 - Finite fields:
   - Prime fields F_p (p < 2^63): Optionally accelerated by PML.
-  - Extension fields F_{p^k}: Further optimized for F(2^8), F(2^16), F(2^32), F(2^64), and F(2^128).
+  - Extension fields F_(p^k): Further optimized for GF_(2^n) for n ∈ {8, 16, 32, 64, 128}.
 - Command line input or file input. Automatic output to solution files
 
 ---
