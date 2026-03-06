@@ -10,7 +10,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 - Polynomial system solver for n×n systems
 - Dixon with triangular ideal reduction
 - Finite fields:
-  - Prime fields F_p (p < 2^63): Optionally accelerated by PML.
+  - Prime fields F_p (p < 2^63): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
   - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {8, 16, 32, 64, 128}.
 - Command line input or file input. Automatic output to solution files
 
