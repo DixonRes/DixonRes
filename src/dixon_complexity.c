@@ -469,81 +469,237 @@ static int add_variable_optimized(poly_analysis_t *analysis, const char *var_nam
 }
 
 // Fast degree-only parsing without full polynomial construction
+
 static int parse_and_extract_degree(lightweight_parser_t *parser) {
     parser->max_degree_found = 0;
     var_hash_init(&parser->var_table, 16);
-    
-    // Simple tokenizer focused on finding variables and their powers
+
+    long current_term_degree = 0;   /* accumulated total degree of current monomial */
+    int  in_term = 0;               /* are we inside a monomial? */
+
     while (parser->pos < parser->len) {
         char c = parser->input[parser->pos];
-        
-        // Skip whitespace and operators
-        if (isspace(c) || c == '+' || c == '-' || c == '*' || c == '(' || c == ')') {
+
+        /* ── whitespace / explicit multiply: stay in current monomial ── */
+        if (isspace(c) || c == '*' || c == '(' || c == ')') {
+            if (c == '(' || c == ')') {
+                /* parentheses: flush current term first */
+                if (in_term && current_term_degree > parser->max_degree_found)
+                    parser->max_degree_found = current_term_degree;
+                current_term_degree = 0;
+                in_term = 0;
+            }
             parser->pos++;
             continue;
         }
-        
-        // Handle numbers
-        if (isdigit(c)) {
-            while (parser->pos < parser->len && isdigit(parser->input[parser->pos])) {
-                parser->pos++;
-            }
+
+        /* ── additive operator: end of current monomial ── */
+        if (c == '+' || c == '-') {
+            if (in_term && current_term_degree > parser->max_degree_found)
+                parser->max_degree_found = current_term_degree;
+            current_term_degree = 0;
+            in_term = 0;
+            parser->pos++;
             continue;
         }
-        
-        // Handle identifiers (variables)
+
+        /* ── numeric literal (coefficient): skip digits, don't add to degree ── */
+        if (isdigit(c)) {
+            while (parser->pos < parser->len &&
+                   isdigit(parser->input[parser->pos]))
+                parser->pos++;
+            /* a bare number with no variable following is a constant monomial
+               of degree 0 — mark that we are inside a term so a subsequent
+               '+'/'-' triggers a flush */
+            in_term = 1;
+            continue;
+        }
+
+        /* ── identifier: variable or field generator ── */
         if (isalpha(c) || c == '_') {
             size_t start = parser->pos;
-            while (parser->pos < parser->len && 
-                   (isalnum(parser->input[parser->pos]) || parser->input[parser->pos] == '_')) {
+            while (parser->pos < parser->len &&
+                   (isalnum(parser->input[parser->pos]) ||
+                    parser->input[parser->pos] == '_'))
                 parser->pos++;
-            }
-            
-            // Extract variable name
-            size_t len = parser->pos - start;
-            char *var_name = (char*) malloc(len + 1);
+
+            size_t id_len  = parser->pos - start;
+            char  *var_name = malloc(id_len + 1);
             if (!var_name) return 0;
-            
-            strncpy(var_name, parser->input + start, len);
-            var_name[len] = '\0';
-            
-            // Skip if it's the generator
-            if (parser->generator_name && strcmp(var_name, parser->generator_name) == 0) {
-                free(var_name);
-                continue;
-            }
-            
-            // Add to variable table
-            slong var_index = var_hash_add(&parser->var_table, var_name);
-            free(var_name);
-            
-            if (var_index < 0) return 0; // Error
-            
-            // Check for power operator
-            long power = 1;
-            if (parser->pos < parser->len && parser->input[parser->pos] == '^') {
-                parser->pos++; // skip '^'
-                power = 0;
-                while (parser->pos < parser->len && isdigit(parser->input[parser->pos])) {
-                    power = power * 10 + (parser->input[parser->pos] - '0');
+            strncpy(var_name, parser->input + start, id_len);
+            var_name[id_len] = '\0';
+
+            /* read optional exponent (applies to this identifier) */
+            long exponent = 1;
+            if (parser->pos < parser->len &&
+                parser->input[parser->pos] == '^') {
+                parser->pos++;          /* skip '^' */
+                exponent = 0;
+                while (parser->pos < parser->len &&
+                       isdigit(parser->input[parser->pos])) {
+                    exponent = exponent * 10 +
+                               (parser->input[parser->pos] - '0');
                     parser->pos++;
                 }
-                if (power == 0) power = 1; // Handle edge case
+                if (exponent == 0) exponent = 1;
             }
-            
-            // Update max degree for this term
-            if (power > parser->max_degree_found) {
-                parser->max_degree_found = power;
+
+            /* skip field generator — it contributes no "polynomial" degree */
+            if (parser->generator_name &&
+                strcmp(var_name, parser->generator_name) == 0) {
+                free(var_name);
+                in_term = 1;   /* still inside the monomial */
+                continue;
             }
-        } else {
-            parser->pos++; // Skip unknown characters
+
+            /* register variable (for the caller's variable-discovery side-effect) */
+            var_hash_add(&parser->var_table, var_name);
+            free(var_name);
+
+            /* accumulate total degree of this monomial */
+            current_term_degree += exponent;
+            in_term = 1;
+            continue;
         }
+
+        /* unknown character — skip */
+        parser->pos++;
     }
-    
+
+    /* flush the last monomial */
+    if (in_term && current_term_degree > parser->max_degree_found)
+        parser->max_degree_found = current_term_degree;
+
     return 1;
 }
 
-// Main optimized function
+
+/* =========================================================================
+ * Complexity analysis helpers (internal to main)
+ * ========================================================================= */
+
+/*
+ * Return the total degree of a polynomial string, ignoring the field
+ * generator (gen_name).  Each monomial's contribution is the sum of
+ * exponents of all non-generator identifiers.
+ */
+long get_poly_total_degree(const char *poly_str, const char *gen_name)
+{
+    if (!poly_str) return 0;
+
+    long max_deg = 0, cur_deg = 0;
+    int  in_term = 0;
+    const char *p = poly_str;
+
+    while (*p) {
+        /* whitespace / multiply / parentheses */
+        if (isspace((unsigned char)*p) || *p == '*' ||
+            *p == '(' || *p == ')') {
+            p++;
+            continue;
+        }
+
+        /* additive operator → end current monomial */
+        if (*p == '+' || *p == '-') {
+            if (in_term && cur_deg > max_deg) max_deg = cur_deg;
+            cur_deg = 0;
+            in_term = 0;
+            p++;
+            continue;
+        }
+
+        /* numeric literal (coefficient) – skip digits */
+        if (isdigit((unsigned char)*p)) {
+            while (*p && isdigit((unsigned char)*p)) p++;
+            in_term = 1;
+            continue;
+        }
+
+        /* identifier */
+        if (isalpha((unsigned char)*p) || *p == '_') {
+            char name[64];
+            int  ni = 0;
+            while (*p && (isalnum((unsigned char)*p) || *p == '_') && ni < 63)
+                name[ni++] = *p++;
+            name[ni] = '\0';
+
+            /* read exponent */
+            long exp = 1;
+            if (*p == '^') {
+                p++;
+                exp = 0;
+                while (*p && isdigit((unsigned char)*p)) {
+                    exp = exp * 10 + (*p - '0');
+                    p++;
+                }
+                if (exp == 0) exp = 1;
+            }
+
+            /* skip field generator */
+            if (gen_name && strcmp(name, gen_name) == 0) {
+                in_term = 1;
+                continue;
+            }
+
+            cur_deg += exp;
+            in_term = 1;
+            continue;
+        }
+
+        p++;
+    }
+
+    if (in_term && cur_deg > max_deg) max_deg = cur_deg;
+    return max_deg;
+}
+
+/*
+ * Collect unique variable names (excluding the field generator) that appear
+ * across all polynomial strings.  Returns malloc'd array; caller frees.
+ */
+void collect_variables(const char **polys, slong npolys,
+                               const char *gen_name,
+                               char ***vars_out, slong *nvars_out)
+{
+    slong  cap  = 16;
+    char **vars = malloc(cap * sizeof(char *));
+    slong  nv   = 0;
+
+    for (slong i = 0; i < npolys; i++) {
+        const char *p = polys[i];
+        while (*p) {
+            if (isalpha((unsigned char)*p) || *p == '_') {
+                char name[64];
+                int  ni = 0;
+                while (*p && (isalnum((unsigned char)*p) || *p == '_') && ni < 63)
+                    name[ni++] = *p++;
+                name[ni] = '\0';
+
+                if (gen_name && strcmp(name, gen_name) == 0) continue;
+
+                /* already recorded? */
+                int found = 0;
+                for (slong j = 0; j < nv; j++) {
+                    if (strcmp(vars[j], name) == 0) { found = 1; break; }
+                }
+                if (!found) {
+                    if (nv >= cap) {
+                        cap *= 2;
+                        vars = realloc(vars, cap * sizeof(char *));
+                    }
+                    vars[nv++] = strdup(name);
+                }
+            } else {
+                p++;
+            }
+        }
+    }
+
+    *vars_out  = vars;
+    *nvars_out = nv;
+}
+
+
 static void analyze_single_polynomial(poly_analysis_t *analysis, slong poly_idx, 
                                      const char *poly_str) {
     // Input validation
