@@ -82,6 +82,11 @@ static void analyze_single_polynomial(poly_analysis_t *analysis, slong poly_idx,
 static void analyze_single_polynomial_old(poly_analysis_t *analysis, slong poly_idx, const char *poly_str);
 static int is_elimination_var(const char *var_name, const char **elim_vars, slong num_elim_vars);
 
+long get_poly_total_degree(const char *poly_str, const char *gen_name);
+void collect_variables(const char **polys, slong npolys,
+                               const char *gen_name,
+                               char ***vars_out, slong *nvars_out);
+
 // Main Dixon complexity analysis functions
 char* dixon_complexity_auto(const char **poly_strings, slong num_polys,
                            const char **elim_vars, slong num_elim_vars,
