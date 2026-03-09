@@ -29,6 +29,30 @@
 #include "fq_unified_interface.h"
 #include "gf2n_mpoly.h"
 
+
+#define GET_NMOD_POLY(poly) (&(poly)->data.nmod_poly)
+#define GET_FQ_POLY(poly) (&(poly)->data.fq_poly)
+#define GET_ZECH_POLY(poly) (&(poly)->data.zech_poly)
+
+#define GET_NMOD_CTX(ctx) (&(ctx)->ctx.nmod_ctx)
+#define GET_FQ_CTX(ctx) (&(ctx)->ctx.fq_ctx)
+#define GET_ZECH_CTX(ctx) (&(ctx)->ctx.zech_ctx)
+
+
+#define WARN_ONCE_N(n, fmt, ...) \
+    do { \
+        static int _warn_count = 0; \
+        if (_warn_count < (n)) { \
+            _warn_count++; \
+            fprintf(stderr, fmt, ##__VA_ARGS__); \
+            if (_warn_count == (n)) \
+                fprintf(stderr, "(further identical warnings suppressed)\n"); \
+        } \
+    } while (0)
+
+#define WARN_ONCE(fmt, ...)    WARN_ONCE_N(1, fmt, ##__VA_ARGS__)
+#define WARN_THRICE(fmt, ...)  WARN_ONCE_N(3, fmt, ##__VA_ARGS__)
+
 /* ============================================================================
    UNIFIED MULTIVARIATE POLYNOMIAL TYPES AND STRUCTURES WITH ZECH SUPPORT
    ============================================================================ */
