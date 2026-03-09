@@ -22,7 +22,7 @@
 #include "polynomial_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.0.2"
+#define PROGRAM_VERSION "0.0.3"
 
 /* =========================================================================
  * Print usage
@@ -55,9 +55,13 @@ static void print_usage(const char *prog_name)
     printf("    -> Prints complexity info; saves to comp+timestamp.dat\n");
     printf("    Add --omega <value> (or -w <value>) to set omega (default: %.4g)\n",
            DIXON_OMEGA);
-//     printf("  Dixon with ideal reduction:\n");
-//     printf("    %s \"polynomials\" \"eliminate_vars\" \"ideal_generators\" \"all_variables\" field_size\n", prog_name);
-//     printf("    -> Writes reduced resultant to solution+timestamp.dat\n");
+
+    printf("  Random mode (combine with any compute flag):\n");
+    printf("    %s --random \"[d1,d2,...,dn]\" field_size\n", prog_name);
+    printf("    %s -r       \"[d]*n\"          field_size\n", prog_name);
+    printf("    %s -r --solve \"[d1,...,dn]\" field_size\n", prog_name);
+    printf("    %s -r --comp  \"[d]*n\"        field_size\n", prog_name);
+
     printf("  File input:\n");
     printf("    %s input_file\n", prog_name);
     printf("    %s --solve input_file\n", prog_name);
@@ -78,16 +82,19 @@ static void print_usage(const char *prog_name)
 
     printf("EXAMPLES:\n");
     printf("  %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("  %s --comp \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
     printf("  %s --solve \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
-    printf("  %s --solve \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
-    printf("  (AES polynomial for F_256, 't' is the field extension generator)\n");
+    printf("  %s --comp \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
+    printf("  %s --random \"[3,3,2]\" 257\n", prog_name);
+    printf("  %s -r --solve \"[2]*3\" 257\n", prog_name);
+    printf("  %s -r --comp --omega 2.373 \"[4]*4\" 257\n", prog_name);
     printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"x\" 2^8\n", prog_name);
+    printf("  %s --solve \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
+    printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
     printf("  %s example.dat\n", prog_name);
 }
 
 /* =========================================================================
- * Utility helpers
+ * Utility helpers (unchanged from original)
  * ========================================================================= */
 static char *trim(char *str)
 {
@@ -504,6 +511,226 @@ static void run_complexity_analysis(
     free_split_strings(elim_arr, num_elim);
 }
 
+
+/* =========================================================================
+ * Random polynomial generation helpers
+ * ========================================================================= */
+
+/*
+ * Parse degree list in any of:
+ *   "3,3,2"          plain comma-separated
+ *   "[3,3,2]"        with brackets
+ *   "[3]*5"          repeat shorthand → [3,3,3,3,3]
+ *   "[3,2]*4"        repeat a sub-list → [3,2,3,2,3,2,3,2]
+ *
+ * Returns malloc'd array; caller frees.  *count_out = number of entries.
+ */
+static long *parse_degree_list(const char *deg_str, slong *count_out)
+{
+    slong cap = 32;
+    long *degs = malloc((size_t)cap * sizeof(long));
+    slong count = 0;
+
+    /* Helper: append one value */
+#define PUSH(v) do { \
+    if (count >= cap) { cap *= 2; degs = realloc(degs, (size_t)cap * sizeof(long)); } \
+    degs[count++] = (v); } while(0)
+
+    /* Strip optional outer brackets and scan for "[...]*N" repeat syntax */
+    const char *p = deg_str;
+    while (isspace((unsigned char)*p)) p++;
+
+    /* Check for [...]* repeat */
+    if (*p == '[') {
+        const char *bracket_start = p + 1;
+        /* find matching ']' */
+        const char *bracket_end = strchr(bracket_start, ']');
+        if (bracket_end) {
+            /* collect base list between brackets */
+            slong base_cap = 16;
+            long *base = malloc((size_t)base_cap * sizeof(long));
+            slong base_n = 0;
+
+            const char *q = bracket_start;
+            while (q < bracket_end) {
+                while (q < bracket_end &&
+                       (isspace((unsigned char)*q) || *q == ',')) q++;
+                if (q >= bracket_end) break;
+                char *end;
+                long d = strtol(q, &end, 10);
+                if (end == q) break;
+                if (d > 0) {
+                    if (base_n >= base_cap) { base_cap *= 2; base = realloc(base, (size_t)base_cap * sizeof(long)); }
+                    base[base_n++] = d;
+                }
+                q = end;
+            }
+
+            /* check for '*N' after ']' */
+            const char *after = bracket_end + 1;
+            while (isspace((unsigned char)*after)) after++;
+            long repeat = 1;
+            if (*after == '*') {
+                char *end;
+                repeat = strtol(after + 1, &end, 10);
+                if (repeat <= 0) repeat = 1;
+            } else if (base_n == 1) {
+                /* "[d]*N" only makes sense with an explicit repeat;
+                   without '*', treat as a regular bracketed list        */
+                repeat = 1;
+            }
+
+            for (long r = 0; r < repeat; r++)
+                for (slong j = 0; j < base_n; j++)
+                    PUSH(base[j]);
+
+            free(base);
+            *count_out = count;
+            return degs;
+        }
+        /* malformed bracket — fall through to plain parsing */
+        p++;  /* skip the '[' */
+    }
+
+    /* Plain comma-separated parsing (also handles "[3,3,2]" without '*') */
+    while (*p) {
+        /* skip non-digit (brackets, spaces, commas) */
+        while (*p && !isdigit((unsigned char)*p) && *p != '-') p++;
+        if (!*p) break;
+        char *end;
+        long d = strtol(p, &end, 10);
+        if (end == p) { p++; continue; }
+        if (d > 0) PUSH(d);
+        else fprintf(stderr, "Warning: degree %ld ignored (must be > 0)\n", d);
+        p = end;
+    }
+#undef PUSH
+
+    *count_out = count;
+    return degs;
+}
+
+
+/*
+ * Generate a random polynomial system and return it as strings.
+ *
+ * solve_mode=0 (Dixon/comp): n polys in n vars; elim_vars = x0..x_{n-2}
+ * solve_mode=1 (solver):     n polys in n vars; elim_vars = all (solver ignores it)
+ *
+ * All three output strings are malloc'd; caller must free them.
+ * Returns 1 on success, 0 on failure.
+ */
+static int generate_random_poly_strings(
+        const long *degrees, slong npolys,
+        const fq_nmod_ctx_t ctx,
+        int is_solve_mode,
+        int silent_mode,
+        char **polys_str_out,
+        char **elim_vars_str_out,
+        char **all_vars_str_out)
+{
+    slong nvars = npolys;
+    slong npars = 0;
+
+    /* ---- x0, x1, ..., x_{n-1} ---- */
+    char **var_names = malloc((size_t)nvars * sizeof(char *));
+    for (slong i = 0; i < nvars; i++) {
+        var_names[i] = malloc(16);
+        snprintf(var_names[i], 16, "x%ld", i);
+    }
+
+    /* ---- all_vars ---- */
+    size_t av_cap = (size_t)nvars * 8 + 2;
+    char  *all_vars = malloc(av_cap);
+    all_vars[0] = '\0';
+    for (slong i = 0; i < nvars; i++) {
+        if (i > 0) strcat(all_vars, ",");
+        strcat(all_vars, var_names[i]);
+    }
+
+    /* ---- elim_vars ---- */
+    char *elim_vars;
+    if (!is_solve_mode && nvars >= 2) {
+        size_t ev_cap = (size_t)(nvars - 1) * 8 + 2;
+        elim_vars = malloc(ev_cap);
+        elim_vars[0] = '\0';
+        for (slong i = 0; i < nvars - 1; i++) {
+            if (i > 0) strcat(elim_vars, ",");
+            strcat(elim_vars, var_names[i]);
+        }
+    } else {
+        elim_vars = strdup(all_vars);
+    }
+
+    slong *slong_deg = malloc((size_t)npolys * sizeof(slong));
+    for (slong i = 0; i < npolys; i++) slong_deg[i] = (slong)degrees[i];
+
+    flint_rand_t rstate;
+    flint_rand_init(rstate);
+    flint_rand_set_seed(rstate, (ulong)time(NULL),
+                        (ulong)time(NULL) ^ (ulong)clock());
+
+    if (!silent_mode) printf("Generating random polynomial system...\n");
+
+    int orig_stdout = dup(STDOUT_FILENO);
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull != -1) { dup2(devnull, STDOUT_FILENO); close(devnull); }
+
+    fq_mvpoly_t *polys = NULL;
+    generate_polynomial_system(&polys, nvars, npolys, npars,
+                               slong_deg, 0.8, ctx, rstate);
+
+    fflush(stdout);
+    dup2(orig_stdout, STDOUT_FILENO);
+    close(orig_stdout);
+
+    char *gen_name = get_generator_name(ctx);
+
+    size_t total_len = 4;
+    char **poly_strs = malloc((size_t)npolys * sizeof(char *));
+    for (slong i = 0; i < npolys; i++) {
+        char *s = fq_mvpoly_to_string(&polys[i], NULL, gen_name);
+        poly_strs[i] = (s && strlen(s) > 0) ? s : (free(s), strdup("0"));
+        total_len += strlen(poly_strs[i]) + 3;
+    }
+
+    char *polys_str = malloc(total_len);
+    polys_str[0] = '\0';
+    for (slong i = 0; i < npolys; i++) {
+        if (i > 0) strcat(polys_str, ", ");
+        strcat(polys_str, poly_strs[i]);
+        free(poly_strs[i]);
+    }
+    free(poly_strs);
+
+    if (!silent_mode) {
+        printf("System: %ld equations, %ld variables\n", npolys, nvars);
+        printf("Degrees: [");
+        for (slong i = 0; i < npolys; i++) {
+            if (i > 0) printf(", ");
+            printf("%ld", slong_deg[i]);
+        }
+        printf("]\n");
+        if (!is_solve_mode)
+            printf("Eliminate: %s  |  Remaining: %s\n",
+                   elim_vars, var_names[nvars - 1]);
+    }
+
+    /* ---- clear ---- */
+    for (slong i = 0; i < npolys; i++) fq_mvpoly_clear(&polys[i]);
+    free(polys);
+    free(slong_deg);
+    if (gen_name) free(gen_name);
+    for (slong i = 0; i < nvars; i++) free(var_names[i]);
+    free(var_names);
+    flint_rand_clear(rstate);
+
+    *polys_str_out      = polys_str;
+    *elim_vars_str_out  = elim_vars;
+    *all_vars_str_out   = all_vars;
+    return 1;
+}
+
 /* =========================================================================
  * File reading helpers (unchanged from original)
  * ========================================================================= */
@@ -817,6 +1044,7 @@ int main(int argc, char *argv[])
     int    silent_mode = 0;
     int    solve_mode  = 0;
     int    comp_mode   = 0;
+    int    rand_mode   = 0;   /* --random / -r */
     int    arg_offset  = 0;
     double omega       = DIXON_OMEGA;   /* default, overridden by --omega */
 
@@ -828,6 +1056,9 @@ int main(int argc, char *argv[])
         } else if (strcmp(argv[i], "--comp") == 0 ||
                    strcmp(argv[i], "-c")     == 0) {
             comp_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--random") == 0 ||
+                   strcmp(argv[i], "-r")       == 0) {
+            rand_mode = 1; arg_offset++;
         } else if ((strcmp(argv[i], "--omega") == 0 ||
                     strcmp(argv[i], "-w")      == 0) && i + 1 < argc) {
             char *endptr = NULL;
@@ -890,13 +1121,41 @@ int main(int argc, char *argv[])
     char *allvars_str   = NULL;
     char *field_str     = NULL;
     int   need_free     = 0;
+    int   rand_generated = 0;  /* 1 = polys_str/vars_str were malloc'd by random gen */
+    char *deg_str       = NULL; /* degree list string when rand_mode */
     char *input_filename  = NULL;
     char *output_filename = NULL;
     mp_limb_t prime = 0;
     ulong     power = 0;
 
     /* ---- determine input mode ---- */
-    if (comp_mode) {
+    if (rand_mode) {
+        /* --random / -r: positional args are "d1,d2,...,dn" field_size */
+        if (effective_argc != 3) {
+            if (!silent_mode) {
+                fprintf(stderr, "Error: Random mode requires exactly:\n");
+                fprintf(stderr, "  %s [--solve|--comp] --random \"d1,d2,...,dn\" field_size\n",
+                        argv[0]);
+            }
+            return 1;
+        }
+        deg_str   = effective_argv[1];
+        field_str = effective_argv[2];
+
+        char buffer[128];
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        const char *prefix = comp_mode ? "comp" : (solve_mode ? "solution" : "solution");
+        if (t) strftime(buffer, sizeof(buffer),
+                        comp_mode
+                            ? "comp_%Y%m%d_%H%M%S.dat"
+                            : "solution_%Y%m%d_%H%M%S.dat",
+                        t);
+        else   snprintf(buffer, sizeof(buffer), "%s.dat", prefix);
+        output_filename = strdup(buffer);
+        (void)prefix;   /* suppress unused-variable warning */
+
+    } else if (comp_mode) {
         /* Complexity analysis mode: same argument format as basic Dixon */
         if (effective_argc == 2) {
             /* file input */
@@ -1123,6 +1382,50 @@ int main(int argc, char *argv[])
     }
 
     /* ======================================================
+     * If --random/-r, generate polynomial strings now that ctx is ready
+     * ====================================================== */
+    if (rand_mode) {
+        slong  npolys_rand;
+        long  *degrees_rand = parse_degree_list(deg_str, &npolys_rand);
+
+        if (npolys_rand < 2) {
+            if (!silent_mode)
+                fprintf(stderr, "Error: --random requires at least 2 degrees "
+                                "(e.g. \"3,3,2\")\n");
+            free(degrees_rand);
+            fq_nmod_ctx_clear(ctx);
+            fmpz_clear(p_fmpz);
+            if (field_poly_str) free(field_poly_str);
+            if (gen_var_name)   free(gen_var_name);
+            if (output_filename) free(output_filename);
+            return 1;
+        }
+
+        char *gen_polys = NULL, *gen_elim = NULL, *gen_allvars = NULL;
+        if (!generate_random_poly_strings(degrees_rand, npolys_rand,
+                                          ctx,
+                                          solve_mode,
+                                          silent_mode,
+                                          &gen_polys, &gen_elim, &gen_allvars)) {
+            if (!silent_mode)
+                fprintf(stderr, "Error: random polynomial generation failed\n");
+            free(degrees_rand);
+            fq_nmod_ctx_clear(ctx);
+            fmpz_clear(p_fmpz);
+            if (field_poly_str) free(field_poly_str);
+            if (gen_var_name)   free(gen_var_name);
+            if (output_filename) free(output_filename);
+            return 1;
+        }
+
+        free(degrees_rand);
+        polys_str    = gen_polys;
+        vars_str     = gen_elim;
+        allvars_str  = gen_allvars;
+        rand_generated = 1;
+    }
+
+    /* ======================================================
      * EXECUTE requested mode
      * ====================================================== */
 
@@ -1134,7 +1437,7 @@ int main(int argc, char *argv[])
         if (!silent_mode) {
             int poly_count = count_comma_separated_items(polys_str);
             int var_count  = count_comma_separated_items(vars_str);
-            printf("\nPolynomials (%d): %s\n", poly_count, polys_str);
+            //printf("\nPolynomials (%d): %s\n", poly_count, polys_str);
             printf("Eliminate   (%d): %s\n", var_count,  vars_str);
             printf("Omega            : %.4g\n", omega);
             printf("--------------------------------\n");
@@ -1286,6 +1589,11 @@ int main(int argc, char *argv[])
         if (vars_str)   free(vars_str);
         if (ideal_str)  free(ideal_str);
         if (allvars_str) free(allvars_str);
+    }
+    if (rand_generated) {
+        free(polys_str);
+        free(vars_str);
+        free(allvars_str);
     }
     if (input_filename)  free(input_filename);
     if (output_filename) free(output_filename);
