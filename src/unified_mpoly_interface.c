@@ -400,7 +400,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                                             ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
                 
                 int success = gf28_mpoly_mul(C, A, B, native_ctx);
-                
+                //printf("%d\n",success);
                 if (success) {
                     gf28_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                 ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
@@ -415,7 +415,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf28_mpoly_clear(B, native_ctx);
                     gf28_mpoly_clear(C, native_ctx);
                     gf28_mpoly_ctx_clear(native_ctx);
-                    printf("GF(2^8) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^8) array multiplication failed, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -454,7 +454,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf216_mpoly_clear(B, native_ctx);
                     gf216_mpoly_clear(C, native_ctx);
                     gf216_mpoly_ctx_clear(native_ctx);
-                    printf("GF(2^16) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^16) array multiplication failed, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -493,7 +493,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf232_mpoly_clear(B, native_ctx);
                     gf232_mpoly_clear(C, native_ctx);
                     gf232_mpoly_ctx_clear(native_ctx);
-                    printf("GF(2^32) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^32) array multiplication failed, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -532,7 +532,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf264_mpoly_clear(B, native_ctx);
                     gf264_mpoly_clear(C, native_ctx);
                     gf264_mpoly_ctx_clear(native_ctx);
-                    printf("GF(2^64) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^64) array multiplication failed, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -571,7 +571,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf2128_mpoly_clear(B, native_ctx);
                     gf2128_mpoly_clear(C, native_ctx);
                     gf2128_mpoly_ctx_clear(native_ctx);
-                    printf("GF(2^128) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^128) array multiplication failed, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
