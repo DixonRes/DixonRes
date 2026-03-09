@@ -229,7 +229,10 @@ void gf28_mpoly_ctx_init(gf28_mpoly_ctx_t ctx, slong nvars, const ordering_t ord
 void gf28_mpoly_ctx_clear(gf28_mpoly_ctx_t ctx);
 void gf28_mpoly_zero(gf28_mpoly_t poly, const gf28_mpoly_ctx_t ctx);
 void gf28_mpoly_set(gf28_mpoly_t res, const gf28_mpoly_t poly, const gf28_mpoly_ctx_t ctx);
-
+static void _gf28_mpoly_repack_exps(
+    gf28_mpoly_t poly,
+    flint_bitcnt_t new_bits,
+    const gf28_mpoly_ctx_t ctx);
 /* Coefficient access */
 void gf28_mpoly_set_coeff_ui_ui(gf28_mpoly_t poly, uint8_t c, 
                                 const ulong *exp, const gf28_mpoly_ctx_t ctx);
@@ -414,7 +417,12 @@ void gf2128_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf2128_mpoly_t pol
    ============================================================================ */
 
 double get_wall_time(void);
-
+int gf28_mpoly_test_mul_array(
+    const slong *nvars_list, slong nvars_count,
+    slong exp_bound, slong nterms, slong ntrials, int verbose);
+int gf28_mpoly_test_mul_vs_flint(
+    const slong *nvars_list, slong nvars_count,
+    slong exp_bound, slong nterms, slong ntrials, int verbose);
 #ifdef __cplusplus
 }
 #endif
