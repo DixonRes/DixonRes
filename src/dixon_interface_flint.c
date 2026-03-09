@@ -306,9 +306,6 @@ void parse_expression(parser_state_t *state, fq_mvpoly_t *poly) {
     }
 }
 
-
-
-
 void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, parser_state_t *state) {
     if (result->nvars != 0) {
         return;
@@ -441,7 +438,6 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
                    nmod_roots->roots[i], nmod_roots->mult[i]);
         }
         
-        /* FIX: 释放 nmod_roots 内部分配的内存 */
         nmod_roots_clear(nmod_roots);
         nmod_poly_clear(nmod_poly);
         
@@ -729,81 +725,52 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
     if (poly->nterms == 0) {
         return strdup("0");
     }
-    
-    // Estimate initial capacity
+
     size_t estimated_size = poly->nterms * (50 + 10 * (poly->nvars + poly->npars));
     if (estimated_size < 1024) estimated_size = 1024;
-    
+
     string_builder_t sb;
     sb_init(&sb, estimated_size);
-    
+
     for (slong i = 0; i < poly->nterms; i++) {
         if (i > 0) {
             sb_append(&sb, " + ");
         }
-        
-        // Check if we have any variables or parameters for this term
+
         int has_vars_or_pars = 0;
-        
-        // Check variables (var_exp)
+
         if (poly->nvars > 0 && poly->terms[i].var_exp) {
             for (slong j = 0; j < poly->nvars; j++) {
-                if (poly->terms[i].var_exp[j] > 0) {
-                    has_vars_or_pars = 1;
-                    break;
-                }
+                if (poly->terms[i].var_exp[j] > 0) { has_vars_or_pars = 1; break; }
             }
         }
-        
-        // Check parameters (par_exp)
         if (!has_vars_or_pars && poly->npars > 0 && poly->terms[i].par_exp) {
             for (slong j = 0; j < poly->npars; j++) {
-                if (poly->terms[i].par_exp[j] > 0) {
-                    has_vars_or_pars = 1;
-                    break;
-                }
+                if (poly->terms[i].par_exp[j] > 0) { has_vars_or_pars = 1; break; }
             }
         }
-        
-        // Handle coefficient printing using fixed function
+
         fq_nmod_t one;
         fq_nmod_init(one, poly->ctx);
         fq_nmod_one(one, poly->ctx);
-        
+
         if (fq_nmod_is_one(poly->terms[i].coeff, poly->ctx) && has_vars_or_pars) {
-            // Coefficient is 1 and we have variables/parameters, don't print coefficient
         } else {
-            // Add coefficient with proper parentheses using fixed function
             fq_nmod_to_string_builder(&sb, poly->terms[i].coeff, poly->ctx, gen_name);
-            
             if (has_vars_or_pars) {
                 sb_append_char(&sb, '*');
             }
         }
-        
         fq_nmod_clear(one, poly->ctx);
-        
-        // Track what has been printed for this term
+
         int term_has_content = 0;
-        
-        // Add variables (var_exp) - use default variable names
+
         if (poly->nvars > 0 && poly->terms[i].var_exp) {
             for (slong j = 0; j < poly->nvars; j++) {
                 if (poly->terms[i].var_exp[j] > 0) {
-                    // FIXED: Only add * if something was already printed for this term
-                    if (term_has_content) {
-                        sb_append_char(&sb, '*');
-                    }
-                    
-                    // Use standard variable names x, y, z, etc.
-                    if (j < 6) {
-                        char var_names[] = {'x', 'y', 'z', 'w', 'v', 'u'};
-                        sb_append_char(&sb, var_names[j]);
-                    } else {
-                        sb_append(&sb, "x_");
-                        sb_append_long(&sb, j);
-                    }
-                    
+                    if (term_has_content) sb_append_char(&sb, '*');
+                    sb_append_char(&sb, 'x');
+                    sb_append_long(&sb, j);
                     if (poly->terms[i].var_exp[j] > 1) {
                         sb_append_char(&sb, '^');
                         sb_append_long(&sb, poly->terms[i].var_exp[j]);
@@ -812,30 +779,17 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
                 }
             }
         }
-        
-        // Add parameters using ACTUAL parameter names
+
         if (poly->npars > 0 && poly->terms[i].par_exp) {
             for (slong j = 0; j < poly->npars; j++) {
                 if (poly->terms[i].par_exp[j] > 0) {
-                    // FIXED: Only add * if something was already printed for this term
-                    if (term_has_content) {
-                        sb_append_char(&sb, '*');
-                    }
-                    
-                    // Use actual parameter names if provided
+                    if (term_has_content) sb_append_char(&sb, '*');
                     if (par_names && par_names[j]) {
                         sb_append(&sb, par_names[j]);
                     } else {
-                        // Fallback to default parameter names
-                        if (j < 4) {
-                            char default_par_names[] = {'a', 'b', 'c', 'd'};
-                            sb_append_char(&sb, default_par_names[j]);
-                        } else {
-                            sb_append(&sb, "p_");
-                            sb_append_long(&sb, j);
-                        }
+                        sb_append_char(&sb, 'p');
+                        sb_append_long(&sb, j);
                     }
-                    
                     if (poly->terms[i].par_exp[j] > 1) {
                         sb_append_char(&sb, '^');
                         sb_append_long(&sb, poly->terms[i].par_exp[j]);
@@ -845,9 +799,10 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
             }
         }
     }
-    
+
     return sb_finalize(&sb);
 }
+
 // Print remaining variables info
 void print_remaining_vars(char **var_names, slong nvars) {
     printf("Remaining variables (%ld): ", nvars);
