@@ -3,6 +3,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 
 **Note:** This repository is under active development. The version submitted to Crypto 2026 is archived and available at:  
   <https://github.com/DixonRes/DixonRes/releases/tag/0.0.1>
+  
 Any updates after the submission deadline are not included in the above version.
 
 ## Features
