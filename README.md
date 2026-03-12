@@ -2,7 +2,8 @@
 A C implementation for computing Dixon resultants and solving polynomial systems over finite fields, based on the FLINT and PML library.
 
 **Note:** This repository is under active development. The version submitted to Crypto 2026 is archived and available at:  
-- <https://github.com/DixonRes/DixonRes/releases/tag/0.0.1>
+ - Release page: <https://github.com/DixonRes/DixonRes/releases/tag/0.0.1>
+ - Code tree: <https://github.com/DixonRes/DixonRes/tree/0.0.1>
 
 ## Features
 - Dixon resultant computation for variable elimination
