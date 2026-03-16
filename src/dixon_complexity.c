@@ -161,40 +161,6 @@ void dixon_size(fmpz_t result, const long *d_list, int len, int show_details) {
     free(slopes);
 }
 
-// Calculate Fuss-Catalan number: (1/(n(d-1)+1)) * C(nd, n)
-void fuss_catalan(fmpz_t result, long n, long d) {
-    if (n == 0 || d == 0) {
-        fmpz_set_ui(result, 1);
-        return;
-    }
-    
-    fmpz_t numerator, denominator;
-    fmpz_init(numerator);
-    fmpz_init(denominator);
-    
-    // Calculate binomial coefficient C(nd, n)
-    fmpz_bin_uiui(numerator, n * d, n);
-    
-    // Calculate denominator n(d-1)+1
-    long denom_val = n * (d - 1) + 1;
-    fmpz_set_ui(denominator, denom_val);
-    
-    // Calculate result = numerator / denominator
-    fmpz_fdiv_q(result, numerator, denominator);
-    
-    fmpz_clear(numerator);
-    fmpz_clear(denominator);
-}
-
-// Check if all elements in array are equal
-int all_equal(const long *arr, int len) {
-    if (len <= 1) return 1;
-    for (int i = 1; i < len; i++) {
-        if (arr[i] != arr[0]) return 0;
-    }
-    return 1;
-}
-
 // Calculate Dixon complexity
 double dixon_complexity(const long *a_values, int len, int n, double omega) {
     fmpz_t size;
@@ -316,33 +282,6 @@ static void poly_analysis_clear(poly_analysis_t *analysis) {
     free(analysis->degrees);
 }
 
-// Check if variable already exists in the list
-static slong find_variable(poly_analysis_t *analysis, const char *var_name) {
-    for (slong i = 0; i < analysis->num_all_vars; i++) {
-        if (strcmp(analysis->all_vars[i], var_name) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// Add variable to the list if not already present
-static void add_variable(poly_analysis_t *analysis, const char *var_name) {
-    if (find_variable(analysis, var_name) >= 0) {
-        return; // Already exists
-    }
-    
-    // Expand array if needed
-    if (analysis->num_all_vars >= analysis->max_vars) {
-        analysis->max_vars *= 2;
-        analysis->all_vars = (char**) realloc(analysis->all_vars, 
-                                             analysis->max_vars * sizeof(char*));
-    }
-    
-    analysis->all_vars[analysis->num_all_vars] = strdup(var_name);
-    analysis->num_all_vars++;
-}
-
 // Simple hash function for variable names
 static slong hash_string(const char *str, slong bucket_count) {
     slong hash = 5381;
@@ -415,7 +354,6 @@ static slong var_hash_add(var_hash_table_t *table, const char *name) {
     return entry->index;
 }
 
-// Optimized version of find_variable using hash table
 static slong find_variable_optimized(poly_analysis_t *analysis, const char *var_name) {
     // For small numbers of variables, linear search is still fast
     if (analysis->num_all_vars < 16) {
@@ -439,7 +377,6 @@ static slong find_variable_optimized(poly_analysis_t *analysis, const char *var_
     return -1;
 }
 
-// Optimized version of add_variable with better memory management
 static int add_variable_optimized(poly_analysis_t *analysis, const char *var_name) {
     // Check if already exists using optimized search
     if (find_variable_optimized(analysis, var_name) >= 0) {
