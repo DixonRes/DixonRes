@@ -6,7 +6,7 @@
 # ============================================================
 ifeq ($(wildcard config.mk),)
 $(info config.mk not found, running ./configure...)
-_DUMMY := $(shell ./configure >&2)
+_DUMMY := $(shell chmod +x configure && ./configure >&2)
 ifeq ($(wildcard config.mk),)
 $(error ./configure did not generate config.mk)
 endif
