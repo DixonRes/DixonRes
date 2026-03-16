@@ -1378,6 +1378,9 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
             }
         }
     }
+    if (g_field_equation_reduction) {
+        fq_mvpoly_reduce_field_equation(&result_mvpoly);
+    }
     fq_mvpoly_make_monic(&result_mvpoly);
 
     slong max_par_deg = 0;
