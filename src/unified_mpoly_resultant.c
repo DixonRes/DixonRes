@@ -1,6 +1,7 @@
 /* unified_mpoly_resultant.c - Implementation of resultant computation using generic ring interface with Zech support */
 
 #include "unified_mpoly_resultant.h"
+extern int g_field_equation_reduction;
 
 /* ============================================================================
    MISSING FQ_ZECH_MPOLY FUNCTIONS IMPLEMENTATION
@@ -287,6 +288,8 @@ int unified_mpoly_resultant(unified_mpoly_t R, const unified_mpoly_t A,
                            const unified_mpoly_t B, slong var,
                            unified_mpoly_ctx_t ctx) {
     int success;
+    int saved_field_eq_mode = g_field_equation_reduction;
+    g_field_equation_reduction = 0;
     
     /* Generic implementation using ring interface */
     unified_mpoly_univar_t Ax, Bx;
@@ -339,7 +342,8 @@ int unified_mpoly_resultant(unified_mpoly_t R, const unified_mpoly_t A,
     /* Clear our univariate structures */
     unified_mpoly_univar_clear(Ax, ctx);
     unified_mpoly_univar_clear(Bx, ctx);
-    
+    g_field_equation_reduction = saved_field_eq_mode;
+
     return success;
 }
 
