@@ -54,6 +54,20 @@ typedef struct {
 } fq_index_degree_pair;
 
 /* ============================================================================
+ * Field Equation Reduction
+ * ============================================================================ */
+
+/* Global flag: when non-zero, fq_mvpoly_mul reduces each variable modulo
+ * x^q - x after every multiplication (working in F_q[vars] / <x^q - x, ...>). */
+extern int g_field_equation_reduction;
+
+/* Enable or disable field-equation reduction mode. */
+void fq_mvpoly_set_field_equation_reduction(int enable);
+
+/* Reduce all variable exponents of poly in-place using x^q = x. */
+void fq_mvpoly_reduce_field_equation(fq_mvpoly_t *poly);
+
+/* ============================================================================
  * Basic Operations
  * ============================================================================ */
 
