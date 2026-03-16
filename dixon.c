@@ -56,6 +56,18 @@ static void print_usage(const char *prog_name)
     printf("    Add --omega <value> (or -w <value>) to set omega (default: %.4g)\n",
            DIXON_OMEGA);
 
+    printf("  Dixon with ideal reduction:\n");
+    printf("    %s --ideal \"ideal_generators\" \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
+    printf("    %s --ideal input_file\n", prog_name);
+    printf("    -> ideal_generators: comma-separated relations with '=' (e.g. \"a2^3=2*a1+1, a3^3=a1*a2+3\")\n");
+    printf("    -> In file mode: lines containing '=' are ideal generators, others are polynomials\n");
+    
+    printf("  Field-equation reduction mode (combine with any compute flag):\n");
+    printf("    %s --field-equation \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
+    printf("    %s --field-eqution input_file\n", prog_name);
+    printf("    %s --field-eqution -r \"[d1,d2,...,dn]\" field_size\n", prog_name);
+    printf("    -> After each multiplication, reduces x^q -> x for every variable\n");
+
     printf("  Random mode (combine with any compute flag):\n");
     printf("    %s --random \"[d1,d2,...,dn]\" field_size\n", prog_name);
     printf("    %s -r       \"[d]*n\"          field_size\n", prog_name);
@@ -87,6 +99,8 @@ static void print_usage(const char *prog_name)
     printf("  %s --random \"[3,3,2]\" 257\n", prog_name);
     printf("  %s -r --solve \"[2]*3\" 257\n", prog_name);
     printf("  %s -r --comp --omega 2.373 \"[4]*4\" 257\n", prog_name);
+    printf("  %s --ideal \"a2^3=2*a1+1, a3^3=a1*a2+3\" \"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3\" \"a3\" 257\n", prog_name);
+    printf("  %s --field-eqution -r [3]*5 2\n", prog_name);
     printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"x\" 2^8\n", prog_name);
     printf("  %s --solve \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
     printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
@@ -888,6 +902,89 @@ static int read_solver_file(FILE *fp, char **field_str, char **polys_str)
 }
 
 /* =========================================================================
+ * Read file for --ideal mode:
+ *   Line 1 : field size
+ *   Lines 2..n-1 : polys (no '=') or ideal generators (has '='), mixed
+ *   Line n : variables to ELIMINATE
+ * ========================================================================= */
+static int read_ideal_file(FILE *fp, char **field_str, char **polys_str,
+                           char **vars_str, char **ideal_str)
+{
+    char **lines       = NULL;
+    int   line_count   = 0, line_capacity = 16;
+    lines = malloc(line_capacity * sizeof(char *));
+    if (!lines) return 0;
+
+    char *line;
+    while ((line = read_entire_line(fp)) != NULL) {
+        char *trimmed = trim(line);
+        if (strlen(trimmed) == 0 || trimmed[0] == '#') { free(line); continue; }
+        if (line_count >= line_capacity) {
+            line_capacity *= 2;
+            char **nl = realloc(lines, line_capacity * sizeof(char *));
+            if (!nl) {
+                for (int i = 0; i < line_count; i++) free(lines[i]);
+                free(lines); free(line); return 0;
+            }
+            lines = nl;
+        }
+        lines[line_count++] = strdup(trimmed);
+        free(line);
+    }
+
+    if (line_count < 3) {
+        fprintf(stderr, "Error: --ideal file needs at least 3 non-empty lines\n");
+        fprintf(stderr, "  Line 1     : field size\n");
+        fprintf(stderr, "  Lines 2..n-1: polynomials and/or ideal generators (lines with '=' are ideal)\n");
+        fprintf(stderr, "  Line n     : variables to ELIMINATE\n");
+        for (int i = 0; i < line_count; i++) free(lines[i]);
+        free(lines);
+        return 0;
+    }
+
+    *field_str = lines[0];
+    *vars_str  = lines[line_count - 1];
+
+    /* Separate middle lines into polys and ideal generators */
+    size_t poly_len  = 0, ideal_len = 0;
+    for (int i = 1; i < line_count - 1; i++) {
+        if (strchr(lines[i], '='))  ideal_len += strlen(lines[i]) + 3;
+        else                         poly_len  += strlen(lines[i]) + 3;
+    }
+
+    char *poly_buf  = malloc(poly_len  + 4);
+    char *ideal_buf = malloc(ideal_len + 4);
+    if (!poly_buf || !ideal_buf) {
+        free(poly_buf); free(ideal_buf);
+        for (int i = 0; i < line_count; i++) free(lines[i]);
+        free(lines);
+        return 0;
+    }
+    poly_buf[0]  = '\0';
+    ideal_buf[0] = '\0';
+
+    int poly_first = 1, ideal_first = 1;
+    for (int i = 1; i < line_count - 1; i++) {
+        if (strchr(lines[i], '=')) {
+            if (!ideal_first) strcat(ideal_buf, ", ");
+            strcat(ideal_buf, lines[i]);
+            ideal_first = 0;
+        } else {
+            if (!poly_first) strcat(poly_buf, ", ");
+            strcat(poly_buf, lines[i]);
+            poly_first = 0;
+        }
+        free(lines[i]);
+    }
+
+    *polys_str = poly_buf;
+    *ideal_str = (ideal_len > 0) ? ideal_buf : (free(ideal_buf), NULL);
+
+    free(lines);
+    return 1;
+}
+
+/* =========================================================================
  * Result saving helpers (unchanged from original)
  * ========================================================================= */
 static void save_solver_result_to_file(const char *filename,
@@ -1045,6 +1142,8 @@ int main(int argc, char *argv[])
     int    solve_mode  = 0;
     int    comp_mode   = 0;
     int    rand_mode   = 0;   /* --random / -r */
+    int    ideal_mode  = 0;   /*  --ideal flag */
+    int    field_eq_mode = 0; /* --field-equation */
     int    arg_offset  = 0;
     double omega       = DIXON_OMEGA;   /* default, overridden by --omega */
 
@@ -1059,6 +1158,11 @@ int main(int argc, char *argv[])
         } else if (strcmp(argv[i], "--random") == 0 ||
                    strcmp(argv[i], "-r")       == 0) {
             rand_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--ideal") == 0) {  /* <<< NEW >>> */
+            ideal_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--field-equation") == 0 ||
+                   strcmp(argv[i], "--field-eqution")  == 0) {
+            field_eq_mode = 1; arg_offset++;
         } else if ((strcmp(argv[i], "--omega") == 0 ||
                     strcmp(argv[i], "-w")      == 0) && i + 1 < argc) {
             char *endptr = NULL;
@@ -1079,6 +1183,8 @@ int main(int argc, char *argv[])
     int    effective_argc = argc - arg_offset;
     char **effective_argv = argv + arg_offset;
 
+
+    
     /* ---- help ---- */
     if (effective_argc >= 2 &&
         (strcmp(effective_argv[1], "--help") == 0 ||
@@ -1154,7 +1260,58 @@ int main(int argc, char *argv[])
         else   snprintf(buffer, sizeof(buffer), "%s.dat", prefix);
         output_filename = strdup(buffer);
         (void)prefix;   /* suppress unused-variable warning */
+    /*  --ideal mode */
+    } else if (ideal_mode) {
+        if (effective_argc == 2) {
+            /* File input: auto-detect ideal generators by '=' */
+            FILE *fp = fopen(effective_argv[1], "r");
+            if (!fp) {
+                if (!silent_mode)
+                    fprintf(stderr, "Error: Cannot open file '%s'\n", effective_argv[1]);
+                return 1;
+            }
+            if (!silent_mode)
+                printf("Reading from file (--ideal mode): %s\n", effective_argv[1]);
 
+            input_filename  = strdup(effective_argv[1]);
+            output_filename = generate_output_filename(input_filename);
+
+            if (!read_ideal_file(fp, &field_str, &polys_str,
+                                 &vars_str, &ideal_str)) {
+                fclose(fp); return 1;
+            }
+            fclose(fp);
+            need_free = 1;
+
+            if (!ideal_str) {
+                if (!silent_mode)
+                    fprintf(stderr, "Warning: No ideal generators found in file "
+                                    "(no lines with '='). Running basic Dixon.\n");
+            }
+
+        } else if (effective_argc == 5) {
+            /* CLI: --ideal "generators" "polys" "elim_vars" field_size */
+            ideal_str = effective_argv[1];
+            polys_str = effective_argv[2];
+            vars_str  = effective_argv[3];
+            field_str = effective_argv[4];
+
+            char buffer[128];
+            time_t now = time(NULL);
+            struct tm *t = localtime(&now);
+            if (t) strftime(buffer, sizeof(buffer), "solution_%Y%m%d_%H%M%S.dat", t);
+            else   strcpy(buffer, "solution.dat");
+            output_filename = strdup(buffer);
+
+        } else {
+            if (!silent_mode) {
+                fprintf(stderr, "Error: --ideal mode requires either:\n");
+                fprintf(stderr, "  %s --ideal \"ideal_generators\" \"polynomials\" \"eliminate_vars\" field_size\n",
+                        argv[0]);
+                fprintf(stderr, "  %s --ideal input_file\n", argv[0]);
+            }
+            return 1;
+        }
     } else if (comp_mode) {
         /* Complexity analysis mode: same argument format as basic Dixon */
         if (effective_argc == 2) {
@@ -1379,6 +1536,13 @@ int main(int argc, char *argv[])
             }
             printf("\n");
         }
+    }
+
+    /* ---- activate field-equation reduction mode ---- */
+    if (field_eq_mode) {
+        fq_mvpoly_set_field_equation_reduction(1);
+        if (!silent_mode)
+            printf("Field-equation reduction: ENABLED (x^q = x for each variable)\n");
     }
 
     /* ======================================================
