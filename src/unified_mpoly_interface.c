@@ -1,6 +1,7 @@
 /* unified_mpoly_interface.c - Implementation of unified multivariate polynomial interface */
 
 #include "unified_mpoly_interface.h"
+extern int g_field_equation_reduction;
 
 /* ============================================================================
    CONTEXT OPERATIONS WITH ZECH SUPPORT
@@ -331,6 +332,96 @@ static int use_gf264_array_mul = 1;
 static int use_gf2128_array_mul = 1;
 static int use_zech_mul = 1;  /* Enable Zech multiplication by default */
 
+static inline ulong reduce_exp_field_ui(ulong e, ulong q) {
+    if (e == 0 || e < q) return e;
+    return ((e - 1) % (q - 1)) + 1;
+}
+
+static ulong unified_field_size_q(unified_mpoly_ctx_t ctx) {
+    if (!ctx || !ctx->field_ctx) return 0;
+    switch (ctx->field_ctx->field_id) {
+        case FIELD_ID_NMOD:
+            return ctx->field_ctx->ctx.nmod_ctx.n;
+        case FIELD_ID_FQ_ZECH:
+            if (ctx->field_ctx->ctx.zech_ctx) {
+                mp_limb_t p = ctx->field_ctx->ctx.zech_ctx->fq_nmod_ctx->modulus->mod.n;
+                slong d = fq_zech_ctx_degree(ctx->field_ctx->ctx.zech_ctx);
+                ulong q = 1;
+                for (slong i = 0; i < d; i++) {
+                    if (q > WORD_MAX / p) return WORD_MAX;
+                    q *= p;
+                }
+                return q;
+            }
+            return 0;
+        default:
+            if (ctx->field_ctx->ctx.fq_ctx) {
+                mp_limb_t p = fq_nmod_ctx_prime(ctx->field_ctx->ctx.fq_ctx);
+                slong d = fq_nmod_ctx_degree(ctx->field_ctx->ctx.fq_ctx);
+                ulong q = 1;
+                for (slong i = 0; i < d; i++) {
+                    if (q > WORD_MAX / p) return WORD_MAX;
+                    q *= p;
+                }
+                return q;
+            }
+            return 0;
+    }
+}
+
+static void unified_mpoly_reduce_field_equation_inplace(unified_mpoly_t poly) {
+    if (!poly || !poly->ctx_ptr || poly->ctx_ptr->nvars <= 0) return;
+    ulong q = unified_field_size_q(poly->ctx_ptr);
+    if (q <= 1) return;
+
+    unified_mpoly_ctx_t ctx = poly->ctx_ptr;
+    slong nvars = ctx->nvars;
+
+    switch (poly->field_id) {
+        case FIELD_ID_NMOD: {
+            nmod_mpoly_t reduced;
+            nmod_mpoly_init(reduced, GET_NMOD_CTX(ctx));
+            slong nterms = nmod_mpoly_length(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
+            ulong *exp = (ulong*) flint_malloc(nvars * sizeof(ulong));
+            for (slong i = 0; i < nterms; i++) {
+                ulong coeff = nmod_mpoly_get_term_coeff_ui(GET_NMOD_POLY(poly), i, GET_NMOD_CTX(ctx));
+                nmod_mpoly_get_term_exp_ui(exp, GET_NMOD_POLY(poly), i, GET_NMOD_CTX(ctx));
+                for (slong k = 0; k < nvars; k++) exp[k] = reduce_exp_field_ui(exp[k], q);
+                nmod_mpoly_push_term_ui_ui(reduced, coeff, exp, GET_NMOD_CTX(ctx));
+            }
+            nmod_mpoly_sort_terms(reduced, GET_NMOD_CTX(ctx));
+            nmod_mpoly_combine_like_terms(reduced, GET_NMOD_CTX(ctx));
+            nmod_mpoly_set(GET_NMOD_POLY(poly), reduced, GET_NMOD_CTX(ctx));
+            flint_free(exp);
+            nmod_mpoly_clear(reduced, GET_NMOD_CTX(ctx));
+            break;
+        }
+        case FIELD_ID_FQ_ZECH:
+            break;
+        default: {
+            fq_nmod_mpoly_t reduced;
+            fq_nmod_mpoly_init(reduced, GET_FQ_CTX(ctx));
+            slong nterms = fq_nmod_mpoly_length(GET_FQ_POLY(poly), GET_FQ_CTX(ctx));
+            ulong *exp = (ulong*) flint_malloc(nvars * sizeof(ulong));
+            fq_nmod_t coeff;
+            fq_nmod_init(coeff, ctx->field_ctx->ctx.fq_ctx);
+            for (slong i = 0; i < nterms; i++) {
+                fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, GET_FQ_POLY(poly), i, GET_FQ_CTX(ctx));
+                fq_nmod_mpoly_get_term_exp_ui(exp, GET_FQ_POLY(poly), i, GET_FQ_CTX(ctx));
+                for (slong k = 0; k < nvars; k++) exp[k] = reduce_exp_field_ui(exp[k], q);
+                fq_nmod_mpoly_push_term_fq_nmod_ui(reduced, coeff, exp, GET_FQ_CTX(ctx));
+            }
+            fq_nmod_mpoly_sort_terms(reduced, GET_FQ_CTX(ctx));
+            fq_nmod_mpoly_combine_like_terms(reduced, GET_FQ_CTX(ctx));
+            fq_nmod_mpoly_set(GET_FQ_POLY(poly), reduced, GET_FQ_CTX(ctx));
+            fq_nmod_clear(coeff, ctx->field_ctx->ctx.fq_ctx);
+            flint_free(exp);
+            fq_nmod_mpoly_clear(reduced, GET_FQ_CTX(ctx));
+            break;
+        }
+    }
+}
+
 
 /* Function to enable optimizations */
 void unified_mpoly_enable_optimizations(field_id_t field_id, int enable) {
@@ -372,12 +463,14 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
         case FIELD_ID_NMOD:
             nmod_mpoly_mul(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
                           GET_NMOD_POLY(poly3), GET_NMOD_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
             
         case FIELD_ID_FQ_ZECH:
             if (use_zech_mul) {
                 fq_zech_mpoly_mul(GET_ZECH_POLY(poly1), GET_ZECH_POLY(poly2),
                                  GET_ZECH_POLY(poly3), GET_ZECH_CTX(ctx));
+                if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
                 return 1;
             } else {
                 printf("Zech multiplication disabled, this shouldn't happen\n");
@@ -404,6 +497,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 if (success) {
                     gf28_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                 ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
+                    if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
                     
                     gf28_mpoly_clear(A, native_ctx);
                     gf28_mpoly_clear(B, native_ctx);
@@ -421,6 +515,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             /* Fall through to standard multiplication */
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
                              GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
             
         case FIELD_ID_GF216:
@@ -443,6 +538,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 if (success) {
                     gf216_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                  ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
+                    if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
                     
                     gf216_mpoly_clear(A, native_ctx);
                     gf216_mpoly_clear(B, native_ctx);
@@ -460,6 +556,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             /* Fall through to standard multiplication */
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
                              GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
             
         case FIELD_ID_GF232:
@@ -482,6 +579,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 if (success) {
                     gf232_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                  ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
+                    if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
                     
                     gf232_mpoly_clear(A, native_ctx);
                     gf232_mpoly_clear(B, native_ctx);
@@ -499,6 +597,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             /* Fall through to standard multiplication */
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
                              GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
             
         case FIELD_ID_GF264:
@@ -521,6 +620,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 if (success) {
                     gf264_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                  ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
+                    if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
                     
                     gf264_mpoly_clear(A, native_ctx);
                     gf264_mpoly_clear(B, native_ctx);
@@ -538,6 +638,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             /* Fall through to standard multiplication */
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
                              GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
             
         case FIELD_ID_GF2128:
@@ -560,6 +661,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 if (success) {
                     gf2128_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                   ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
+                    if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
                     
                     gf2128_mpoly_clear(A, native_ctx);
                     gf2128_mpoly_clear(B, native_ctx);
@@ -577,11 +679,13 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             /* Fall through to standard multiplication */
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
                              GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
             
         default:
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
                              GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+            if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
             return 1;
     }
 }
