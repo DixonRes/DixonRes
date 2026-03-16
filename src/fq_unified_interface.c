@@ -1,6 +1,7 @@
 /* fq_unified_interface.c - Unified field operations implementation */
 
 #include "fq_unified_interface.h"
+extern int g_field_equation_reduction;
 
 /* ============================================================================
    GLOBAL WORKSPACE
@@ -731,6 +732,87 @@ void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly,
     unified_poly_normalise(res);
 }
 
+static inline slong unified_reduce_degree_field(slong e, ulong q) {
+    if (e == 0 || (ulong)e < q) return e;
+    return (slong)(((ulong)(e - 1) % (q - 1)) + 1);
+}
+
+static ulong unified_poly_field_size_q(const field_ctx_t *ctx) {
+    if (!ctx) return 0;
+    switch (ctx->field_id) {
+        case FIELD_ID_NMOD:
+            return ctx->ctx.nmod_ctx.n;
+        case FIELD_ID_FQ_ZECH:
+            if (ctx->ctx.zech_ctx) {
+                mp_limb_t p = ctx->ctx.zech_ctx->fq_nmod_ctx->modulus->mod.n;
+                slong d = fq_zech_ctx_degree(ctx->ctx.zech_ctx);
+                ulong q = 1;
+                for (slong i = 0; i < d; i++) {
+                    if (q > WORD_MAX / p) return WORD_MAX;
+                    q *= p;
+                }
+                return q;
+            }
+            return 0;
+        default:
+            if (ctx->ctx.fq_ctx) {
+                mp_limb_t p = fq_nmod_ctx_prime(ctx->ctx.fq_ctx);
+                slong d = fq_nmod_ctx_degree(ctx->ctx.fq_ctx);
+                ulong q = 1;
+                for (slong i = 0; i < d; i++) {
+                    if (q > WORD_MAX / p) return WORD_MAX;
+                    q *= p;
+                }
+                return q;
+            }
+            return 0;
+    }
+}
+
+static void unified_poly_reduce_field_equation_inplace(unified_poly_t poly) {
+    if (!poly || poly->length <= 1 || !poly->ctx) return;
+    ulong q = unified_poly_field_size_q(poly->ctx);
+    if (q <= 1 || q == WORD_MAX) return;
+    if ((ulong)(poly->length - 1) < q) return;
+
+    slong max_keep = (q > (ulong)WORD_MAX) ? poly->length : FLINT_MIN(poly->length, (slong)q);
+    if (max_keep <= 0) return;
+
+    unified_poly_struct reduced;
+    unified_poly_init(&reduced, poly->ctx);
+    unified_poly_fit_length(&reduced, max_keep);
+
+    void *ctx_ptr = NULL;
+    switch (poly->ctx->field_id) {
+        case FIELD_ID_NMOD:
+            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
+            break;
+        case FIELD_ID_FQ_ZECH:
+            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
+            break;
+        default:
+            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
+            break;
+    }
+
+    for (slong i = 0; i < max_keep; i++) {
+        field_set_zero(&reduced.coeffs[i], poly->ctx->field_id, ctx_ptr);
+    }
+
+    slong max_used = 0;
+    for (slong i = 0; i < poly->length; i++) {
+        slong tgt = unified_reduce_degree_field(i, q);
+        field_add(&reduced.coeffs[tgt], &reduced.coeffs[tgt], &poly->coeffs[i],
+                  poly->ctx->field_id, ctx_ptr);
+        if (tgt > max_used) max_used = tgt;
+    }
+
+    reduced.length = max_used + 1;
+    unified_poly_normalise(&reduced);
+    unified_poly_set(poly, &reduced);
+    unified_poly_clear(&reduced);
+}
+
 void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_poly_t b) {
     if (unified_poly_is_zero(a) || unified_poly_is_zero(b)) {
         unified_poly_zero(res);
@@ -779,6 +861,9 @@ void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_
         
         temp.length = rlen;
         unified_poly_normalise(&temp);
+        if (g_field_equation_reduction) {
+            unified_poly_reduce_field_equation_inplace(&temp);
+        }
         
         /* Copy result back */
         unified_poly_set(res, &temp);
@@ -821,6 +906,9 @@ void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_
         
         res->length = rlen;
         unified_poly_normalise(res);
+        if (g_field_equation_reduction) {
+            unified_poly_reduce_field_equation_inplace(res);
+        }
     }
 }
 
