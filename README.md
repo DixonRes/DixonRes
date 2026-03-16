@@ -105,14 +105,22 @@ The default settings use `t` as the extension field generator and FLINT's built-
 
 ### Dixon with Ideal Reduction
 ```bash
-./dixon "polynomials" "eliminate_vars" "ideal_generators" field_size
+./dixon --ideal "ideal_generators" "polynomials" "eliminate_vars" field_size
 ```
 Example:
 ```bash
-./dixon "a1^2 + a2^2 + a3^2 + a4^2 - 10, a4^3 - a1 - a2*a3 - 5" \
-        "a4" \
-        "a2^3 = 2*a1 + 1, a3^3 = a1*a2 + 3, a4^3 = a1 + a2*a3 + 5" \
-        257
+./dixon --ideal "a2^3=2*a1+1, a3^3=a1*a2+3" "a1^2+a2^2+a3^2-10, a3^3-a1*a2-3" "a3" 257
+```
+
+### Field-equation reduction mode 
+After each multiplication, reduces x^q -> x for every variable.
+```bash
+./dixon --field-equation "polynomials" "eliminate_vars" field_size
+./dixon --field-eqution -r "[d1,d2,...,dn]" field_size
+```
+Example:
+```bash
+./dixon --field-eqution -r [3]*5 2
 ```
 
 ---
