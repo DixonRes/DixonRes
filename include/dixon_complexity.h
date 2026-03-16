@@ -53,19 +53,14 @@ typedef struct {
 
 // Basic utility functions
 int compare_desc(const void *a, const void *b);
-int all_equal(const long *arr, int len);
 
 // Core Dixon complexity calculations
-void solve_inequality_system(fmpz_t result, const long *t_values, int n);
-void fuss_catalan(fmpz_t result, long n, long d);
 void dixon_size(fmpz_t result, const long *a_values, int len, int show_details);
 double dixon_complexity(const long *a_values, int len, int n, double omega);
 
 // Polynomial analysis functions
 static void poly_analysis_init(poly_analysis_t *analysis, slong num_polys, const fq_nmod_ctx_t ctx);
 static void poly_analysis_clear(poly_analysis_t *analysis);
-static slong find_variable(poly_analysis_t *analysis, const char *var_name);
-static void add_variable(poly_analysis_t *analysis, const char *var_name);
 
 // Variable hash table functions
 static slong hash_string(const char *str, slong bucket_count);
@@ -79,7 +74,6 @@ static slong find_variable_optimized(poly_analysis_t *analysis, const char *var_
 static int add_variable_optimized(poly_analysis_t *analysis, const char *var_name);
 static int parse_and_extract_degree(lightweight_parser_t *parser);
 static void analyze_single_polynomial(poly_analysis_t *analysis, slong poly_idx, const char *poly_str);
-static void analyze_single_polynomial_old(poly_analysis_t *analysis, slong poly_idx, const char *poly_str);
 static int is_elimination_var(const char *var_name, const char **elim_vars, slong num_elim_vars);
 
 long get_poly_total_degree(const char *poly_str, const char *gen_name);
