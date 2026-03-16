@@ -275,6 +275,10 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
         printf("End (%.3f seconds)\n", elapsed);
     }
+
+    if (g_field_equation_reduction) {
+        fq_mvpoly_reduce_field_equation(result);
+    }
 }
 
 // Extended tracker structure with pre-allocated workspace
