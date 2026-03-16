@@ -1,6 +1,80 @@
 #include "fq_mvpoly.h"
 
 /* ============================================================================
+ * Field Equation Reduction Mode
+ * ============================================================================ */
+
+/* When enabled, polynomial multiplication reduces each variable modulo x^q - x,
+ * i.e. any exponent >= q is replaced using x^q = x (Frobenius: a^q = a in F_q).
+ * Enable via fq_mvpoly_set_field_equation_reduction(1) before computation. */
+int g_field_equation_reduction = 0;
+
+void fq_mvpoly_set_field_equation_reduction(int enable)
+{
+    g_field_equation_reduction = enable;
+}
+
+/* Reduce a single exponent e modulo x^q - x.
+ * The relation x^q = x means x^(q+k) = x^(1+k), so for e >= q we reduce:
+ *   e -> ((e - 1) % (q - 1)) + 1   when e >= 1
+ * For e == 0 the term is a constant and needs no reduction. */
+static slong reduce_exp_field(slong e, slong q)
+{
+    if (e == 0 || e < q) return e;
+    /* x^q = x^1, so the exponent cycles with period q-1 starting at 1 */
+    return ((e - 1) % (q - 1)) + 1;
+}
+
+/* Reduce all variable (and parameter) exponents of poly in-place using x^q = x.
+ * Terms that become identical after reduction are combined. */
+void fq_mvpoly_reduce_field_equation(fq_mvpoly_t *poly)
+{
+    if (!poly || poly->nterms == 0) return;
+
+    /* Compute q = p^d from the field context */
+    mp_limb_t p = fq_nmod_ctx_prime(poly->ctx);
+    slong     d = fq_nmod_ctx_degree(poly->ctx);
+    slong     q = 1;
+    for (slong i = 0; i < d; i++) {
+        if (q > WORD_MAX / (slong)p) {
+            q = WORD_MAX;
+            break;
+        }
+        q *= (slong)p;
+    }
+
+    if (q <= 1) return; /* nothing to reduce */
+
+    /* Apply the exponent reduction to every term in-place */
+    for (slong i = 0; i < poly->nterms; i++) {
+        if (poly->terms[i].var_exp) {
+            for (slong k = 0; k < poly->nvars; k++)
+                poly->terms[i].var_exp[k] =
+                    reduce_exp_field(poly->terms[i].var_exp[k], q);
+        }
+        if (poly->terms[i].par_exp) {
+            for (slong k = 0; k < poly->npars; k++)
+                poly->terms[i].par_exp[k] =
+                    reduce_exp_field(poly->terms[i].par_exp[k], q);
+        }
+    }
+
+    /* Re-combine like terms that may now share the same monomial.
+     * Build a fresh polynomial by re-inserting every term through add_term
+     * (which handles duplicate detection and coefficient accumulation). */
+    fq_mvpoly_t combined;
+    fq_mvpoly_init(&combined, poly->nvars, poly->npars, poly->ctx);
+    for (slong i = 0; i < poly->nterms; i++) {
+        fq_mvpoly_add_term(&combined,
+                           poly->terms[i].var_exp,
+                           poly->terms[i].par_exp,
+                           poly->terms[i].coeff);
+    }
+    fq_mvpoly_clear(poly);
+    *poly = combined;
+}
+
+/* ============================================================================
  * Basic Operations Implementation
  * ============================================================================ */
 
@@ -549,6 +623,9 @@ void fq_mvpoly_mul(fq_mvpoly_t *result, const fq_mvpoly_t *a, const fq_mvpoly_t 
         fq_mvpoly_clear(result);
     }
     *result = temp;
+
+    if (g_field_equation_reduction)
+        fq_mvpoly_reduce_field_equation(result);
 }
 
 void fq_mvpoly_pow(fq_mvpoly_t *result, const fq_mvpoly_t *base, slong power) {
