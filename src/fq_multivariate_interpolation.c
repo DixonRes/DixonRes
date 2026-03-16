@@ -6,9 +6,51 @@
  */
 
 #include "fq_multivariate_interpolation.h"
+extern int g_field_equation_reduction;
 
 // Global control for parallelization
 int USE_PARALLEL = 1;
+
+static ulong interp_field_size_q(const fq_nmod_ctx_t ctx) {
+    mp_limb_t p = fq_nmod_ctx_prime(ctx);
+    slong d = fq_nmod_ctx_degree(ctx);
+    ulong q = 1;
+    for (slong i = 0; i < d; i++) {
+        if (q > WORD_MAX / p) return WORD_MAX;
+        q *= p;
+    }
+    return q;
+}
+
+static void fq_nmod_poly_reduce_field_equation_interp(fq_nmod_poly_t poly, const fq_nmod_ctx_t ctx) {
+    if (!g_field_equation_reduction) return;
+    slong deg = fq_nmod_poly_degree(poly, ctx);
+    if (deg <= 0) return;
+    ulong q = interp_field_size_q(ctx);
+    if (q <= 1 || q == WORD_MAX) return;
+    if ((ulong)deg < q) return;
+
+    fq_nmod_poly_t reduced;
+    fq_nmod_poly_init(reduced, ctx);
+    fq_nmod_poly_zero(reduced, ctx);
+    fq_nmod_t coeff, acc;
+    fq_nmod_init(coeff, ctx);
+    fq_nmod_init(acc, ctx);
+
+    for (slong i = 0; i <= deg; i++) {
+        fq_nmod_poly_get_coeff(coeff, poly, i, ctx);
+        if (fq_nmod_is_zero(coeff, ctx)) continue;
+        slong tgt = (i == 0 || (ulong)i < q) ? i : (slong)(((ulong)(i - 1) % (q - 1)) + 1);
+        fq_nmod_poly_get_coeff(acc, reduced, tgt, ctx);
+        fq_nmod_add(acc, acc, coeff, ctx);
+        fq_nmod_poly_set_coeff(reduced, tgt, acc, ctx);
+    }
+
+    fq_nmod_poly_set(poly, reduced, ctx);
+    fq_nmod_clear(coeff, ctx);
+    fq_nmod_clear(acc, ctx);
+    fq_nmod_poly_clear(reduced, ctx);
+}
 
 void fq_interpolation_set_parallel(int use_parallel) {
     USE_PARALLEL = use_parallel;
@@ -283,6 +325,7 @@ void fq_build_product_tree(fq_nmod_poly_t result,
     
     // Combine
     fq_nmod_poly_mul(result, left, right, ctx);
+    fq_nmod_poly_reduce_field_equation_interp(result, ctx);
     
     fq_nmod_poly_clear(left, ctx);
     fq_nmod_poly_clear(right, ctx);
@@ -1106,8 +1149,15 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
     
     // Generate evaluation points for each variable
     for (slong i = 0; i < total_vars; i++) {
-        // Calculate desired grid size
-        grid_sizes[i] = degrees[i] + extra_points;
+        slong requested_degree = degrees[i];
+        slong effective_degree = requested_degree;
+        if (effective_degree < 0) {
+            effective_degree = 0;
+        }
+        if (g_field_equation_reduction && field_size > 1 && effective_degree >= field_size) {
+            effective_degree = field_size - 1;
+        }
+        grid_sizes[i] = effective_degree + extra_points;
         
         // IMPORTANT: Cap grid size at field size
         if (grid_sizes[i] > field_size && field_size > 0) {
@@ -1118,15 +1168,15 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
         
         grids[i] = (fq_nmod_t*) flint_malloc(grid_sizes[i] * sizeof(fq_nmod_t));
         
-        FQ_INTERP_PRINT("Generating grid for variable %ld, degree=%ld, grid_size=%ld\n", 
-                       i, degrees[i], grid_sizes[i]);
+        FQ_INTERP_PRINT("Generating grid for variable %ld, requested_degree=%ld, effective_degree=%ld, grid_size=%ld\n", 
+                       i, requested_degree, effective_degree, grid_sizes[i]);
         
         // Initialize all grid points
         for (slong j = 0; j < grid_sizes[i]; j++) {
             fq_nmod_init(grids[i][j], ctx);
         }
         
-        if (degrees[i] == 0 && extra_points == 1) {
+        if (effective_degree == 0 && extra_points == 1) {
             // Special case: degree 0 only needs one point
             FQ_INTERP_PRINT("Case: degree 0, using single point\n");
             fq_nmod_set(grids[i][0], one, ctx);
@@ -1277,12 +1327,12 @@ void fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_size
                        grid_sizes[i], i);
                 printf("  Generated: %ld distinct points\n", points_generated);
                 printf("  Degree bound: %ld (needs %ld+1 points)\n", 
-                       degrees[i], degrees[i]);
+                       effective_degree, effective_degree);
                 
-                if (points_generated < degrees[i] + 1) {
+                if (points_generated < effective_degree + 1) {
                     printf("\n!!! FATAL ERROR !!!\n");
                     printf("Cannot perform interpolation: need at least %ld points for degree %ld\n",
-                           degrees[i] + 1, degrees[i]);
+                           effective_degree + 1, effective_degree);
                     printf("Possible solutions:\n");
                     printf("  1. Use a larger field (e.g., increase field degree)\n");
                     printf("  2. Reduce degree bounds\n");
@@ -1395,8 +1445,7 @@ void fq_compute_det_degree_bounds_optimized(slong *bounds, fq_mvpoly_t **matrix,
             bounds[var] += row_max_deg;
         }
         
-        if (bounds[var] < 1) bounds[var] = 1;
-        bounds[var] += 1;
+        if (bounds[var] < 0) bounds[var] = 0;
         
         FQ_INTERP_PRINT("Variable %ld degree bound: %ld\n", var, bounds[var]);
     }
