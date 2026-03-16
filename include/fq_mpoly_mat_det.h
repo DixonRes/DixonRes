@@ -54,9 +54,6 @@ typedef struct {
     double cpu_time;
 } timing_info_t;
 
-// Get current wall clock time
-//double get_wall_time(void);
-
 // Get current CPU time
 double get_cpu_time(void);
 
@@ -85,9 +82,6 @@ static inline void poly_mul_dense_optimized(fq_nmod_mpoly_t c,
                                            const fq_nmod_mpoly_ctx_t ctx);
 
 // ============= Conversion Functions for Polynomial Recursive =============
-
-// Check if all polynomials in matrix use only one variable
-int is_essentially_univariate(fq_mvpoly_t **matrix, slong size, slong *active_var);
 
 // Convert fq_mvpoly to fq_nmod_poly for a specific variable
 void mvpoly_to_fq_nmod_poly(fq_nmod_poly_t poly, const fq_mvpoly_t *mvpoly, 
@@ -138,16 +132,7 @@ void compute_fq_det_kronecker(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong s
 void fq_mvpoly_to_nmod_mpoly(nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
                             nmod_mpoly_ctx_t mpoly_ctx);
 
-// Convert nmod_mpoly to fq_mvpoly (multiple versions for compatibility)
-void nmod_mpoly_to_fq_mvpoly_old(fq_mvpoly_t *poly, const nmod_mpoly_t mpoly,
-                                slong nvars, slong npars, 
-                                nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx);
-
-void nmod_mpoly_to_fq_mvpoly_old2(fq_mvpoly_t *result, const nmod_mpoly_t poly,
-                                 slong nvars, slong npars,
-                                 const nmod_mpoly_ctx_t mpoly_ctx,
-                                 const fq_nmod_ctx_t field_ctx);
-
+// Convert nmod_mpoly to fq_mvpoly
 void nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *result, const nmod_mpoly_t poly,
                             slong nvars, slong npars,
                             const nmod_mpoly_ctx_t mpoly_ctx,
@@ -193,11 +178,7 @@ void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matr
 void fq_mvpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
                                fq_nmod_mpoly_ctx_t mpoly_ctx);
 
-// Convert fq_nmod_mpoly to fq_mvpoly (multiple versions)
-void fq_nmod_mpoly_to_fq_mvpoly_old(fq_mvpoly_t *poly, const fq_nmod_mpoly_t mpoly,
-                                   slong nvars, slong npars, 
-                                   fq_nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx);
-
+// Convert fq_nmod_mpoly to fq_mvpoly
 void fq_nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *poly, const fq_nmod_mpoly_t mpoly,
                                slong nvars, slong npars, 
                                fq_nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx);
@@ -239,9 +220,7 @@ void compute_fq_det_unified_interface(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
 // Main determinant computation function with algorithm selection
 void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
 
-// Compatibility interfaces
+// Compatibility interface
 void compute_fq_det_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
-
-void compute_fq_det_polynomial_matrix_simple(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
 
 #endif // FQ_MPOLY_MAT_DET_H
