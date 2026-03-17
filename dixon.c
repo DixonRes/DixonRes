@@ -22,7 +22,7 @@
 #include "polynomial_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.0.4"
+#define PROGRAM_VERSION "0.0.4-dev"
 
 /* =========================================================================
  * Print usage
@@ -100,7 +100,7 @@ static void print_usage(const char *prog_name)
     printf("  %s -r --solve \"[2]*3\" 257\n", prog_name);
     printf("  %s -r --comp --omega 2.373 \"[4]*4\" 257\n", prog_name);
     printf("  %s --ideal \"a2^3=2*a1+1, a3^3=a1*a2+3\" \"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3\" \"a3\" 257\n", prog_name);
-    printf("  %s --field-eqution -r [3]*5 2\n", prog_name);
+    printf("  %s --field-eqution \"x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1\" \"x0,x1\" 2\n", prog_name);
     printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"x\" 2^8\n", prog_name);
     printf("  %s --solve \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
     printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
