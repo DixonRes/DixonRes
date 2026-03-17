@@ -218,7 +218,7 @@ $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 #   make install              -> installs to /usr/local  (default)
 #   make install PREFIX=~/.local
 #   sudo make install PREFIX=/usr
-install: default
+install: $(DIXON_TARGET) $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	@echo "Installing to PREFIX=$(PREFIX) ..."
 	@echo ""
 	@echo "--- Creating directories ---"
@@ -258,7 +258,7 @@ install: default
 	@echo "  Headers : $(DESTDIR)$(INCLUDEDIR)/"
 
 # install-strip: same as install but strips debug symbols from binary and shared lib
-install-strip: default
+install-strip: $(DIXON_TARGET) $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	@$(MAKE) install INSTALL_PROGRAM='$(INSTALL_PROGRAM) -s' \
 	                 INSTALL_DATA='$(INSTALL_DATA)'
 	@echo "Stripping installed shared library..."
