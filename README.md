@@ -120,6 +120,7 @@ After each multiplication, reduces x^q -> x for every variable.
 ```
 Example:
 ```bash
+./dixon --field-eqution "x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1" "x0,x1" 2
 ./dixon --field-eqution -r [3]*5 2
 ```
 
