@@ -721,6 +721,8 @@ help:
 	@echo "  make debug-structure - Debug local directory structure"
 	@echo "  make debug-attack    - Debug Attack directory structure and C files"
 	@echo "  make clean           - Clean all build artifacts (including Attack programs)"
+	@echo "  make check           - Run test suite (pass/fail summary)"
+	@echo "  make check-verbose   - Run tests with full output"
 	@echo "  make clean-build     - Clean only build directory"
 	@echo "  make distclean       - Clean all build artifacts and config.mk"
 	@echo ""
@@ -785,8 +787,223 @@ help:
 lto: $(DIXON_TARGET)-lto
 dynamic: $(DIXON_TARGET)-dynamic
 
+# ============================================================
+# Check / test targets
+# ============================================================
+
+# Colour helpers (fall back gracefully if terminal doesn't support it)
+_GREEN  := \033[0;32m
+_RED    := \033[0;31m
+_YELLOW := \033[0;33m
+_NC     := \033[0m   # No Colour
+
+# Run a single test.
+# Usage: $(call RUN_TEST, description, command)
+# Increments PASS/FAIL counters; prints coloured result.
+define RUN_TEST
+	@printf "  %-60s" "$(1)"; \
+	if $(2) >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; \
+		PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; \
+		FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    $(1)"; \
+	fi
+endef
+
+check: $(DIXON_TARGET)
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════════════╗"
+	@echo "║                    Dixon Test Suite                          ║"
+	@echo "╚══════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@PASS=0; FAIL=0; FAILED_TESTS=""; \
+	\
+	echo "--- Basic Dixon resultant ---"; \
+	\
+	printf "  %-60s" "Dixon: x+y+z, x*y+y*z+z*x, x*y*z+1 over F_257"; \
+	if ./$(DIXON_TARGET) "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Dixon: x+y+z, x*y+y*z+z*x, x*y*z+1 over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Dixon: x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1 over F_257"; \
+	if ./$(DIXON_TARGET) "x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1" "x,y" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Dixon: x^2+y^2+z^2-6 over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Dixon: extension field 2^8 (silent)"; \
+	if ./$(DIXON_TARGET) --silent "x+y^2+t, x*y+t*y+1" "x" "2^8" >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Dixon: extension field 2^8 (silent)"; \
+	fi; \
+	\
+	echo ""; \
+	echo "--- Complexity analysis (--comp / -c) ---"; \
+	\
+	printf "  %-60s" "Comp: x+y+z, x*y+y*z+z*x, x*y*z+1 over F_257"; \
+	if ./$(DIXON_TARGET) --comp "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Comp: x+y+z over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Comp -c: x^2+y^2+1, x*y+z, x+y+z^2 over F_257"; \
+	if ./$(DIXON_TARGET) -c "x^2+y^2+1, x*y+z, x+y+z^2" "x,y" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Comp -c: x^2+y^2+1 over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Comp --omega: [4]*4 over F_65537"; \
+	if ./$(DIXON_TARGET) --comp --omega 2.373 "x^4+y^4+z^4+w^4+1, x^3*y+z+1, x+y^3+z^2+w, x*y*z*w+1" "x,y,z" 65537 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Comp --omega [4]*4"; \
+	fi; \
+	\
+	echo ""; \
+	echo "--- Polynomial solver (--solve) ---"; \
+	\
+	printf "  %-60s" "Solve: x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1 over F_257"; \
+	if ./$(DIXON_TARGET) --solve "x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Solve: x^2+y^2+z^2-6 over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Solve: simple linear x+y-3, x-y+1 over F_257"; \
+	if ./$(DIXON_TARGET) --solve "x+y-3, x-y+1" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Solve: x+y-3 linear over F_257"; \
+	fi; \
+	\
+	echo ""; \
+	echo "--- Random mode (--random / -r) ---"; \
+	\
+	printf "  %-60s" "Random Dixon: [3,3,2] over F_257"; \
+	if ./$(DIXON_TARGET) --random "[3,3,2]" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Random Dixon: [3,3,2] over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Random solve -r: [2]*3 over F_257"; \
+	if ./$(DIXON_TARGET) -r --solve "[2]*3" 257 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Random solve: [2]*3 over F_257"; \
+	fi; \
+	\
+	printf "  %-60s" "Random comp -r: [3,2]*2 over F_65537"; \
+	if ./$(DIXON_TARGET) -r --comp "[3,2]*2" 65537 >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Random comp: [3,2]*2 over F_65537"; \
+	fi; \
+	\
+	echo ""; \
+	echo "--- File input ---"; \
+	\
+	printf "  %-60s" "File: basic Dixon from generated file"; \
+	printf "257\nx+y+z, x*y+y*z+z*x, x*y*z+1\nx,y\n" > /tmp/dixon_check_test.dat; \
+	if ./$(DIXON_TARGET) /tmp/dixon_check_test.dat >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    File: basic Dixon from file"; \
+	fi; \
+	rm -f /tmp/dixon_check_test.dat; \
+	\
+	printf "  %-60s" "File: solver from generated file"; \
+	printf "257\nx^2+y^2-5\nx+y-3\n" > /tmp/dixon_check_solver.dat; \
+	if ./$(DIXON_TARGET) --solve /tmp/dixon_check_solver.dat >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    File: solver from file"; \
+	fi; \
+	rm -f /tmp/dixon_check_solver.dat; \
+	\
+	echo ""; \
+	echo "--- Error / edge cases ---"; \
+	\
+	printf "  %-60s" "Help flag exits cleanly"; \
+	if ./$(DIXON_TARGET) --help >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \
+		FAILED_TESTS="$$FAILED_TESTS\n    Help flag"; \
+	fi; \
+	\
+	printf "  %-60s" "No args prints usage (exit 0)"; \
+	if ./$(DIXON_TARGET) >/dev/null 2>&1; then \
+		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
+	else \
+		printf "$(_YELLOW)[SKIP/WARN]$(_NC) (non-zero exit with no args)\n"; \
+	fi; \
+	\
+	echo ""; \
+	echo "════════════════════════════════════════════════════════════════"; \
+	TOTAL=$$((PASS+FAIL)); \
+	if [ $$FAIL -eq 0 ]; then \
+		printf "Result: $(_GREEN)All $$TOTAL tests passed.$(_NC)\n"; \
+	else \
+		printf "Result: $(_RED)$$FAIL of $$TOTAL tests FAILED.$(_NC)\n"; \
+		printf "Failed tests:$$FAILED_TESTS\n"; \
+	fi; \
+	echo "════════════════════════════════════════════════════════════════"; \
+	echo ""; \
+	rm -f solution_*.dat comp_*.dat; \
+	exit $$FAIL
+
+# Verbose check: same tests but shows full output of each command
+check-verbose: $(DIXON_TARGET)
+	@echo ""
+	@echo "=== Verbose Test Run ==="
+	@echo ""
+	@set -e; \
+	echo "--- Test 1: Basic Dixon ---"; \
+	./$(DIXON_TARGET) "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257; \
+	echo ""; \
+	echo "--- Test 2: Complexity analysis ---"; \
+	./$(DIXON_TARGET) --comp "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257; \
+	echo ""; \
+	echo "--- Test 3: Solver ---"; \
+	./$(DIXON_TARGET) --solve "x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1" 257; \
+	echo ""; \
+	echo "--- Test 4: Random Dixon [3,3,2] ---"; \
+	./$(DIXON_TARGET) --random "[3,3,2]" 257; \
+	echo ""; \
+	echo "--- Test 5: Random solver [2]*3 ---"; \
+	./$(DIXON_TARGET) -r --solve "[2]*3" 257; \
+	echo ""; \
+	echo "--- Test 6: Extension field 2^8 (silent) ---"; \
+	./$(DIXON_TARGET) --silent "x+y^2+t, x*y+t*y+1" "x" "2^8"; \
+	echo ""; \
+	echo "=== All verbose tests passed ==="; \
+	rm -f solution_*.dat comp_*.dat
+
 .PHONY: default all lto dynamic static static-pml static-all dynamic-lib static-lib \
         attack-programs attack-programs-verbose attack-static clean-attack \
         clean clean-build distclean test-paths test-attack info \
         debug-headers debug-libs debug-structure debug-attack help \
-        install install-strip install-headers uninstall
+        install install-strip install-headers uninstall \
+        check check-verbose
