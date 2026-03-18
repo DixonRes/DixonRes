@@ -22,7 +22,7 @@
 #include "polynomial_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.0.4"
+#define PROGRAM_VERSION "0.0.5"
 
 /* =========================================================================
  * Print usage
@@ -94,9 +94,11 @@ static void print_usage(const char *prog_name)
 
     printf("EXAMPLES:\n");
     printf("  %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
+    printf("  %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 0\n", prog_name);
     printf("  %s --solve \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
     printf("  %s --comp \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
     printf("  %s --random \"[3,3,2]\" 257\n", prog_name);
+    printf("  %s -r \"[3]*3\" 0\n", prog_name);
     printf("  %s -r --solve \"[2]*3\" 257\n", prog_name);
     printf("  %s -r --comp --omega 2.373 \"[4]*4\" 257\n", prog_name);
     printf("  %s --ideal \"a2^3=2*a1+1, a3^3=a1*a2+3\" \"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3\" \"a3\" 257\n", prog_name);
@@ -204,6 +206,12 @@ static int parse_field_size(const char *field_str, fmpz_t prime, ulong *power,
     if (!field_str || strlen(field_str) == 0) return 0;
     if (field_poly) *field_poly = NULL;
     if (gen_var)    *gen_var    = NULL;
+
+    if (strcmp(field_str, "0") == 0) {
+        fmpz_zero(prime);
+        *power = 1;
+        return 1;
+    }
 
     const char *colon = strchr(field_str, ':');
     if (colon) {
@@ -343,8 +351,12 @@ static void save_comp_result_to_file(
 
     fprintf(fp, "Dixon Complexity Analysis\n");
     fprintf(fp, "=========================\n");
-    fprintf(fp, "Field: F_%lu", prime);
-    if (power > 1) fprintf(fp, "^%lu (size %lu)", power, field_size);
+    if (prime == 0) {
+        fprintf(fp, "Field: Q");
+    } else {
+        fprintf(fp, "Field: F_%lu", prime);
+        if (power > 1) fprintf(fp, "^%lu (size %lu)", power, field_size);
+    }
     fprintf(fp, "\n");
     fprintf(fp, "Polynomials: %s\n", polys_str);
     fprintf(fp, "Eliminate:   %s\n", vars_str);
@@ -421,7 +433,7 @@ static void run_complexity_analysis(
     char  **elim_arr = split_string(vars_str, &num_elim);
 
     /* ---- get generator name ---- */
-    char *gen_name = get_generator_name(ctx);  /* may return NULL for prime fields */
+    char *gen_name = (prime == 0) ? NULL : get_generator_name(ctx);  /* may return NULL for prime fields */
 
     /* ---- collect all variables ---- */
     char  **all_vars;
@@ -452,6 +464,7 @@ static void run_complexity_analysis(
     fmpz_init(matrix_size);
     /* suppress internal prints from dixon_size */
     {
+        fflush(stdout);
         int orig_stdout = dup(STDOUT_FILENO);
         int devnull     = open("/dev/null", O_WRONLY);
         if (devnull != -1) { dup2(devnull, STDOUT_FILENO); close(devnull); }
@@ -1003,10 +1016,14 @@ static void save_solver_result_to_file(const char *filename,
 
     fprintf(out_fp, "Polynomial System Solver\n");
     fprintf(out_fp, "========================\n");
-    fprintf(out_fp, "Field: F_%lu", prime);
-    if (power > 1) {
-        fprintf(out_fp, "^%lu (size %lu)", power, field_size);
-        fprintf(out_fp, "\nField extension generator: t");
+    if (prime == 0) {
+        fprintf(out_fp, "Field: Q");
+    } else {
+        fprintf(out_fp, "Field: F_%lu", prime);
+        if (power > 1) {
+            fprintf(out_fp, "^%lu (size %lu)", power, field_size);
+            fprintf(out_fp, "\nField extension generator: t");
+        }
     }
     fprintf(out_fp, "\n");
     fprintf(out_fp, "Polynomials: %s\n", polys_str);
@@ -1098,10 +1115,14 @@ static void save_result_to_file(const char *filename,
 
     fprintf(out_fp, "Dixon Resultant Computation\n");
     fprintf(out_fp, "==========================\n");
-    fprintf(out_fp, "Field: F_%lu", prime);
-    if (power > 1) {
-        fprintf(out_fp, "^%lu (size %lu)", power, field_size);
-        fprintf(out_fp, "\nField extension generator: t");
+    if (prime == 0) {
+        fprintf(out_fp, "Field: Q");
+    } else {
+        fprintf(out_fp, "Field: F_%lu", prime);
+        if (power > 1) {
+            fprintf(out_fp, "^%lu (size %lu)", power, field_size);
+            fprintf(out_fp, "\nField extension generator: t");
+        }
     }
     fprintf(out_fp, "\n");
 
@@ -1126,6 +1147,225 @@ static int count_comma_separated_items(const char *str)
     for (const char *p = str; *p; p++)
         if (*p == ',') count++;
     return count;
+}
+
+static int parse_x_index_alias(const char *name, slong *idx_out)
+{
+    char *endptr;
+    long idx;
+
+    if (!name || name[0] != 'x' || !isdigit((unsigned char) name[1]))
+        return 0;
+
+    idx = strtol(name + 1, &endptr, 10);
+    if (*endptr != '\0' || idx < 0)
+        return 0;
+
+    *idx_out = (slong) idx;
+    return 1;
+}
+
+static char *normalize_elimination_vars(const char *polys_str,
+                                        const char *vars_str,
+                                        int silent_mode)
+{
+    slong num_polys, num_vars, num_all_vars;
+    char **poly_arr = NULL, **vars_arr = NULL, **all_vars = NULL;
+    char **mapped = NULL;
+    char *result = NULL;
+    int changed = 0;
+
+    if (!polys_str || !vars_str) return NULL;
+
+    poly_arr = split_string(polys_str, &num_polys);
+    vars_arr = split_string(vars_str, &num_vars);
+    collect_variables((const char **) poly_arr, num_polys, NULL, &all_vars, &num_all_vars);
+
+    mapped = (char **) malloc((size_t) num_vars * sizeof(char *));
+    for (slong i = 0; i < num_vars; i++) {
+        slong alias_idx;
+        int found = 0;
+
+        for (slong j = 0; j < num_all_vars; j++) {
+            if (strcmp(vars_arr[i], all_vars[j]) == 0) {
+                mapped[i] = strdup(vars_arr[i]);
+                found = 1;
+                break;
+            }
+        }
+
+        if (!found && parse_x_index_alias(vars_arr[i], &alias_idx) &&
+            alias_idx >= 0 && alias_idx < num_all_vars) {
+            mapped[i] = strdup(all_vars[alias_idx]);
+            if (strcmp(mapped[i], vars_arr[i]) != 0) changed = 1;
+            found = 1;
+        }
+
+        if (!found) {
+            mapped[i] = strdup(vars_arr[i]);
+        }
+    }
+
+    if (changed) {
+        size_t total_len = 1;
+        for (slong i = 0; i < num_vars; i++) total_len += strlen(mapped[i]) + 2;
+        result = (char *) malloc(total_len);
+        result[0] = '\0';
+        for (slong i = 0; i < num_vars; i++) {
+            if (i > 0) strcat(result, ",");
+            strcat(result, mapped[i]);
+        }
+        if (!silent_mode)
+            printf("Normalized elimination variables: %s -> %s\n", vars_str, result);
+    }
+
+    for (slong i = 0; i < num_polys; i++) free(poly_arr[i]);
+    free(poly_arr);
+    for (slong i = 0; i < num_vars; i++) free(vars_arr[i]);
+    free(vars_arr);
+    for (slong i = 0; i < num_all_vars; i++) free(all_vars[i]);
+    free(all_vars);
+    for (slong i = 0; i < num_vars; i++) free(mapped[i]);
+    free(mapped);
+
+    return result;
+}
+
+static int generate_random_poly_strings_rational(
+        const long *degrees, slong npolys,
+        int is_solve_mode,
+        int silent_mode,
+        char **polys_str_out,
+        char **elim_vars_str_out,
+        char **all_vars_str_out)
+{
+    slong nvars = npolys;
+    char **var_names = malloc((size_t) nvars * sizeof(char *));
+    char coeff_chars[] = { -2, -1, 0, 1, 2 };
+    char *all_vars = NULL;
+    char *elim_vars = NULL;
+    char *polys_str = NULL;
+    size_t all_cap, elim_cap, polys_cap = 256;
+
+    srand((unsigned) (time(NULL) ^ clock()));
+
+    for (slong i = 0; i < nvars; i++) {
+        var_names[i] = malloc(16);
+        snprintf(var_names[i], 16, "x%ld", i);
+    }
+
+    all_cap = (size_t) nvars * 8 + 2;
+    all_vars = malloc(all_cap);
+    all_vars[0] = '\0';
+    for (slong i = 0; i < nvars; i++) {
+        if (i > 0) strcat(all_vars, ",");
+        strcat(all_vars, var_names[i]);
+    }
+
+    if (!is_solve_mode && nvars >= 2) {
+        elim_cap = (size_t) (nvars - 1) * 8 + 2;
+        elim_vars = malloc(elim_cap);
+        elim_vars[0] = '\0';
+        for (slong i = 0; i < nvars - 1; i++) {
+            if (i > 0) strcat(elim_vars, ",");
+            strcat(elim_vars, var_names[i]);
+        }
+    } else {
+        elim_vars = strdup(all_vars);
+    }
+
+    polys_str = malloc(polys_cap);
+    polys_str[0] = '\0';
+
+    if (!silent_mode) printf("Generating random polynomial system over Q...\n");
+
+    for (slong i = 0; i < npolys; i++) {
+        char poly_buf[8192];
+        int first_term = 1;
+        slong degree = degrees[i] > 0 ? degrees[i] : 1;
+        slong term_count = FLINT_MAX(3, degree + 2);
+
+        poly_buf[0] = '\0';
+        for (slong t = 0; t < term_count; t++) {
+            int coeff = 0;
+            slong *exp = calloc((size_t) nvars, sizeof(slong));
+            slong total_deg;
+            char term_buf[512];
+            int has_var = 0;
+
+            while (coeff == 0) {
+                coeff = coeff_chars[rand() % 5];
+            }
+
+            if (t == 0) {
+                exp[i % nvars] = degree;
+            } else {
+                total_deg = rand() % (degree + 1);
+                for (slong left = total_deg; left > 0; left--) {
+                    exp[rand() % nvars]++;
+                }
+            }
+
+            term_buf[0] = '\0';
+            if (first_term) {
+                if (coeff < 0) strcat(term_buf, "-");
+            } else {
+                strcat(term_buf, coeff < 0 ? " - " : " + ");
+            }
+
+            if (abs(coeff) != 1) {
+                char coeff_buf[32];
+                snprintf(coeff_buf, sizeof(coeff_buf), "%d", abs(coeff));
+                strcat(term_buf, coeff_buf);
+            }
+
+            for (slong j = 0; j < nvars; j++) {
+                if (exp[j] == 0) continue;
+                if (abs(coeff) != 1 || has_var) strcat(term_buf, "*");
+                strcat(term_buf, var_names[j]);
+                if (exp[j] != 1) {
+                    char exp_buf[32];
+                    snprintf(exp_buf, sizeof(exp_buf), "^%ld", exp[j]);
+                    strcat(term_buf, exp_buf);
+                }
+                has_var = 1;
+            }
+
+            if (!has_var && abs(coeff) == 1) strcat(term_buf, "1");
+            strcat(poly_buf, term_buf);
+            first_term = 0;
+            free(exp);
+        }
+
+        if (strlen(polys_str) + strlen(poly_buf) + 4 > polys_cap) {
+            while (strlen(polys_str) + strlen(poly_buf) + 4 > polys_cap)
+                polys_cap *= 2;
+            polys_str = realloc(polys_str, polys_cap);
+        }
+        if (i > 0) strcat(polys_str, ", ");
+        strcat(polys_str, poly_buf);
+    }
+
+    if (!silent_mode) {
+        printf("System: %ld equations, %ld variables\n", npolys, nvars);
+        printf("Degrees: [");
+        for (slong i = 0; i < npolys; i++) {
+            if (i > 0) printf(", ");
+            printf("%ld", degrees[i]);
+        }
+        printf("]\n");
+        if (!is_solve_mode)
+            printf("Eliminate: %s  |  Remaining: %s\n",
+                   elim_vars, var_names[nvars - 1]);
+    }
+
+    for (slong i = 0; i < nvars; i++) free(var_names[i]);
+    free(var_names);
+
+    *polys_str_out = polys_str;
+    *elim_vars_str_out = elim_vars;
+    *all_vars_str_out = all_vars;
+    return 1;
 }
 
 /* =========================================================================
@@ -1226,6 +1466,7 @@ int main(int argc, char *argv[])
     char *ideal_str     = NULL;
     char *allvars_str   = NULL;
     char *field_str     = NULL;
+    char *vars_str_override = NULL;
     int   need_free     = 0;
     int   rand_generated = 0;  /* 1 = polys_str/vars_str were malloc'd by random gen */
     char *deg_str       = NULL; /* degree list string when rand_mode */
@@ -1455,7 +1696,7 @@ int main(int argc, char *argv[])
                           &field_poly_str, &gen_var_name)) {
         if (!silent_mode) {
             fprintf(stderr, "Error: Invalid field size '%s'\n", field_str);
-            fprintf(stderr, "Field size must be a prime, prime power (e.g. 256), or p^k (e.g. 2^8)\n");
+            fprintf(stderr, "Field size must be 0 (for Q), a prime, prime power (e.g. 256), or p^k (e.g. 2^8)\n");
         }
         if (need_free) {
             free(field_str); free(polys_str);
@@ -1471,6 +1712,7 @@ int main(int argc, char *argv[])
     }
 
     prime = fmpz_get_ui(p_fmpz);
+    int rational_mode = (prime == 0);
 
     mp_limb_t field_size = 1;
     for (ulong i = 0; i < power; i++) field_size *= prime;
@@ -1480,18 +1722,37 @@ int main(int argc, char *argv[])
                comp_mode  ? "Complexity Analysis" :
                solve_mode ? "Polynomial System Solver" :
                             "Dixon Resultant Computation");
-        printf("Field: F_%lu", prime);
-        if (power > 1) {
-            printf("^%lu (size %lu)", power, field_size);
-            printf("\nField extension generator: t");
+        if (rational_mode) {
+            printf("Field: Q");
+        } else {
+            printf("Field: F_%lu", prime);
+            if (power > 1) {
+                printf("^%lu (size %lu)", power, field_size);
+                printf("\nField extension generator: t");
+            }
         }
         printf("\n");
+    }
+
+    if (rational_mode) {
+        if (solve_mode) {
+            fprintf(stderr, "Error: field_size=0 currently supports Dixon resultant and --comp only; --solve is not implemented yet.\n");
+            goto cleanup_fail;
+        }
+        if (ideal_str) {
+            fprintf(stderr, "Error: field_size=0 currently does not support --ideal.\n");
+            goto cleanup_fail;
+        }
+        if (field_eq_mode) {
+            fprintf(stderr, "Error: field_size=0 currently does not support --field-equation.\n");
+            goto cleanup_fail;
+        }
     }
 
     /* ---- initialize finite field ---- */
     fq_nmod_ctx_t ctx;
 
-    if (power > 1 && field_poly_str) {
+    if (!rational_mode && power > 1 && field_poly_str) {
         const char *var_name = gen_var_name ? gen_var_name : "t";
         if (!silent_mode) {
             printf("Using custom field polynomial: %s\n", field_poly_str);
@@ -1517,7 +1778,7 @@ int main(int argc, char *argv[])
         fq_nmod_ctx_init_modulus(ctx, modulus, var_name);
         nmod_poly_clear(modulus);
 
-    } else {
+    } else if (!rational_mode) {
         fq_nmod_ctx_init(ctx, p_fmpz, power, "t");
 
         if (!silent_mode && power > 1) {
@@ -1539,7 +1800,7 @@ int main(int argc, char *argv[])
     }
 
     /* ---- activate field-equation reduction mode ---- */
-    if (field_eq_mode) {
+    if (!rational_mode && field_eq_mode) {
         fq_mvpoly_set_field_equation_reduction(1);
         if (!silent_mode)
             printf("Field-equation reduction: ENABLED (x^q = x for each variable)\n");
@@ -1566,15 +1827,25 @@ int main(int argc, char *argv[])
         }
 
         char *gen_polys = NULL, *gen_elim = NULL, *gen_allvars = NULL;
-        if (!generate_random_poly_strings(degrees_rand, npolys_rand,
-                                          ctx,
-                                          solve_mode,
-                                          silent_mode,
-                                          &gen_polys, &gen_elim, &gen_allvars)) {
+        int generated_ok;
+        if (rational_mode) {
+            generated_ok = generate_random_poly_strings_rational(
+                               degrees_rand, npolys_rand,
+                               solve_mode, silent_mode,
+                               &gen_polys, &gen_elim, &gen_allvars);
+        } else {
+            generated_ok = generate_random_poly_strings(
+                               degrees_rand, npolys_rand,
+                               ctx,
+                               solve_mode,
+                               silent_mode,
+                               &gen_polys, &gen_elim, &gen_allvars);
+        }
+        if (!generated_ok) {
             if (!silent_mode)
                 fprintf(stderr, "Error: random polynomial generation failed\n");
             free(degrees_rand);
-            fq_nmod_ctx_clear(ctx);
+            if (!rational_mode) fq_nmod_ctx_clear(ctx);
             fmpz_clear(p_fmpz);
             if (field_poly_str) free(field_poly_str);
             if (gen_var_name)   free(gen_var_name);
@@ -1587,6 +1858,18 @@ int main(int argc, char *argv[])
         vars_str     = gen_elim;
         allvars_str  = gen_allvars;
         rand_generated = 1;
+    }
+
+    if (polys_str && vars_str) {
+        char *normalized_vars = normalize_elimination_vars(polys_str, vars_str, silent_mode);
+        if (normalized_vars) {
+            if (need_free || rand_generated) {
+                free(vars_str);
+            } else {
+                vars_str_override = normalized_vars;
+            }
+            vars_str = normalized_vars;
+        }
     }
 
     /* ======================================================
@@ -1611,7 +1894,7 @@ int main(int argc, char *argv[])
         double comp_time  = (double)(end_time - start_time) / CLOCKS_PER_SEC;
 
         run_complexity_analysis(polys_str, vars_str,
-                                prime, power, ctx,
+                                prime, power, rational_mode ? NULL : ctx,
                                 output_filename, silent_mode,
                                 comp_time, omega);
 
@@ -1686,7 +1969,8 @@ int main(int argc, char *argv[])
             }
         }
 
-        result = dixon_str(polys_str, vars_str, ctx);
+        result = rational_mode ? dixon_str_rational(polys_str, vars_str)
+                               : dixon_str(polys_str, vars_str, ctx);
 
         if (silent_mode && orig_stdout != -1) {
             fflush(stdout); fflush(stderr);
@@ -1742,7 +2026,7 @@ int main(int argc, char *argv[])
     printf("Total computation time: %.3f seconds\n", computation_time);
 
     /* ---- cleanup ---- */
-    fq_nmod_ctx_clear(ctx);
+    if (!rational_mode) fq_nmod_ctx_clear(ctx);
     if (field_poly_str) free(field_poly_str);
     if (gen_var_name)   free(gen_var_name);
     fmpz_clear(p_fmpz);
@@ -1759,10 +2043,31 @@ int main(int argc, char *argv[])
         free(vars_str);
         free(allvars_str);
     }
+    if (!need_free && !rand_generated && vars_str_override)
+        free(vars_str_override);
     if (input_filename)  free(input_filename);
     if (output_filename) free(output_filename);
 
     cleanup_unified_workspace();
     flint_cleanup();
     return 0;
+
+cleanup_fail:
+    if (field_poly_str) free(field_poly_str);
+    if (gen_var_name)   free(gen_var_name);
+    fmpz_clear(p_fmpz);
+
+    if (need_free) {
+        free(field_str);
+        free(polys_str);
+        if (vars_str)    free(vars_str);
+        if (ideal_str)   free(ideal_str);
+        if (allvars_str) free(allvars_str);
+    }
+    if (!need_free && !rand_generated && vars_str_override)
+        free(vars_str_override);
+    if (input_filename)  free(input_filename);
+    if (output_filename) free(output_filename);
+    flint_cleanup();
+    return 1;
 }
