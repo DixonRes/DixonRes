@@ -118,4 +118,7 @@ char* dixon_str(const char *poly_string,    // comma-separated polynomials
                 const char *vars_string,     // comma-separated variables
                 const fq_nmod_ctx_t ctx);
 
+char* dixon_str_rational(const char *poly_string,
+                         const char *vars_string);
+
 #endif // DIXON_INTERFACE_FLINT_H
