@@ -94,7 +94,7 @@ static void print_usage(const char *prog_name)
 
     printf("EXAMPLES:\n");
     printf("  %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("  %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 0\n", prog_name);
+    printf("  %s \"x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z\" \"x,y\" 0\n", prog_name);
     printf("  %s --solve \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
     printf("  %s --comp \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
     printf("  %s --random \"[3,3,2]\" 257\n", prog_name);
