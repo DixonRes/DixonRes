@@ -32,6 +32,8 @@ for arg in "$@"; do
         --flint-lib=*)     FLINT_LIB_PATH="${arg#--flint-lib=}" ;;
         --pml-include=*)   PML_INCLUDE_PATH="${arg#--pml-include=}" ;;
         --pml-lib=*)       PML_LIB_PATH="${arg#--pml-lib=}" ;;
+        --enable-asan)     ENABLE_ASAN="yes" ;;
+        --disable-asan)    ENABLE_ASAN="no" ;;
         --help|-h)
             sed -n '2,8p' "$0"
             exit 0
