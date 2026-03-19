@@ -12,7 +12,7 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 - Finite fields:
   - Prime fields F_p (any size): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
   - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {8, 16, 32, 64, 128}.
-- Rational field Q: Rational reconstruction via multi-prime CRT. Set field_size = 0 to enable.
+- Rational field ℚ: Rational reconstruction via multi-prime CRT. Set field_size = 0 to enable.
 - Complexity analysis — estimates Dixon matrix size, Bezout degree bound, and operation count before computing
 - Command line input or file input. Automatic output to solution files
 
@@ -236,15 +236,15 @@ and the resultant, solutions, or complexity report.
 
 ## Feature Support by Field
 
-| Feature | F_p | F_{p^k} | Q |
-|---|---|---|---|
-| Dixon resultant | ✅ | ✅ | ✅ |
-| Complexity analysis (`--comp`) | ✅ | ✅ | ✅ |
-| Random mode (`-r`) | ✅ | ✅ | ✅ |
-| Polynomial solver (`--solve`) | ✅ | ✅ | ❌ |
-| Ideal reduction (`--ideal`) | ✅ | ✅ | ❌ |
-| Field-equation reduction | ✅ | ✅ | ❌ |
-| PML acceleration | ✅ | ❌ | ❌ |
+| Feature | F_p (p < 2^63) | F_p (p > 2^63) | F_{p^k} | Q |
+|---|---|---|---|---|
+| Dixon resultant | ✅ | ✅ | ✅ | ✅ |
+| Complexity analysis (`--comp`) | ✅ | ✅ | ✅ | ✅ |
+| Random mode (`-r`) | ✅ | ✅ | ✅ | ✅ |
+| Polynomial solver (`--solve`) | ✅ | ❌ | ✅ | ❌ |
+| Ideal reduction (`--ideal`) | ✅ | ❌ | ✅ | ❌ |
+| Field-equation reduction | ✅ | ❌ | ✅ | ❌ |
+| PML acceleration | ✅ | ❌ | ❌ | ❌ |
 
 ---
 
