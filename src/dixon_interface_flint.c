@@ -11,6 +11,8 @@
 // Fixed string parser implementation
 
 static int g_suppress_univariate_root_reporting = 0;
+static const slong QQ_ROOT_SEARCH_MAX_DEGREE = 1000;
+static const slong QQ_ROOT_SEARCH_MAX_CANDIDATES = 1000000;
 
 static int at_end(parser_state_t *state) {
     return state->pos >= state->len;
@@ -1022,14 +1024,28 @@ static void qq_poly_recon_init(qq_poly_recon_t *poly, char **par_names, slong np
     fmpz_one(poly->modulus);
 }
 
-static void qq_poly_recon_clear(qq_poly_recon_t *poly) {
-    if (poly->terms) {
-        for (slong i = 0; i < poly->nterms; i++) {
-            if (poly->terms[i].par_exp) free(poly->terms[i].par_exp);
-            fmpz_clear(poly->terms[i].residue);
+static void qq_poly_recon_clear_terms(qq_poly_recon_t *poly) {
+    if (!poly || !poly->terms) {
+        if (poly) {
+            poly->terms = NULL;
+            poly->nterms = 0;
+            poly->alloc = 0;
         }
-        free(poly->terms);
+        return;
     }
+
+    for (slong i = 0; i < poly->nterms; i++) {
+        if (poly->terms[i].par_exp) free(poly->terms[i].par_exp);
+        fmpz_clear(poly->terms[i].residue);
+    }
+    free(poly->terms);
+    poly->terms = NULL;
+    poly->nterms = 0;
+    poly->alloc = 0;
+}
+
+static void qq_poly_recon_clear(qq_poly_recon_t *poly) {
+    qq_poly_recon_clear_terms(poly);
     if (poly->par_names) {
         for (slong i = 0; i < poly->npars; i++) {
             free(poly->par_names[i]);
@@ -1037,6 +1053,31 @@ static void qq_poly_recon_clear(qq_poly_recon_t *poly) {
         free(poly->par_names);
     }
     fmpz_clear(poly->modulus);
+}
+
+static void qq_poly_recon_copy(qq_poly_recon_t *dst, const qq_poly_recon_t *src) {
+    if (!dst || !src || dst == src) return;
+
+    qq_poly_recon_clear_terms(dst);
+    fmpz_set(dst->modulus, src->modulus);
+
+    if (src->nterms == 0) {
+        return;
+    }
+
+    dst->terms = (qq_term_t*) malloc((size_t) src->nterms * sizeof(qq_term_t));
+    dst->nterms = src->nterms;
+    dst->alloc = src->nterms;
+
+    for (slong i = 0; i < src->nterms; i++) {
+        dst->terms[i].par_exp = (slong*) calloc((size_t) dst->npars, sizeof(slong));
+        if (dst->npars > 0 && src->terms[i].par_exp) {
+            memcpy(dst->terms[i].par_exp, src->terms[i].par_exp,
+                   (size_t) dst->npars * sizeof(slong));
+        }
+        fmpz_init(dst->terms[i].residue);
+        fmpz_set(dst->terms[i].residue, src->terms[i].residue);
+    }
 }
 
 static slong qq_poly_recon_find_term(const qq_poly_recon_t *poly, const slong *par_exp) {
@@ -1392,6 +1433,14 @@ static void find_and_print_rational_roots_of_univariate_resultant(const qq_poly_
         return;
     }
 
+    if (degree > QQ_ROOT_SEARCH_MAX_DEGREE) {
+        printf("\nSkipping rational root search in %s: degree %ld exceeds limit %ld.\n",
+               var_name, degree, QQ_ROOT_SEARCH_MAX_DEGREE);
+        fmpq_poly_clear(rat_poly);
+        free(par_used);
+        return;
+    }
+
     fmpz_poly_t int_poly, prim_poly, num_divs, den_divs;
     fmpz_t common_den, content, abs_const, abs_lead, coeff, gcd_nd;
     slong zero_mult = 0;
@@ -1452,6 +1501,15 @@ static void find_and_print_rational_roots_of_univariate_resultant(const qq_poly_
 
         arith_divisors(num_divs, abs_const);
         arith_divisors(den_divs, abs_lead);
+
+        slong candidate_count = 2 * fmpz_poly_length(num_divs) * fmpz_poly_length(den_divs);
+        if (candidate_count > QQ_ROOT_SEARCH_MAX_CANDIDATES) {
+            printf("\nSkipping rational root search in %s: %ld candidates exceed limit %ld.\n",
+                   var_name, candidate_count, QQ_ROOT_SEARCH_MAX_CANDIDATES);
+            fmpq_clear(candidate);
+            fmpq_clear(value);
+            goto rational_cleanup;
+        }
 
         for (slong i = 0; i < fmpz_poly_length(num_divs); i++) {
             fmpz_t num;
@@ -1530,7 +1588,9 @@ char* dixon_str_rational(const char *poly_string,
     slong num_remaining;
     char **remaining_vars;
     qq_poly_recon_t recon;
+    qq_poly_recon_t best_recon;
     char *best_result = NULL;
+    int have_best_recon = 0;
     int stable_count = 0;
 
     candidate = (FLINT_BITS >= 64) ? ((((ulong) 1) << 62) - 4096) : ((((ulong) 1) << 30) - 4096);
@@ -1542,11 +1602,17 @@ char* dixon_str_rational(const char *poly_string,
 
     remaining_vars = compute_remaining_vars_from_input(poly_string, vars_string, &num_remaining);
     qq_poly_recon_init(&recon, remaining_vars, num_remaining);
+    qq_poly_recon_init(&best_recon, remaining_vars, num_remaining);
 
     for (slong i = 0; i < num_remaining; i++) free(remaining_vars[i]);
     free(remaining_vars);
 
-    printf("Reconstructing over Q...\n");
+    printf("Reconstructing over Q from modular Dixon resultants...\n");
+    printf("Selected primes:");
+    for (slong i = 0; i < num_primes; i++) {
+        printf("%s %lu", (i == 0) ? "" : ",", primes[i]);
+    }
+    printf("\n");
 
     g_suppress_univariate_root_reporting = 1;
     for (slong i = 0; i < num_primes; i++) {
@@ -1561,6 +1627,9 @@ char* dixon_str_rational(const char *poly_string,
         fmpz_init(p);
         fmpz_set_ui(p, primes[i]);
         fq_nmod_ctx_init(ctx, p, 1, "t");
+        
+        printf("Prime %ld/%ld: p = %lu\n", i + 1, num_primes, primes[i]);
+        printf("Computing Dixon resultant modulo %lu...\n", primes[i]);
 
         fflush(stdout);
         saved_stdout = dup(STDOUT_FILENO);
@@ -1581,6 +1650,7 @@ char* dixon_str_rational(const char *poly_string,
         }
 
         if (!parse_result_string_fixed_params(mod_result, recon.par_names, recon.npars, ctx, &mod_poly)) {
+            printf("Skipping p = %lu: failed to parse modular resultant.\n", primes[i]);
             free(mod_result);
             fq_nmod_ctx_clear(ctx);
             fmpz_clear(p);
@@ -1589,15 +1659,20 @@ char* dixon_str_rational(const char *poly_string,
 
         qq_poly_recon_absorb_modular_result(&recon, &mod_poly, ctx);
         if (qq_poly_recon_to_string(&candidate_result, &recon)) {
+            qq_poly_recon_copy(&best_recon, &recon);
+            have_best_recon = 1;
             if (best_result && strcmp(best_result, candidate_result) == 0) {
                 stable_count++;
+                printf("Reconstruction unchanged after p = %lu.\n", primes[i]);
             } else {
                 stable_count = 0;
                 free(best_result);
                 best_result = strdup(candidate_result);
+                printf("Reconstruction updated after p = %lu.\n", primes[i]);
             }
             free(candidate_result);
             if (i >= 1 && stable_count >= 1) {
+                printf("Reconstruction stabilized after %ld prime(s).\n", i + 1);
                 fq_mvpoly_clear(&mod_poly);
                 free(mod_result);
                 fq_nmod_ctx_clear(ctx);
@@ -1605,7 +1680,7 @@ char* dixon_str_rational(const char *poly_string,
                 break;
             }
         }
-
+        
         fq_mvpoly_clear(&mod_poly);
         free(mod_result);
         fq_nmod_ctx_clear(ctx);
@@ -1616,8 +1691,13 @@ char* dixon_str_rational(const char *poly_string,
     if (!best_result) {
         best_result = strdup("0");
     }
-
-    find_and_print_rational_roots_of_univariate_resultant(&recon);
+    
+    printf("Final reconstruction over Q completed.\n");
+    
+    if (have_best_recon && strcmp(best_result, "0") != 0) {
+        find_and_print_rational_roots_of_univariate_resultant(&best_recon);
+    }
+    qq_poly_recon_clear(&best_recon);
     qq_poly_recon_clear(&recon);
     return best_result;
 }
