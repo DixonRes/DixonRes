@@ -1536,11 +1536,6 @@ static char *qq_reconstruct_from_modular_dixon(const char *poly_string,
     free(remaining_vars);
 
     printf("Reconstructing over Q from modular Dixon resultants...\n");
-    printf("Selected primes:");
-    for (slong i = 0; i < num_primes; i++) {
-        printf("%s %lu", (i == 0) ? "" : ",", primes[i]);
-    }
-    printf("\n");
 
     g_suppress_univariate_root_reporting = 1;
     for (slong i = 0; i < num_primes; i++) {
@@ -1556,7 +1551,7 @@ static char *qq_reconstruct_from_modular_dixon(const char *poly_string,
         fmpz_set_ui(p, primes[i]);
         fq_nmod_ctx_init(ctx, p, 1, "t");
 
-        printf("Prime %ld/%ld: p = %lu\n", i + 1, num_primes, primes[i]);
+        printf("Prime %ld/%ld: ", i + 1, num_primes);
         printf("Computing Dixon resultant modulo %lu...\n", primes[i]);
 
         fflush(stdout);
@@ -1591,7 +1586,7 @@ static char *qq_reconstruct_from_modular_dixon(const char *poly_string,
             have_best_recon = 1;
             if (best_result && strcmp(best_result, candidate_result) == 0) {
                 stable_count++;
-                printf("Reconstruction unchanged after p = %lu.\n", primes[i]);
+                //printf("Reconstruction unchanged after p = %lu.\n", primes[i]);
             } else {
                 stable_count = 0;
                 free(best_result);
