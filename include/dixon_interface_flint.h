@@ -69,17 +69,6 @@ typedef struct {
     char *generator_name;
 } parser_state_t;
 
-// Dixon result structure
-typedef struct {
-    char *poly_string;
-    char **remaining_vars;
-    slong num_remaining_vars;
-    const fq_nmod_ctx_struct *ctx;  // pointer type
-    int is_constant;
-    fq_nmod_t constant_value;
-    char *generator_name;
-} dixon_result_t;
-
 // String builder structure for efficient string construction
 typedef struct {
     char *buffer;
@@ -104,7 +93,6 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **var_names, const char 
 void fq_nmod_print_pretty_enhanced(const fq_nmod_t a, const fq_nmod_ctx_t ctx);
 void fq_mvpoly_print_enhanced(const fq_mvpoly_t *p, const char *name);
 void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, parser_state_t *state);
-void print_remaining_vars(char **var_names, slong nvars);
 
 // Main Dixon interface functions
 char* dixon(const char **poly_strings, slong num_polys, 

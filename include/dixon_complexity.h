@@ -58,24 +58,6 @@ int compare_desc(const void *a, const void *b);
 void dixon_size(fmpz_t result, const long *a_values, int len, int show_details);
 double dixon_complexity(const long *a_values, int len, int n, double omega);
 
-// Polynomial analysis functions
-static void poly_analysis_init(poly_analysis_t *analysis, slong num_polys, const fq_nmod_ctx_t ctx);
-static void poly_analysis_clear(poly_analysis_t *analysis);
-
-// Variable hash table functions
-static slong hash_string(const char *str, slong bucket_count);
-static void var_hash_init(var_hash_table_t *table, slong initial_buckets);
-static void var_hash_clear(var_hash_table_t *table);
-static slong var_hash_find(var_hash_table_t *table, const char *name);
-static slong var_hash_add(var_hash_table_t *table, const char *name);
-
-// Optimized polynomial analysis functions
-static slong find_variable_optimized(poly_analysis_t *analysis, const char *var_name);
-static int add_variable_optimized(poly_analysis_t *analysis, const char *var_name);
-static int parse_and_extract_degree(lightweight_parser_t *parser);
-static void analyze_single_polynomial(poly_analysis_t *analysis, slong poly_idx, const char *poly_str);
-static int is_elimination_var(const char *var_name, const char **elim_vars, slong num_elim_vars);
-
 long get_poly_total_degree(const char *poly_str, const char *gen_name);
 void collect_variables(const char **polys, slong npolys,
                                const char *gen_name,
@@ -88,7 +70,6 @@ char* dixon_complexity_auto(const char **poly_strings, slong num_polys,
 char* dixon_complexity_auto_str(const char *poly_string, const char *vars_string, const fq_nmod_ctx_t ctx);
 
 // Complexity extraction functions
-static long extract_constant_term(const char *poly_str);
 double extract_max_complexity(const char **poly_strings, slong num_polys);
 double extract_max_complexity_str(const char *poly_string);
 

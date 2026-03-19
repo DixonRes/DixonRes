@@ -98,8 +98,8 @@ check_zech:
                 ctx->elem_size = sizeof(fq_zech_struct);
                 ctx->description = "Finite field with Zech logarithm";
                 
-                ulong field_size = calculate_field_size(prime, degree);
-                //printf("Auto-selected Zech logarithm for field of size %lu\n", field_size);
+                //printf("Auto-selected Zech logarithm for field of size %lu\n",
+                //       calculate_field_size(prime, degree));
             } else {
                 /* Failed to create Zech context, use fq_nmod */
                 if (zech_ctx) {

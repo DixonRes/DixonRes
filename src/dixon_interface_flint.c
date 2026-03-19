@@ -1,9 +1,16 @@
 // Complete fixed Dixon resultant string interface implementation
 #include "dixon_interface_flint.h"
 #include "dixon_complexity.h"
+#include <flint/arith.h>
 #include <flint/fmpq.h>
+#include <flint/fmpq_poly.h>
+#include <flint/fmpz_poly.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 // Fixed string parser implementation
+
+static int g_suppress_univariate_root_reporting = 0;
 
 static int at_end(parser_state_t *state) {
     return state->pos >= state->len;
@@ -309,6 +316,10 @@ void parse_expression(parser_state_t *state, fq_mvpoly_t *poly) {
 }
 
 void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, parser_state_t *state) {
+    if (g_suppress_univariate_root_reporting) {
+        return;
+    }
+
     if (result->nvars != 0) {
         return;
     }
@@ -329,36 +340,15 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
         }
     }
     
-    printf("\n=== Polynomial Analysis ===\n");
-    printf("Defined parameters: %ld\n", result->npars);
-    printf("Actually used parameters: %ld\n", actual_par_count);
-    
     if (actual_par_count > 1) {
-        printf("Multiple parameters used: ");
-        int first = 1;
-        for (slong p = 0; p < result->npars; p++) {
-            if (par_used[p]) {
-                if (!first) printf(", ");
-                if (state->par_names && state->par_names[p]) {
-                    printf("%s", state->par_names[p]);
-                } else {
-                    printf("p_%ld", p);
-                }
-                first = 0;
-            }
-        }
-        printf("\n");
         free(par_used);
         return;
     }
     
     if (actual_par_count == 0) {
-        printf("Polynomial is constant.\n");
         free(par_used);
         return;
     }
-    
-    printf("Single parameter detected! Finding roots...\n");
     
     fq_nmod_poly_t poly;
     fq_nmod_poly_init(poly, result->ctx);
@@ -376,34 +366,15 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
         var_name = state->par_names[main_par_idx];
     }
     
-    printf("\n=== Finding Roots of Univariate Resultant ===\n");
-    printf("Univariate polynomial in %s:\n", var_name);
-    printf("  Degree: %ld\n", fq_nmod_poly_degree(poly, result->ctx));
-    
     slong degree = fq_nmod_poly_degree(poly, result->ctx);
     if (degree <= 0) {
-        printf("  Polynomial is constant or zero, no roots to find.\n");
-        fq_nmod_poly_clear(poly, result->ctx);
-        free(par_used);
-        return;
-    }
-
-    printf("\nFinding roots using appropriate algorithm...\n");
-
-    degree = fq_nmod_poly_degree(poly, result->ctx);
-    if (degree <= 0) {
-        printf("  Polynomial is constant or zero, no roots to find.\n");
         fq_nmod_poly_clear(poly, result->ctx);
         free(par_used);
         return;
     }
 
     slong field_degree = fq_nmod_ctx_degree(result->ctx);
-    printf("Field degree: %ld\n", field_degree);
-
     if (field_degree == 1) {
-        printf("Prime field detected, using nmod_poly_roots...\n");
-        
         mp_limb_t prime = fq_nmod_ctx_prime(result->ctx);
         
         nmod_poly_t nmod_poly;
@@ -432,8 +403,8 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
         nmod_roots_t nmod_roots;
         nmod_roots_init(nmod_roots);
         slong num_roots = our_nmod_poly_roots(nmod_roots, nmod_poly, 1);
-        
-        printf("\nRoots found:\n");
+
+        printf("\nRoots in %s (degree %ld):\n", var_name, degree);
         printf("Find %ld roots:\n", num_roots);
         for (slong i = 0; i < nmod_roots->num; i++) {
             printf("  Root %ld: %lu (Multiplicity: %ld)\n", i + 1, 
@@ -444,15 +415,14 @@ void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, par
         nmod_poly_clear(nmod_poly);
         
     } else {
-        printf("Extension field detected, using fq_nmod_poly_roots...\n");
-        
         fq_nmod_roots_t roots;
         fq_nmod_roots_init(roots, result->ctx);
         slong num_roots = our_fq_nmod_poly_roots(roots, poly, 1, result->ctx);
-        
+
+        printf("\nRoots in %s (degree %ld):\n", var_name, degree);
         printf("Find %ld roots:\n", num_roots);
         for (slong i = 0; i < roots->num; i++) {
-            printf("  root %ld: ", i + 1);
+            printf("  Root %ld: ", i + 1);
             fq_nmod_print_pretty(roots->roots + i, result->ctx);
             printf(" (Multiplicity: %ld)\n", roots->mult[i]);
         }
@@ -805,40 +775,6 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
     return sb_finalize(&sb);
 }
 
-// Print remaining variables info
-void print_remaining_vars(char **var_names, slong nvars) {
-    printf("Remaining variables (%ld): ", nvars);
-    if (nvars == 0) {
-        printf("none");
-    } else {
-        for (slong i = 0; i < nvars; i++) {
-            if (i > 0) printf(", ");
-            printf("%s", var_names[i]);
-        }
-    }
-    printf("\n");
-}
-
-// Concat polynomials helper function:
-char* concat_polynomials(const char* poly1, const char* poly2, 
-                              char** buffer, size_t* buffer_size) {
-    size_t len1 = strlen(poly1);
-    size_t len2 = strlen(poly2);
-    size_t needed = len1 + len2 + 2;
-    
-    if (needed > *buffer_size) {
-        *buffer_size = needed;
-        *buffer = (char*) realloc(*buffer, *buffer_size);
-        if (!*buffer) {
-            printf("ERROR: Failed to allocate %zu bytes\n", *buffer_size);
-            exit(1);
-        }
-    }
-    
-    sprintf(*buffer, "%s,%s", poly1, poly2);
-    return *buffer;
-}
-
 // Core Dixon Function
 
 // Internal computation function
@@ -859,7 +795,7 @@ char* compute_dixon_internal(const char **poly_strings, slong npoly_strings,
     char *gen_name = get_generator_name(ctx);
     
     // Initialize parser state with original variable names
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(nvars * sizeof(char*));
     for (slong i = 0; i < nvars; i++) {
         state.var_names[i] = strdup(var_names[i]);
@@ -915,7 +851,6 @@ char* compute_dixon_internal(const char **poly_strings, slong npoly_strings,
         
         parse_expression(&state, &polys[i]);
     }
-    
     // Compute Dixon resultant with original names
     fq_mvpoly_t dixon_result_poly;
     fq_dixon_resultant_with_names(&dixon_result_poly, polys, nvars, state.npars,
@@ -1147,7 +1082,7 @@ static int parse_result_string_fixed_params(const char *result_str,
                                            slong npars,
                                            const fq_nmod_ctx_t ctx,
                                            fq_mvpoly_t *poly) {
-    parser_state_t state;
+    parser_state_t state = {0};
 
     state.input = result_str;
     state.pos = 0;
@@ -1376,6 +1311,216 @@ static int qq_poly_recon_to_string(char **out, const qq_poly_recon_t *acc) {
     return 1;
 }
 
+static int qq_poly_recon_reconstruct_coeff(fmpq_t coeff, const qq_poly_recon_t *acc, slong term_idx) {
+    if (fmpz_is_zero(acc->terms[term_idx].residue)) {
+        fmpq_zero(coeff);
+        return 1;
+    }
+
+    if (!_fmpq_reconstruct_fmpz(fmpq_numref(coeff), fmpq_denref(coeff),
+                                acc->terms[term_idx].residue, acc->modulus)) {
+        return 0;
+    }
+
+    _fmpq_canonicalise(fmpq_numref(coeff), fmpq_denref(coeff));
+    return 1;
+}
+
+static void find_and_print_rational_roots_of_univariate_resultant(const qq_poly_recon_t *acc) {
+    slong actual_par_count = 0;
+    slong main_par_idx = -1;
+    int *par_used;
+
+    if (!acc) return;
+
+    par_used = (int*) calloc((size_t) acc->npars, sizeof(int));
+
+    for (slong t = 0; t < acc->nterms; t++) {
+        if (acc->terms[t].par_exp) {
+            for (slong p = 0; p < acc->npars; p++) {
+                if (acc->terms[t].par_exp[p] > 0 && !par_used[p]) {
+                    par_used[p] = 1;
+                    main_par_idx = p;
+                    actual_par_count++;
+                }
+            }
+        }
+    }
+
+    if (actual_par_count > 1) {
+        free(par_used);
+        return;
+    }
+
+    if (actual_par_count == 0) {
+        free(par_used);
+        return;
+    }
+
+    fmpq_poly_t rat_poly;
+    fmpq_poly_init(rat_poly);
+
+    for (slong i = 0; i < acc->nterms; i++) {
+        slong degree = 0;
+        fmpq_t coeff;
+
+        if (acc->terms[i].par_exp && acc->terms[i].par_exp[main_par_idx] > 0) {
+            degree = acc->terms[i].par_exp[main_par_idx];
+        }
+
+        fmpq_init(coeff);
+        if (!qq_poly_recon_reconstruct_coeff(coeff, acc, i)) {
+            printf("Failed to reconstruct rational coefficient, skipping root search.\n");
+            fmpq_clear(coeff);
+            fmpq_poly_clear(rat_poly);
+            free(par_used);
+            return;
+        }
+
+        fmpq_poly_set_coeff_fmpq(rat_poly, degree, coeff);
+        fmpq_clear(coeff);
+    }
+
+    fmpq_poly_canonicalise(rat_poly);
+
+    const char *var_name = acc->par_names[main_par_idx];
+    slong degree = fmpq_poly_degree(rat_poly);
+
+    if (degree <= 0) {
+        fmpq_poly_clear(rat_poly);
+        free(par_used);
+        return;
+    }
+
+    fmpz_poly_t int_poly, prim_poly, num_divs, den_divs;
+    fmpz_t common_den, content, abs_const, abs_lead, coeff, gcd_nd;
+    slong zero_mult = 0;
+    slong num_roots = 0;
+    char **root_strings = NULL;
+    slong roots_alloc = 0;
+
+    fmpz_poly_init(int_poly);
+    fmpz_poly_init(prim_poly);
+    fmpz_poly_init(num_divs);
+    fmpz_poly_init(den_divs);
+    fmpz_init(common_den);
+    fmpz_init(content);
+    fmpz_init(abs_const);
+    fmpz_init(abs_lead);
+    fmpz_init(coeff);
+    fmpz_init(gcd_nd);
+
+    fmpq_poly_get_numerator(int_poly, rat_poly);
+    fmpq_poly_get_denominator(common_den, rat_poly);
+
+    fmpz_poly_content(content, int_poly);
+    if (fmpz_is_zero(content)) {
+        goto rational_cleanup;
+    }
+
+    fmpz_poly_scalar_divexact_fmpz(prim_poly, int_poly, content);
+
+    fmpz_poly_get_coeff_fmpz(coeff, prim_poly, fmpz_poly_degree(prim_poly));
+    if (fmpz_sgn(coeff) < 0) {
+        fmpz_poly_neg(prim_poly, prim_poly);
+    }
+
+    while (zero_mult <= fmpz_poly_degree(prim_poly)) {
+        fmpz_poly_get_coeff_fmpz(coeff, prim_poly, zero_mult);
+        if (!fmpz_is_zero(coeff)) break;
+        zero_mult++;
+    }
+
+    if (zero_mult > 0) {
+        if (num_roots >= roots_alloc) {
+            roots_alloc = roots_alloc ? 2 * roots_alloc : 4;
+            root_strings = (char**) realloc(root_strings, (size_t) roots_alloc * sizeof(char*));
+        }
+        root_strings[num_roots++] = strdup("0");
+    }
+
+    if (zero_mult <= fmpz_poly_degree(prim_poly)) {
+        fmpq_t candidate, value;
+
+        fmpq_init(candidate);
+        fmpq_init(value);
+
+        fmpz_poly_get_coeff_fmpz(abs_const, prim_poly, zero_mult);
+        fmpz_abs(abs_const, abs_const);
+        fmpz_poly_get_coeff_fmpz(abs_lead, prim_poly, fmpz_poly_degree(prim_poly));
+        fmpz_abs(abs_lead, abs_lead);
+
+        arith_divisors(num_divs, abs_const);
+        arith_divisors(den_divs, abs_lead);
+
+        for (slong i = 0; i < fmpz_poly_length(num_divs); i++) {
+            fmpz_t num;
+            fmpz_init(num);
+            fmpz_poly_get_coeff_fmpz(num, num_divs, i);
+
+            for (slong j = 0; j < fmpz_poly_length(den_divs); j++) {
+                fmpz_t den;
+                fmpz_init(den);
+                fmpz_poly_get_coeff_fmpz(den, den_divs, j);
+
+                fmpz_gcd(gcd_nd, num, den);
+                if (fmpz_is_one(gcd_nd)) {
+                    for (int sign = -1; sign <= 1; sign += 2) {
+                        char *root_str;
+
+                        if (sign < 0) fmpz_neg(num, num);
+                        fmpq_set_fmpz_frac(candidate, num, den);
+                        fmpq_canonicalise(candidate);
+                        fmpq_poly_evaluate_fmpq(value, rat_poly, candidate);
+
+                        if (fmpq_is_zero(value)) {
+                            if (num_roots >= roots_alloc) {
+                                roots_alloc = roots_alloc ? 2 * roots_alloc : 4;
+                                root_strings = (char**) realloc(root_strings, (size_t) roots_alloc * sizeof(char*));
+                            }
+                            root_str = fmpq_get_str(NULL, 10, candidate);
+                            root_strings[num_roots++] = strdup(root_str);
+                            flint_free(root_str);
+                        }
+                        if (sign < 0) fmpz_neg(num, num);
+                    }
+                }
+
+                fmpz_clear(den);
+            }
+
+            fmpz_clear(num);
+        }
+
+        fmpq_clear(candidate);
+        fmpq_clear(value);
+    }
+
+    printf("\nRoots in %s (degree %ld):\n", var_name, degree);
+    printf("Find %ld roots:\n", num_roots);
+    for (slong i = 0; i < num_roots; i++) {
+        printf("  Root %ld: %s\n", i + 1, root_strings[i]);
+    }
+
+rational_cleanup:
+    if (root_strings) {
+        for (slong i = 0; i < num_roots; i++) free(root_strings[i]);
+        free(root_strings);
+    }
+    fmpz_poly_clear(int_poly);
+    fmpz_poly_clear(prim_poly);
+    fmpz_poly_clear(num_divs);
+    fmpz_poly_clear(den_divs);
+    fmpz_clear(common_den);
+    fmpz_clear(content);
+    fmpz_clear(abs_const);
+    fmpz_clear(abs_lead);
+    fmpz_clear(coeff);
+    fmpz_clear(gcd_nd);
+    fmpq_poly_clear(rat_poly);
+    free(par_used);
+}
+
 char* dixon_str_rational(const char *poly_string,
                          const char *vars_string) {
     const slong max_primes = 8;
@@ -1401,23 +1546,40 @@ char* dixon_str_rational(const char *poly_string,
     for (slong i = 0; i < num_remaining; i++) free(remaining_vars[i]);
     free(remaining_vars);
 
-    printf("\n=== Rational Dixon Reconstruction ===\n");
-    printf("Using modular images over %ld-bit primes and CRT reconstruction.\n",
-           (slong) (FLINT_BITS >= 64 ? 62 : 30));
+    printf("Reconstructing over Q...\n");
 
+    g_suppress_univariate_root_reporting = 1;
     for (slong i = 0; i < num_primes; i++) {
         fq_nmod_ctx_t ctx;
         fmpz_t p;
         char *mod_result;
         fq_mvpoly_t mod_poly;
         char *candidate_result = NULL;
+        int saved_stdout = -1;
+        int devnull = -1;
 
         fmpz_init(p);
         fmpz_set_ui(p, primes[i]);
         fq_nmod_ctx_init(ctx, p, 1, "t");
 
-        printf("  Prime %ld/%ld: %lu\n", i + 1, num_primes, primes[i]);
+        fflush(stdout);
+        saved_stdout = dup(STDOUT_FILENO);
+        devnull = open("/dev/null", O_WRONLY);
+        if (saved_stdout != -1 && devnull != -1) {
+            dup2(devnull, STDOUT_FILENO);
+        }
+
         mod_result = dixon_str(poly_string, vars_string, ctx);
+
+        fflush(stdout);
+        if (saved_stdout != -1) {
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+        }
+        if (devnull != -1) {
+            close(devnull);
+        }
+
         if (!parse_result_string_fixed_params(mod_result, recon.par_names, recon.npars, ctx, &mod_poly)) {
             free(mod_result);
             fq_nmod_ctx_clear(ctx);
@@ -1449,13 +1611,14 @@ char* dixon_str_rational(const char *poly_string,
         fq_nmod_ctx_clear(ctx);
         fmpz_clear(p);
     }
+    g_suppress_univariate_root_reporting = 0;
 
     if (!best_result) {
         best_result = strdup("0");
     }
 
+    find_and_print_rational_roots_of_univariate_resultant(&recon);
     qq_poly_recon_clear(&recon);
-    printf("Rational reconstruction complete.\n");
     return best_result;
 }
 
@@ -1466,16 +1629,8 @@ char* dixon_str_rational(const char *poly_string,
 char* dixon(const char **poly_strings, slong num_polys, 
             const char **elim_vars, slong num_elim_vars,
             const fq_nmod_ctx_t ctx) {
-    
-    printf("\n=== Dixon Computation ===\n");
+
     clock_t start = clock();
-    printf("Eliminating variables: ");
-    
-    for (slong i = 0; i < num_elim_vars; i++) {
-        if (i > 0) printf(", ");
-        printf("%s", elim_vars[i]);
-    }
-    printf("\n");
     /*
     for (slong i = 0; i < num_polys; i++) {
         printf("  p%ld: %s\n", i, poly_strings[i]);
@@ -1498,9 +1653,9 @@ char* dixon(const char **poly_strings, slong num_polys,
     }
 
     clock_t end = clock();
-    printf("Time: %.3f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
-    printf("resultant length: %zu characters\n\n", strlen(result));
-    
+    (void) end;
+    (void) start;
+
     return result;
 }
 
@@ -1515,7 +1670,7 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     slong num_remaining = 0;
     
     // Initialize parser state
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(1 * sizeof(char*));
     state.var_names[0] = strdup(elim_var);
     state.nvars = 1;
@@ -1644,8 +1799,6 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
         free(exp);
     }
     
-    printf("Computing resultant using unified interface w.r.t. %s\n", elim_var);
-    
     // Compute resultant
     clock_t start = clock();
     int success = unified_mpoly_resultant(R, A, B, 0, unified_ctx);
@@ -1676,9 +1829,6 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
         
         return strdup("0");
     }
-    
-    printf("Unified resultant computation time: %.3f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
-    printf("Resultant has %ld terms\n", unified_mpoly_length(R));
     
     // Convert result back to fq_mvpoly format
     fq_mvpoly_t result_mvpoly;
@@ -1791,32 +1941,6 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     }
     fq_mvpoly_make_monic(&result_mvpoly);
 
-    slong max_par_deg = 0;
-    for (slong i = 0; i < result_mvpoly.nterms; i++) {
-        if (result_mvpoly.terms[i].par_exp && result_mvpoly.npars > 0) {
-            for (slong j = 0; j < result_mvpoly.npars; j++) {
-                if (result_mvpoly.terms[i].par_exp[j] > max_par_deg) {
-                    max_par_deg = result_mvpoly.terms[i].par_exp[j];
-                }
-            }
-        }
-    }
-    printf("Maximum parameter degree in resultant: %ld\n", max_par_deg);
-
-    //slong max_par_deg = 0;
-    for (slong i = 0; i < result_mvpoly.nterms; i++) {
-        slong term_total_deg = 0;
-        if (result_mvpoly.terms[i].par_exp && result_mvpoly.npars > 0) {
-            for (slong j = 0; j < result_mvpoly.npars; j++) {
-                term_total_deg += result_mvpoly.terms[i].par_exp[j];
-            }
-        }
-        if (term_total_deg > max_par_deg) {
-            max_par_deg = term_total_deg;
-        }
-    }
-    printf("Maximum total degree in resultant: %ld\n", max_par_deg);
-    
     // If it's a univariate polynomial, try to find roots
     find_and_print_roots_of_univariate_resultant(&result_mvpoly, &state);
     //printf("fq_mvpoly_to_string\n");
@@ -1832,13 +1956,9 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
 
     // Output remaining variable info
     if (num_remaining > 0) {
-        printf("Remaining variables (%ld): ", num_remaining);
         for (slong i = 0; i < num_remaining; i++) {
-            if (i > 0) printf(",");
-            printf(" %s", remaining_vars[i]);
             free(remaining_vars[i]);
         }
-        printf("\n");
         free(remaining_vars);
     }
     // Clean up
@@ -1864,18 +1984,16 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     free(gen_name);
 
     clock_t total_end = clock();
-    printf("Time: %.3f seconds\n", (double)(total_end - total_start) / CLOCKS_PER_SEC);
-    printf("resultant length: %zu characters\n\n", strlen(result_string));
-    
+    (void) total_end;
+    (void) total_start;
+
     return result_string;
 }
 
 char* dixon_str(const char *poly_string,
                 const char *vars_string,
                 const fq_nmod_ctx_t ctx) {
-    
-    printf("\n=== Dixon/Resultant Computation (String Interface) ===\n");
-    
+
     slong num_polys, num_vars;
     char **poly_array = split_string(poly_string, &num_polys);
     char **vars_array = split_string(vars_string, &num_vars);
@@ -1883,12 +2001,9 @@ char* dixon_str(const char *poly_string,
     char *result = NULL;
     
     if (num_polys == 2 && num_vars == 1) {
-        printf("Using unified bivariate resultant for 2 polynomials...\n");
         result = bivariate_resultant(poly_array[0], poly_array[1], 
                                      vars_array[0], ctx);        
     } else {
-        printf("Using Dixon resultant for %ld polynomials...\n", num_polys);
-        
         const char **poly_strings = (const char**) malloc(num_polys * sizeof(char*));
         const char **elim_vars   = (const char**) malloc(num_vars  * sizeof(char*));
         

@@ -10,6 +10,152 @@
 // Global method selection variable definition
 det_method_t dixon_global_method = -1;
 
+static void init_evaluation_parameters(fq_nmod_t *param_vals, slong npars,
+                                      const fq_nmod_ctx_t ctx,
+                                      slong attempt)
+{
+    for (slong i = 0; i < npars; i++) {
+        fq_nmod_init(param_vals[i], ctx);
+        fq_nmod_set_si(param_vals[i], 7 * (attempt + 1) * (i + 1) + 13, ctx);
+        if (fq_nmod_is_zero(param_vals[i], ctx)) {
+            fq_nmod_one(param_vals[i], ctx);
+        }
+    }
+}
+
+static void clear_evaluation_parameters(fq_nmod_t *param_vals, slong npars,
+                                       const fq_nmod_ctx_t ctx)
+{
+    for (slong i = 0; i < npars; i++) {
+        fq_nmod_clear(param_vals[i], ctx);
+    }
+    flint_free(param_vals);
+}
+
+static void init_extension_evaluation_parameters(fq_nmod_t *param_vals,
+                                                slong npars,
+                                                const fq_nmod_ctx_t ext_ctx,
+                                                slong attempt)
+{
+    fq_nmod_t gen, constant;
+    fq_nmod_init(gen, ext_ctx);
+    fq_nmod_init(constant, ext_ctx);
+    fq_nmod_gen(gen, ext_ctx);
+
+    for (slong i = 0; i < npars; i++) {
+        fq_nmod_init(param_vals[i], ext_ctx);
+        fq_nmod_set(param_vals[i], gen, ext_ctx);
+        fq_nmod_set_ui(constant, 7 * (attempt + 1) * (i + 1) + 13, ext_ctx);
+        fq_nmod_add(param_vals[i], param_vals[i], constant, ext_ctx);
+        if (fq_nmod_is_zero(param_vals[i], ext_ctx)) {
+            fq_nmod_set(param_vals[i], gen, ext_ctx);
+        }
+    }
+
+    fq_nmod_clear(gen, ext_ctx);
+    fq_nmod_clear(constant, ext_ctx);
+}
+
+static void evaluate_fq_mvpoly_at_extension_params(fq_nmod_t result,
+                                                  const fq_mvpoly_t *poly,
+                                                  const fq_nmod_t *param_vals,
+                                                  const fq_nmod_ctx_t ext_ctx)
+{
+    fq_nmod_t term_val, coeff_val;
+    fq_nmod_init(term_val, ext_ctx);
+    fq_nmod_init(coeff_val, ext_ctx);
+    fq_nmod_zero(result, ext_ctx);
+
+    if (poly == NULL || poly->nterms == 0) {
+        fq_nmod_clear(term_val, ext_ctx);
+        fq_nmod_clear(coeff_val, ext_ctx);
+        return;
+    }
+
+    for (slong i = 0; i < poly->nterms; i++) {
+        fq_nmod_set_ui(coeff_val, nmod_poly_get_coeff_ui(poly->terms[i].coeff, 0), ext_ctx);
+        fq_nmod_set(term_val, coeff_val, ext_ctx);
+
+        if (poly->terms[i].par_exp && poly->npars > 0) {
+            for (slong j = 0; j < poly->npars; j++) {
+                slong exp = poly->terms[i].par_exp[j];
+                if (exp > 0) {
+                    fq_nmod_t pow_val;
+                    fq_nmod_init(pow_val, ext_ctx);
+                    fq_nmod_pow_ui(pow_val, param_vals[j], exp, ext_ctx);
+                    fq_nmod_mul(term_val, term_val, pow_val, ext_ctx);
+                    fq_nmod_clear(pow_val, ext_ctx);
+                }
+            }
+        }
+
+        fq_nmod_add(result, result, term_val, ext_ctx);
+    }
+
+    fq_nmod_clear(term_val, ext_ctx);
+    fq_nmod_clear(coeff_val, ext_ctx);
+}
+
+static slong evaluate_selected_submatrix_rank(fq_mvpoly_t ***full_matrix,
+                                             const slong *row_indices,
+                                             const slong *col_indices,
+                                             slong size,
+                                             const fq_nmod_t *param_vals,
+                                             const fq_nmod_ctx_t ctx)
+{
+    fq_nmod_mat_t mat;
+    fq_nmod_t value;
+    fq_nmod_mat_init(mat, size, size, ctx);
+    fq_nmod_init(value, ctx);
+
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            fq_mvpoly_t *entry = full_matrix[row_indices[i]][col_indices[j]];
+            if (entry != NULL) {
+                evaluate_fq_mvpoly_at_params(value, entry, param_vals);
+                fq_nmod_set(fq_nmod_mat_entry(mat, i, j), value, ctx);
+            } else {
+                fq_nmod_zero(fq_nmod_mat_entry(mat, i, j), ctx);
+            }
+        }
+    }
+
+    slong rank = fq_nmod_mat_rank(mat, ctx);
+    fq_nmod_clear(value, ctx);
+    fq_nmod_mat_clear(mat, ctx);
+    return rank;
+}
+
+static slong evaluate_selected_submatrix_rank_extension(fq_mvpoly_t ***full_matrix,
+                                                       const slong *row_indices,
+                                                       const slong *col_indices,
+                                                       slong size,
+                                                       const fq_nmod_t *param_vals,
+                                                       const fq_nmod_ctx_t ext_ctx)
+{
+    fq_nmod_mat_t mat;
+    fq_nmod_t value;
+    fq_nmod_mat_init(mat, size, size, ext_ctx);
+    fq_nmod_init(value, ext_ctx);
+
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            fq_mvpoly_t *entry = full_matrix[row_indices[i]][col_indices[j]];
+            if (entry != NULL) {
+                evaluate_fq_mvpoly_at_extension_params(value, entry, param_vals, ext_ctx);
+                fq_nmod_set(fq_nmod_mat_entry(mat, i, j), value, ext_ctx);
+            } else {
+                fq_nmod_zero(fq_nmod_mat_entry(mat, i, j), ext_ctx);
+            }
+        }
+    }
+
+    slong rank = fq_nmod_mat_rank(mat, ext_ctx);
+    fq_nmod_clear(value, ext_ctx);
+    fq_nmod_mat_clear(mat, ext_ctx);
+    return rank;
+}
+
 // Build cancellation matrix in multivariate form
 void build_fq_cancellation_matrix_mvpoly(fq_mvpoly_t ***M, fq_mvpoly_t *polys, 
                                         slong nvars, slong npars) {
@@ -20,8 +166,6 @@ void build_fq_cancellation_matrix_mvpoly(fq_mvpoly_t ***M, fq_mvpoly_t *polys,
     for (slong i = 0; i < n; i++) {
         (*M)[i] = (fq_mvpoly_t*) flint_malloc(n * sizeof(fq_mvpoly_t));
     }
-    
-    printf("Building %ld x %ld cancellation matrix (multivariate form)\n", n, n);
     
     // Build matrix entries
     for (slong i = 0; i < n; i++) {
@@ -60,8 +204,6 @@ void perform_fq_matrix_row_operations_mvpoly(fq_mvpoly_t ***new_matrix, fq_mvpol
     for (slong i = 0; i < n; i++) {
         (*new_matrix)[i] = (fq_mvpoly_t*) flint_malloc(n * sizeof(fq_mvpoly_t));
     }
-    
-    printf("Performing row operations on matrix\n");
     
     for (slong j = 0; j < n; j++) {
         fq_mvpoly_copy(&(*new_matrix)[0][j], &(*original_matrix)[0][j]);
@@ -156,7 +298,7 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         clock_t end = clock();
         double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
         
-        printf("End (%.3f seconds)\n", elapsed);
+        printf("Time: %.3f seconds\n", elapsed);
         
         if (!fq_nmod_is_zero(det, ctx)) {
             fq_mvpoly_add_term_fast(result, NULL, NULL, det);
@@ -166,13 +308,10 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         fq_nmod_mat_clear(scalar_mat, ctx);
         
     } else if (npars == 1) {
-        printf("\nComputing Resultant using Mulders-Storjohann algorithm (univariate case)\n");
         clock_t start = clock();
         
         if (method == DET_METHOD_INTERPOLATION) {
-            printf("\nMultiple parameters detected. Using fq_nmod interpolation method.\n");
-            printf("  Parameters: %ld\n", npars);
-            printf("  Matrix size: %ld x %ld\n", size, size);
+            printf("Method: interpolation\n");
             
             fq_compute_det_by_interpolation(result, coeff_matrix, size,
                                            0, npars, ctx, res_deg_bound);
@@ -199,8 +338,7 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
             fq_nmod_poly_t det_poly;
             fq_nmod_poly_init(det_poly, ctx);
             
-            printf("  Matrix size: %ld x %ld\n", size, size);
-            printf("  Using weak Popov form method...\n");
+            printf("Method: Mulders-Storjohann\n");
             
             fq_nmod_poly_mat_det_iter(det_poly, poly_mat, ctx);
             
@@ -218,62 +356,51 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 }
             }
             
-            printf("  Determinant degree: %ld\n", det_deg);
-            printf("  Result terms: %ld\n", result->nterms);
-            
             fq_nmod_poly_clear(det_poly, ctx);
             fq_nmod_poly_mat_clear(poly_mat, ctx);
         }
         
         clock_t end = clock();
         double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-        printf("End (%.3f seconds)\n", elapsed);
+        printf("Time: %.3f seconds\n", elapsed);
         
     } else {
         clock_t start = clock();
         switch (method) {
             case DET_METHOD_INTERPOLATION:
-                printf("\nMultiple parameters detected. Using fq_nmod interpolation method.\n");
-                printf("  Parameters: %ld\n", npars);
-                printf("  Matrix size: %ld x %ld\n", size, size);
+                printf("Method: interpolation\n");
                 
                 fq_compute_det_by_interpolation(result, coeff_matrix, size,
                                                0, npars, ctx, res_deg_bound);
                 break;
                 
             case DET_METHOD_RECURSIVE:
-                printf("\nMultiple parameters detected. Using recursive expansion method.\n");
-                printf("  Parameters: %ld\n", npars);
-                printf("  Matrix size: %ld x %ld\n", size, size);
+                printf("Method: recursive expansion\n");
                 
                 compute_fq_det_recursive(result, coeff_matrix, size);
                 break;
                 
             case DET_METHOD_KRONECKER:
-                printf("\nMultiple parameters detected. Using Kronecker substitution method.\n");
-                printf("  Parameters: %ld\n", npars);
-                printf("  Matrix size: %ld x %ld\n", size, size);
+                printf("Method: Kronecker substitution\n");
                 
                 compute_fq_det_kronecker(result, coeff_matrix, size);
                 break;
 
             case DET_METHOD_HUANG:
-                printf("\nMultiple parameters detected. Using Huang's interpolation method.\n");
-                printf("  Parameters: %ld\n", npars);
-                printf("  Matrix size: %ld x %ld\n", size, size);
+                printf("Method: Huang interpolation\n");
                 
                 compute_fq_det_huang_interpolation(result, coeff_matrix, size);
                 break;
                 
             default:
-                printf("\nWarning: Unknown method %d, defaulting to interpolation.\n", method);
+                printf("Method: interpolation (default)\n");
                 fq_compute_det_by_interpolation(result, coeff_matrix, size,
                                                0, npars, ctx, res_deg_bound);
                 break;
         }
         clock_t end = clock();
         double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-        printf("End (%.3f seconds)\n", elapsed);
+        printf("Time: %.3f seconds\n", elapsed);
     }
 
     if (g_field_equation_reduction) {
@@ -863,8 +990,6 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
                                            slong **col_indices_out,
                                            slong *num_rows, slong *num_cols,
                                            slong npars) {
-    printf("Finding maximal rank submatrix using iterative optimization method...\n");
-    
     // Get context
     const fq_nmod_ctx_struct *ctx = NULL;
     for (slong i = 0; i < nrows && !ctx; i++) {
@@ -876,364 +1001,354 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
         }
     }
     
-    // Initialize unified field context
-    field_ctx_t unified_ctx;
-    field_ctx_init(&unified_ctx, ctx);
-    void *ctx_ptr = (unified_ctx.field_id == FIELD_ID_NMOD) ? 
-                   (void*)&unified_ctx.ctx.nmod_ctx : 
-                   (void*)unified_ctx.ctx.fq_ctx;
-    
-    // Evaluate matrix and convert to unified format
-    printf("Evaluating matrix and converting to unified format...\n");
-    clock_t conv_start = clock();
-    
-    // Generate evaluation parameters
-    fq_nmod_t *param_vals = (fq_nmod_t*) flint_malloc(npars * sizeof(fq_nmod_t));
-    for (slong i = 0; i < npars; i++) {
-        fq_nmod_init(param_vals[i], ctx);
-        fq_nmod_set_si(param_vals[i], 7*i + 13, ctx); //3 + 5*i + 2^i
-    }
-    
-    // Allocate unified format matrix
-    field_elem_u *unified_mat = (field_elem_u*) flint_malloc(nrows * ncols * sizeof(field_elem_u));
-    
-    // Initialize and evaluate
-    for (slong i = 0; i < nrows; i++) {
-        for (slong j = 0; j < ncols; j++) {
-            slong idx = i * ncols + j;
-            field_init_elem(&unified_mat[idx], unified_ctx.field_id, ctx_ptr);
-            
-            // Evaluate polynomial
-            fq_nmod_t val;
-            fq_nmod_init(val, ctx);
-            // Safe evaluation: check for NULL pointer
-            if (full_matrix[i][j] == NULL) {
-                fq_nmod_zero(val, ctx);  // NULL represents zero polynomial
-            } else {
-                evaluate_fq_mvpoly_at_params(val, full_matrix[i][j], param_vals);
-            }            fq_nmod_to_field_elem(&unified_mat[idx], val, &unified_ctx);
-            fq_nmod_clear(val, ctx);
-        }
-    }
-    
-    clock_t conv_end = clock();
-    //printf("Conversion time: %.3f seconds\n", (double)(conv_end - conv_start) / CLOCKS_PER_SEC);
-    
-    // Initialize arrays to store selection results
-    slong *current_row_indices = NULL;
-    slong *current_col_indices = NULL;
-    slong *prev_row_indices = NULL;
-    slong *prev_col_indices = NULL;
-    slong current_size = 0;
-    slong prev_size = 0;
-    
-    // Iterative optimization
-    const slong MAX_ITERATIONS = 10;
-    slong iteration = 0;
-    int converged = 0;
-    
-    clock_t iter_start = clock();
-    
-    while (iteration < MAX_ITERATIONS && !converged) {
-        //printf("\n--- Iteration %ld ---\n", iteration + 1);
-        
-        // Save previous results
-        if (iteration > 0) {
-            prev_row_indices = (slong*) flint_malloc(current_size * sizeof(slong));
-            prev_col_indices = (slong*) flint_malloc(current_size * sizeof(slong));
-            memcpy(prev_row_indices, current_row_indices, current_size * sizeof(slong));
-            memcpy(prev_col_indices, current_col_indices, current_size * sizeof(slong));
-            prev_size = current_size;
-        }
-        
-        slong row_rank_selected = 0;  // Record row selection rank
-        
+    const int use_extension_specialization = (fq_nmod_ctx_degree(ctx) == 1 && fq_nmod_ctx_prime(ctx) == 2 && npars > 0);
+    const slong MAX_SELECTION_ATTEMPTS = use_extension_specialization ? 3 : 2;
 
-        if (iteration == 0) {
-            // First iteration: direct pivot row selection using Gaussian elimination
-            //printf("Initial row selection using Gaussian elimination...\n");
-            
-            // Use direct Gaussian elimination to find pivot rows
-            slong *selected_rows = NULL;
-            slong num_selected = 0;
-            
-            find_pivot_rows_simple(&selected_rows, &num_selected, 
-                                  unified_mat, nrows, ncols, &unified_ctx);
-            
-            current_size = num_selected;
-            row_rank_selected = num_selected;
-            current_row_indices = (slong*) flint_malloc(current_size * sizeof(slong));
-            memcpy(current_row_indices, selected_rows, current_size * sizeof(slong));
-            
-            //printf("Selected %ld rows\n", current_size);
-            
-            // New addition: if too many rows selected, directly use transpose method for column selection
-            if (current_size > g_matrix_transpose_threshold) {
-                printf("Large matrix detected (%ld rows), using transpose method for column selection...\n", current_size);
-                
-                // Build transpose matrix of selected rows
-                field_elem_u *transposed_mat = (field_elem_u*) flint_malloc(ncols * current_size * sizeof(field_elem_u));
-                void *ctx_ptr = (unified_ctx.field_id == FIELD_ID_NMOD) ? 
-                               (void*)&unified_ctx.ctx.nmod_ctx : 
-                               (void*)unified_ctx.ctx.fq_ctx;
-                
-                // Initialize transpose matrix elements
-                for (slong i = 0; i < ncols * current_size; i++) {
-                    field_init_elem(&transposed_mat[i], unified_ctx.field_id, ctx_ptr);
+    field_ctx_t selection_ctx;
+    fq_nmod_ctx_t extension_eval_ctx;
+    if (use_extension_specialization) {
+        fmpz_t selection_prime;
+        fmpz_init_set_ui(selection_prime, fq_nmod_ctx_prime(ctx));
+        fq_nmod_ctx_init(extension_eval_ctx, selection_prime, 2, "u");
+        fmpz_clear(selection_prime);
+        field_ctx_init(&selection_ctx, extension_eval_ctx);
+    } else {
+        field_ctx_init(&selection_ctx, ctx);
+    }
+
+    void *ctx_ptr = (selection_ctx.field_id == FIELD_ID_NMOD) ?
+                   (void*)&selection_ctx.ctx.nmod_ctx :
+                   (void*)selection_ctx.ctx.fq_ctx;
+
+    slong accepted_size = 0;
+    slong *accepted_rows = NULL;
+    slong *accepted_cols = NULL;
+    slong accepted_score = -1;
+    int selection_stable = 0;
+
+    for (slong selection_attempt = 0;
+         selection_attempt < MAX_SELECTION_ATTEMPTS && !selection_stable;
+         selection_attempt++) {
+        fq_nmod_t *param_vals = NULL;
+        if (use_extension_specialization) {
+            param_vals = (fq_nmod_t*) flint_malloc(npars * sizeof(fq_nmod_t));
+            init_extension_evaluation_parameters(param_vals, npars,
+                                                 extension_eval_ctx,
+                                                 selection_attempt);
+        } else {
+            param_vals = (fq_nmod_t*) flint_malloc(npars * sizeof(fq_nmod_t));
+            init_evaluation_parameters(param_vals, npars, ctx, selection_attempt);
+        }
+
+        field_elem_u *unified_mat = (field_elem_u*) flint_malloc(nrows * ncols * sizeof(field_elem_u));
+        slong *current_row_indices = NULL;
+        slong *current_col_indices = NULL;
+        slong *prev_row_indices = NULL;
+        slong *prev_col_indices = NULL;
+        slong current_size = 0;
+        slong prev_size = 0;
+        const slong MAX_ITERATIONS = 10;
+        slong iteration = 0;
+        int converged = 0;
+
+        for (slong i = 0; i < nrows; i++) {
+            for (slong j = 0; j < ncols; j++) {
+                slong idx = i * ncols + j;
+                field_init_elem(&unified_mat[idx], selection_ctx.field_id, ctx_ptr);
+
+                if (use_extension_specialization) {
+                    fq_nmod_t val;
+                    fq_nmod_init(val, extension_eval_ctx);
+                    if (full_matrix[i][j] == NULL) {
+                        fq_nmod_zero(val, extension_eval_ctx);
+                    } else {
+                        evaluate_fq_mvpoly_at_extension_params(val, full_matrix[i][j],
+                                                               param_vals, extension_eval_ctx);
+                    }
+                    fq_nmod_to_field_elem(&unified_mat[idx], val, &selection_ctx);
+                    fq_nmod_clear(val, extension_eval_ctx);
+                } else {
+                    fq_nmod_t val;
+                    fq_nmod_init(val, ctx);
+                    if (full_matrix[i][j] == NULL) {
+                        fq_nmod_zero(val, ctx);
+                    } else {
+                        evaluate_fq_mvpoly_at_params(val, full_matrix[i][j], param_vals);
+                    }
+                    fq_nmod_to_field_elem(&unified_mat[idx], val, &selection_ctx);
+                    fq_nmod_clear(val, ctx);
                 }
-                
-                // Fill transpose matrix: original matrix rows become transpose matrix columns
-                for (slong i = 0; i < current_size; i++) {
-                    slong orig_row = current_row_indices[i];
-                    for (slong j = 0; j < ncols; j++) {
-                        slong src_idx = orig_row * ncols + j;
-                        slong dst_idx = j * current_size + i; // Transpose index
-                        field_set_elem(&transposed_mat[dst_idx], &unified_mat[src_idx],
-                                      unified_ctx.field_id, ctx_ptr);
+            }
+        }
+
+        clock_t iter_start = clock();
+
+        while (iteration < MAX_ITERATIONS && !converged) {
+            if (iteration > 0) {
+                prev_row_indices = (slong*) flint_malloc(current_size * sizeof(slong));
+                prev_col_indices = (slong*) flint_malloc(current_size * sizeof(slong));
+                memcpy(prev_row_indices, current_row_indices, current_size * sizeof(slong));
+                memcpy(prev_col_indices, current_col_indices, current_size * sizeof(slong));
+                prev_size = current_size;
+            }
+
+            slong row_rank_selected = 0;
+
+            if (iteration == 0) {
+                slong *selected_rows = NULL;
+                slong num_selected = 0;
+
+                find_pivot_rows_simple(&selected_rows, &num_selected,
+                                      unified_mat, nrows, ncols, &selection_ctx);
+
+                current_size = num_selected;
+                row_rank_selected = num_selected;
+                current_row_indices = (slong*) flint_malloc(current_size * sizeof(slong));
+                memcpy(current_row_indices, selected_rows, current_size * sizeof(slong));
+
+                if (current_size > g_matrix_transpose_threshold) {
+                    field_elem_u *transposed_mat = (field_elem_u*) flint_malloc(ncols * current_size * sizeof(field_elem_u));
+
+                    for (slong i = 0; i < ncols * current_size; i++) {
+                        field_init_elem(&transposed_mat[i], selection_ctx.field_id, ctx_ptr);
+                    }
+
+                    for (slong i = 0; i < current_size; i++) {
+                        slong orig_row = current_row_indices[i];
+                        for (slong j = 0; j < ncols; j++) {
+                            slong src_idx = orig_row * ncols + j;
+                            slong dst_idx = j * current_size + i;
+                            field_set_elem(&transposed_mat[dst_idx], &unified_mat[src_idx],
+                                          selection_ctx.field_id, ctx_ptr);
+                        }
+                    }
+
+                    slong *selected_cols = NULL;
+                    slong num_selected_cols = 0;
+
+                    find_pivot_rows_simple(&selected_cols, &num_selected_cols,
+                                          transposed_mat, ncols, current_size, &selection_ctx);
+
+                    current_col_indices = (slong*) flint_malloc(num_selected_cols * sizeof(slong));
+                    memcpy(current_col_indices, selected_cols, num_selected_cols * sizeof(slong));
+                    current_size = FLINT_MIN(current_size, num_selected_cols);
+
+                    for (slong i = 0; i < ncols * num_selected; i++) {
+                        field_clear_elem(&transposed_mat[i], selection_ctx.field_id, ctx_ptr);
+                    }
+                    flint_free(transposed_mat);
+                    flint_free(selected_rows);
+                    flint_free(selected_cols);
+
+                    converged = 1;
+                    break;
+                } else {
+                    flint_free(selected_rows);
+                }
+            } else {
+                fq_index_degree_pair *row_degrees = (fq_index_degree_pair*) flint_malloc(nrows * sizeof(fq_index_degree_pair));
+
+                for (slong i = 0; i < nrows; i++) {
+                    row_degrees[i].index = i;
+                    row_degrees[i].degree = compute_fq_selected_cols_row_max_total_degree(
+                        full_matrix, i, current_col_indices, current_size, npars);
+                }
+
+                qsort(row_degrees, nrows, sizeof(fq_index_degree_pair), compare_fq_degrees);
+
+                field_elem_u *col_submat = (field_elem_u*) flint_malloc(nrows * current_size * sizeof(field_elem_u));
+                slong col_submat_cols = current_size;
+                for (slong i = 0; i < nrows * current_size; i++) {
+                    field_init_elem(&col_submat[i], selection_ctx.field_id, ctx_ptr);
+                }
+
+                for (slong i = 0; i < nrows; i++) {
+                    for (slong j = 0; j < current_size; j++) {
+                        slong src_idx = i * ncols + current_col_indices[j];
+                        slong dst_idx = i * current_size + j;
+                        field_set_elem(&col_submat[dst_idx], &unified_mat[src_idx],
+                                      selection_ctx.field_id, ctx_ptr);
                     }
                 }
-                
-                // Find pivot rows for transpose matrix (i.e., pivot columns of original matrix)
-                slong *selected_cols = NULL;
-                slong num_selected_cols = 0;
-                
-                find_pivot_rows_simple(&selected_cols, &num_selected_cols, 
-                                      transposed_mat, ncols, current_size, &unified_ctx);
-                
-                // Set column indices
-                current_col_indices = (slong*) flint_malloc(num_selected_cols * sizeof(slong));
-                memcpy(current_col_indices, selected_cols, num_selected_cols * sizeof(slong));
-                
-                // Update matrix size to smaller dimension
-                current_size = FLINT_MIN(current_size, num_selected_cols);
-                
-                //printf("Selected %ld columns via transpose method\n", num_selected_cols);
-                //printf("Final submatrix size: %ld x %ld\n", current_size, current_size);
-                
-                // Clean up transpose matrix
-                for (slong i = 0; i < ncols * current_size; i++) {
-                    field_clear_elem(&transposed_mat[i], unified_ctx.field_id, ctx_ptr);
+
+                unified_row_basis_tracker_t row_tracker;
+                unified_row_basis_tracker_init(&row_tracker, current_size, current_size, &selection_ctx);
+
+                for (slong i = 0; i < nrows && row_tracker.current_rank < current_size; i++) {
+                    slong row_idx = row_degrees[i].index;
+                    unified_try_add_row_to_basis(&row_tracker, col_submat, row_idx, current_size);
                 }
-                flint_free(transposed_mat);
-                flint_free(selected_rows);
-                flint_free(selected_cols);
-                
-                // Directly exit iteration loop, avoid further optimization steps
-                converged = 1;
-                //printf("Large matrix optimization completed, skipping further iterations.\n");
-                break;
-            } else {
-                // Normal case: free temporary arrays, continue iteration process
-                flint_free(selected_rows);
-            }
-        } else {
-            // Subsequent iterations: re-select rows based on current columns
-            //printf("Re-selecting rows based on current columns...\n");
-            
-            // Calculate degrees of all rows based on currently selected columns
-            fq_index_degree_pair *row_degrees = (fq_index_degree_pair*) flint_malloc(nrows * sizeof(fq_index_degree_pair));
-            
-            for (slong i = 0; i < nrows; i++) {
-                row_degrees[i].index = i;
-                row_degrees[i].degree = compute_fq_selected_cols_row_max_total_degree(
-                    full_matrix, i, current_col_indices, current_size, npars);
-            }
-            
-            qsort(row_degrees, nrows, sizeof(fq_index_degree_pair), compare_fq_degrees);
-            
-            // Build transpose submatrix of current columns for row selection
-            field_elem_u *col_submat = (field_elem_u*) flint_malloc(nrows * current_size * sizeof(field_elem_u));
-            for (slong i = 0; i < nrows * current_size; i++) {
-                field_init_elem(&col_submat[i], unified_ctx.field_id, ctx_ptr);
-            }
-            
-            for (slong i = 0; i < nrows; i++) {
-                for (slong j = 0; j < current_size; j++) {
-                    slong src_idx = i * ncols + current_col_indices[j];
-                    slong dst_idx = i * current_size + j;
-                    field_set_elem(&col_submat[dst_idx], &unified_mat[src_idx],
-                                  unified_ctx.field_id, ctx_ptr);
+
+                flint_free(current_row_indices);
+                current_row_indices = (slong*) flint_malloc(row_tracker.current_rank * sizeof(slong));
+                memcpy(current_row_indices, row_tracker.selected_indices, row_tracker.current_rank * sizeof(slong));
+                row_rank_selected = row_tracker.current_rank;
+                current_size = row_tracker.current_rank;
+
+                for (slong i = 0; i < nrows * col_submat_cols; i++) {
+                    field_clear_elem(&col_submat[i], selection_ctx.field_id, ctx_ptr);
                 }
+                flint_free(col_submat);
+                unified_row_basis_tracker_clear(&row_tracker);
+                flint_free(row_degrees);
             }
-            
-            // Select rows
-            unified_row_basis_tracker_t row_tracker;
-            unified_row_basis_tracker_init(&row_tracker, current_size, current_size, &unified_ctx);
-            
-            for (slong i = 0; i < nrows && row_tracker.current_rank < current_size; i++) {
-                slong row_idx = row_degrees[i].index;
-                unified_try_add_row_to_basis(&row_tracker, col_submat, row_idx, current_size);
-            }
-            
-            // Update row indices
-            flint_free(current_row_indices);
-            current_row_indices = (slong*) flint_malloc(row_tracker.current_rank * sizeof(slong));
-            memcpy(current_row_indices, row_tracker.selected_indices, row_tracker.current_rank * sizeof(slong));
-            row_rank_selected = row_tracker.current_rank;
-            current_size = row_tracker.current_rank;
-            
-            // Cleanup
-            for (slong i = 0; i < nrows * current_size; i++) {
-                field_clear_elem(&col_submat[i], unified_ctx.field_id, ctx_ptr);
-            }
-            flint_free(col_submat);
-            unified_row_basis_tracker_clear(&row_tracker);
-            flint_free(row_degrees);
-            
-            //printf("Selected %ld rows\n", current_size);
-        }
-        
-        // Select columns based on current rows
-        //printf("Selecting columns based on current rows...\n");
-        
-        // Calculate column degrees based on selected rows
-        fq_index_degree_pair *col_degrees = (fq_index_degree_pair*) flint_malloc(ncols * sizeof(fq_index_degree_pair));
-        
-        for (slong j = 0; j < ncols; j++) {
-            col_degrees[j].index = j;
-            col_degrees[j].degree = compute_fq_selected_rows_col_max_total_degree(
-                full_matrix, current_row_indices, current_size, j, npars);
-        }
-        
-        qsort(col_degrees, ncols, sizeof(fq_index_degree_pair), compare_fq_degrees);
-        
-        // Build submatrix of selected rows and transpose
-        field_elem_u *transposed = (field_elem_u*) flint_malloc(ncols * current_size * sizeof(field_elem_u));
-        for (slong i = 0; i < ncols * current_size; i++) {
-            field_init_elem(&transposed[i], unified_ctx.field_id, ctx_ptr);
-        }
-        
-        for (slong i = 0; i < current_size; i++) {
+
+            fq_index_degree_pair *col_degrees = (fq_index_degree_pair*) flint_malloc(ncols * sizeof(fq_index_degree_pair));
+
             for (slong j = 0; j < ncols; j++) {
-                slong src_idx = current_row_indices[i] * ncols + j;
-                slong dst_idx = j * current_size + i;
-                field_set_elem(&transposed[dst_idx], &unified_mat[src_idx],
-                              unified_ctx.field_id, ctx_ptr);
+                col_degrees[j].index = j;
+                col_degrees[j].degree = compute_fq_selected_rows_col_max_total_degree(
+                    full_matrix, current_row_indices, current_size, j, npars);
             }
+
+            qsort(col_degrees, ncols, sizeof(fq_index_degree_pair), compare_fq_degrees);
+
+            field_elem_u *transposed = (field_elem_u*) flint_malloc(ncols * current_size * sizeof(field_elem_u));
+            slong transposed_rows = current_size;
+            for (slong i = 0; i < ncols * current_size; i++) {
+                field_init_elem(&transposed[i], selection_ctx.field_id, ctx_ptr);
+            }
+
+            for (slong i = 0; i < current_size; i++) {
+                for (slong j = 0; j < ncols; j++) {
+                    slong src_idx = current_row_indices[i] * ncols + j;
+                    slong dst_idx = j * current_size + i;
+                    field_set_elem(&transposed[dst_idx], &unified_mat[src_idx],
+                                  selection_ctx.field_id, ctx_ptr);
+                }
+            }
+
+            unified_row_basis_tracker_t col_tracker;
+            unified_row_basis_tracker_init(&col_tracker, ncols, current_size, &selection_ctx);
+
+            for (slong j = 0; j < ncols && col_tracker.current_rank < current_size; j++) {
+                slong col_idx = col_degrees[j].index;
+                unified_try_add_row_to_basis(&col_tracker, transposed, col_idx, current_size);
+            }
+
+            slong col_rank_selected = col_tracker.current_rank;
+
+            if (iteration == 0) {
+                current_col_indices = (slong*) flint_malloc(col_tracker.current_rank * sizeof(slong));
+            } else {
+                flint_free(current_col_indices);
+                current_col_indices = (slong*) flint_malloc(col_tracker.current_rank * sizeof(slong));
+            }
+            memcpy(current_col_indices, col_tracker.selected_indices, col_tracker.current_rank * sizeof(slong));
+            current_size = FLINT_MIN(current_size, col_tracker.current_rank);
+
+            for (slong i = 0; i < ncols * transposed_rows; i++) {
+                field_clear_elem(&transposed[i], selection_ctx.field_id, ctx_ptr);
+            }
+            flint_free(transposed);
+            unified_row_basis_tracker_clear(&col_tracker);
+            flint_free(col_degrees);
+
+            if (iteration > 0) {
+                if (current_size == prev_size &&
+                    current_size == FLINT_MIN(col_rank_selected, row_rank_selected) &&
+                    indices_equal(current_row_indices, prev_row_indices, current_size) &&
+                    indices_equal(current_col_indices, prev_col_indices, current_size)) {
+                    converged = 1;
+                }
+
+                flint_free(prev_row_indices);
+                flint_free(prev_col_indices);
+                prev_row_indices = NULL;
+                prev_col_indices = NULL;
+            }
+
+            iteration++;
         }
-        
-        // Select column basis
-        unified_row_basis_tracker_t col_tracker;
-        unified_row_basis_tracker_init(&col_tracker, ncols, current_size, &unified_ctx);
-        
-        for (slong j = 0; j < ncols && col_tracker.current_rank < current_size; j++) {
-            slong col_idx = col_degrees[j].index;
-            unified_try_add_row_to_basis(&col_tracker, transposed, col_idx, current_size);
-        }
-        
-        slong col_rank_selected = col_tracker.current_rank;
-        
-        // Update column indices
-        if (iteration == 0) {
-            current_col_indices = (slong*) flint_malloc(col_tracker.current_rank * sizeof(slong));
+
+        clock_t iter_end = clock();
+        (void) iter_start;
+        (void) iter_end;
+
+        slong final_rank;
+        slong verify_rank;
+        if (use_extension_specialization) {
+            final_rank = evaluate_selected_submatrix_rank_extension(
+                full_matrix, current_row_indices, current_col_indices, current_size,
+                param_vals, extension_eval_ctx);
+
+            fq_nmod_t *verify_vals = (fq_nmod_t*) flint_malloc(npars * sizeof(fq_nmod_t));
+            init_extension_evaluation_parameters(verify_vals, npars,
+                                                 extension_eval_ctx,
+                                                 selection_attempt + 1);
+            verify_rank = evaluate_selected_submatrix_rank_extension(
+                full_matrix, current_row_indices, current_col_indices, current_size,
+                verify_vals, extension_eval_ctx);
+            clear_evaluation_parameters(verify_vals, npars, extension_eval_ctx);
         } else {
-            flint_free(current_col_indices);
-            current_col_indices = (slong*) flint_malloc(col_tracker.current_rank * sizeof(slong));
+            final_rank = evaluate_selected_submatrix_rank(
+                full_matrix, current_row_indices, current_col_indices, current_size,
+                param_vals, ctx);
+
+            fq_nmod_t *verify_vals = (fq_nmod_t*) flint_malloc(npars * sizeof(fq_nmod_t));
+            init_evaluation_parameters(verify_vals, npars, ctx, selection_attempt + 1);
+            verify_rank = evaluate_selected_submatrix_rank(
+                full_matrix, current_row_indices, current_col_indices, current_size,
+                verify_vals, ctx);
+            clear_evaluation_parameters(verify_vals, npars, ctx);
         }
-        memcpy(current_col_indices, col_tracker.selected_indices, col_tracker.current_rank * sizeof(slong));
-        current_size = FLINT_MIN(current_size, col_tracker.current_rank);
-        
-        //printf("Selected %ld columns\n", col_tracker.current_rank);
-        
-        // Cleanup
-        for (slong i = 0; i < ncols * current_size; i++) {
-            field_clear_elem(&transposed[i], unified_ctx.field_id, ctx_ptr);
+
+        slong candidate_score = 0;
+        if (final_rank == current_size) candidate_score++;
+        if (verify_rank == current_size) candidate_score++;
+
+        if (current_size > accepted_size ||
+            (current_size == accepted_size && candidate_score > accepted_score)) {
+            if (accepted_rows) flint_free(accepted_rows);
+            if (accepted_cols) flint_free(accepted_cols);
+            accepted_rows = (slong*) flint_malloc(current_size * sizeof(slong));
+            accepted_cols = (slong*) flint_malloc(current_size * sizeof(slong));
+            memcpy(accepted_rows, current_row_indices, current_size * sizeof(slong));
+            memcpy(accepted_cols, current_col_indices, current_size * sizeof(slong));
+            accepted_size = current_size;
+            accepted_score = candidate_score;
         }
-        flint_free(transposed);
-        unified_row_basis_tracker_clear(&col_tracker);
-        flint_free(col_degrees);
-        
-        // Check convergence
-        if (iteration > 0) {
-            if (current_size == prev_size &&
-                current_size == FLINT_MIN(col_rank_selected, row_rank_selected) &&
-                indices_equal(current_row_indices, prev_row_indices, current_size) &&
-                indices_equal(current_col_indices, prev_col_indices, current_size)) {
-                converged = 1;
-                //printf("Converged after %d iteration!\n", iteration);
-            }
-            
-            flint_free(prev_row_indices);
-            flint_free(prev_col_indices);
+
+        if (candidate_score == 2) {
+            selection_stable = 1;
+        } else {
+            printf("Submatrix verification failed; retrying with a new specialization.\n");
         }
-        
-        iteration++;
-    }
-    
-    clock_t iter_end = clock();
-    printf("Iterative optimization completed in %ld iterations (%.3f seconds)\n", 
-           iteration, (double)(iter_end - iter_start) / CLOCKS_PER_SEC);
-    
-    // Set output
-    *row_indices_out = (slong*) flint_malloc(current_size * sizeof(slong));
-    *col_indices_out = (slong*) flint_malloc(current_size * sizeof(slong));
-    
-    memcpy(*row_indices_out, current_row_indices, current_size * sizeof(slong));
-    memcpy(*col_indices_out, current_col_indices, current_size * sizeof(slong));
-    
-    *num_rows = current_size;
-    *num_cols = current_size;
-    
-    // Verify results
-    printf("Verifying final %ld x %ld submatrix...\n", current_size, current_size);
-    fq_nmod_mat_t final_mat;
-    fq_nmod_mat_init(final_mat, current_size, current_size, ctx);
-    
-    for (slong i = 0; i < current_size; i++) {
-        for (slong j = 0; j < current_size; j++) {
-            fq_nmod_t temp;
-            fq_nmod_init(temp, ctx);
-            slong idx = (*row_indices_out)[i] * ncols + (*col_indices_out)[j];
-            field_elem_to_fq_nmod(temp, &unified_mat[idx], &unified_ctx);
-            fq_nmod_set(fq_nmod_mat_entry(final_mat, i, j), temp, ctx);
-            fq_nmod_clear(temp, ctx);
+
+        if (prev_row_indices) flint_free(prev_row_indices);
+        if (prev_col_indices) flint_free(prev_col_indices);
+        flint_free(current_row_indices);
+        flint_free(current_col_indices);
+        if (param_vals) {
+            clear_evaluation_parameters(param_vals, npars,
+                                       use_extension_specialization ? extension_eval_ctx : ctx);
         }
-    }
-    
-    slong final_rank = fq_nmod_mat_rank(final_mat, ctx);
-    printf("Final rank: %ld/%ld %s\n", final_rank, current_size, 
-           (final_rank == current_size) ? "✓" : "✗");
-    
-    // Calculate and display maximum degree of final submatrix
-    slong max_degree = -1;
-    for (slong i = 0; i < current_size; i++) {
-        for (slong j = 0; j < current_size; j++) {
-            slong deg = compute_fq_polynomial_total_degree(
-                full_matrix[(*row_indices_out)[i]][(*col_indices_out)[j]], npars);
-            if (deg > max_degree) {
-                max_degree = deg;
-            }
+        for (slong i = 0; i < nrows * ncols; i++) {
+            field_clear_elem(&unified_mat[i], selection_ctx.field_id, ctx_ptr);
         }
+        flint_free(unified_mat);
     }
-    printf("Maximum total degree in final submatrix: %ld\n", max_degree);
-    
-    // Print selected indices
-    printf("Selected rows: ");
-    for (slong i = 0; i < current_size; i++) {
-        printf("%ld ", (*row_indices_out)[i]);
+
+    if (!accepted_rows || !accepted_cols) {
+        *row_indices_out = NULL;
+        *col_indices_out = NULL;
+        *num_rows = 0;
+        *num_cols = 0;
+    } else {
+        if (!selection_stable) {
+            printf("Warning: using best available submatrix after %ld attempts.\n",
+                   MAX_SELECTION_ATTEMPTS);
+        }
+        *row_indices_out = accepted_rows;
+        *col_indices_out = accepted_cols;
+        *num_rows = accepted_size;
+        *num_cols = accepted_size;
     }
-    printf("\nSelected cols: ");
-    for (slong i = 0; i < current_size; i++) {
-        printf("%ld ", (*col_indices_out)[i]);
+
+    field_ctx_clear(&selection_ctx);
+    if (use_extension_specialization) {
+        fq_nmod_ctx_clear(extension_eval_ctx);
     }
-    printf("\n");
-    
-    // Cleanup
-    flint_free(current_row_indices);
-    flint_free(current_col_indices);
-    
-    for (slong i = 0; i < npars; i++) {
-        fq_nmod_clear(param_vals[i], ctx);
-    }
-    flint_free(param_vals);
-    
-    // Clean up unified format matrix
-    for (slong i = 0; i < nrows * ncols; i++) {
-        field_clear_elem(&unified_mat[i], unified_ctx.field_id, ctx_ptr);
-    }
-    flint_free(unified_mat);
-    
-    fq_nmod_mat_clear(final_mat, ctx);
 }
 
 // Optimized monomial collection function - replaces the original O(n²) loop
@@ -1401,7 +1516,6 @@ void collect_unique_monomials(
     *dual_monoms_out = dual_monoms;
     *ndual_monoms_out = ndual_monoms;
     
-    printf("Dixon Matrix size: %ld x %ld \n", nx_monoms, ndual_monoms);
 }
 
 // Allocate single element on demand
@@ -1419,8 +1533,6 @@ void fill_coefficient_matrix_optimized(fq_mvpoly_t ***full_matrix,
                                       const fq_mvpoly_t *dixon_poly,
                                       const slong *d0, const slong *d1, 
                                       slong nvars, slong npars) {
-    
-    printf("Filling coefficient matrix with lazy allocation...\n");
     
     // Find corresponding matrix positions for each Dixon polynomial term
     for (slong t = 0; t < dixon_poly->nterms; t++) {
@@ -1474,7 +1586,7 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                                               slong *matrix_size,
                                               const fq_mvpoly_t *dixon_poly,
                                               slong nvars, slong npars) {
-    printf("Extracting coefficient matrix from Dixon polynomial\n");
+    printf("\nStep 2: Construct Dixon matrix\n");
     
     slong *d0 = (slong*) flint_calloc(nvars, sizeof(slong));
     slong *d1 = (slong*) flint_calloc(nvars, sizeof(slong));
@@ -1499,12 +1611,6 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         d1[i]++;
     }
     
-    printf("Degree bounds - x vars: ");
-    for (slong i = 0; i < nvars; i++) printf("%ld ", d0[i]);
-    printf("\nDegree bounds - ~x vars: ");
-    for (slong i = 0; i < nvars; i++) printf("%ld ", d1[i]);
-    printf("\n");
-    
     slong expected_rows = 1;
     slong expected_cols = 1;
     for (slong i = 0; i < nvars; i++) {
@@ -1519,6 +1625,8 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
     collect_unique_monomials(&x_monoms, &nx_monoms,
                         &dual_monoms, &ndual_monoms,
                         dixon_poly, d0, d1, nvars);
+
+    printf("Dixon matrix size: %ld x %ld\n", nx_monoms, ndual_monoms);
     
     if (nx_monoms == 0 || ndual_monoms == 0) {
         printf("Warning: Empty coefficient matrix\n");
@@ -1575,9 +1683,6 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         slong small_size = 1;
         if (nx_monoms < small_size && ndual_monoms < small_size && 
             expected_rows < small_size && expected_cols < small_size) {
-            printf("Small matrix detected (%ld x %ld), using original matrix directly\n", 
-                   nx_monoms, ndual_monoms);
-            
             slong min_size = FLINT_MIN(nx_monoms, ndual_monoms);
             row_idx_array = (slong*) flint_malloc(min_size * sizeof(slong));
             col_idx_array = (slong*) flint_malloc(min_size * sizeof(slong));
@@ -1597,6 +1702,7 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
     }
 
     slong submat_rank = FLINT_MIN(num_rows, num_cols);
+    printf("\nStep 3: Extract maximal-rank submatrix\n");
     
     if (submat_rank == 0) {
         printf("Warning: Matrix has rank 0\n");
@@ -1626,7 +1732,7 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         return;
     }
 
-    printf("Extracted submatrix of size %ld x %ld\n", submat_rank, submat_rank);
+    printf("Submatrix size: %ld x %ld\n", submat_rank, submat_rank);
     
     *coeff_matrix = (fq_mvpoly_t**) flint_malloc(submat_rank * sizeof(fq_mvpoly_t*));
     for (slong i = 0; i < submat_rank; i++) {
@@ -1673,13 +1779,11 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
 // Compute determinant of cancellation matrix
 void compute_fq_cancel_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **modified_M_mvpoly,
                                  slong nvars, slong npars, det_method_t method) {
-    printf("Computing cancellation matrix determinant using recursive expansion\n");
-    
     clock_t start = clock();
     compute_fq_det_recursive(result, modified_M_mvpoly, nvars + 1);
     clock_t end = clock();
-    
-    printf("End (%.3f seconds)\n", (double)(end - start) / CLOCKS_PER_SEC);
+    (void) start;
+    (void) end;
 }
 
 // ============ Get size of Dixon matrix ============
@@ -1838,36 +1942,31 @@ slong dixon_matrix_size(slong nvars, slong degree, ulong prime, slong field_degr
 // ============ Main Dixon resultant function ============
 void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys, 
                        slong nvars, slong npars) {
-
-    printf("Dixon Resultant Computation over Finite Extension Fields\n");
-    printf("========================================================\n");
-    printf("\n=== Dixon Resultant over F_{p^d} ===\n");
     cleanup_unified_workspace();
-    // Step 1: Build cancellation matrix
-    printf("\nStep 1: Build Cancellation Matrix\n");
+    printf("\nStep 1: Build Dixon polynomial\n");
+    clock_t step1_start = clock();
     fq_mvpoly_t **M_mvpoly;
+    printf("Build Cancellation Matrix\n");
     build_fq_cancellation_matrix_mvpoly(&M_mvpoly, polys, nvars, npars);
     
     // Display analysis of original matrix
     //analyze_fq_matrix_mvpoly(M_mvpoly, nvars + 1, nvars + 1, "Original Cancellation");
     
-    // Step 2: Perform row operations
-    printf("\nStep 2: Perform Matrix Row Operations\n");
     fq_mvpoly_t **modified_M_mvpoly;
+    printf("Perform Matrix Row Operations\n");
     perform_fq_matrix_row_operations_mvpoly(&modified_M_mvpoly, &M_mvpoly, nvars, npars);
     
-    // Step 3: Compute determinant of modified matrix
-    printf("\nStep 3: Compute determinant of modified matrix\n");
     fq_mvpoly_t d_poly;
+    printf("Computing cancellation matrix determinant using recursive expansion...\n");
     compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, DET_METHOD_RECURSIVE);
     
-    printf("Dixon polynomial has %ld terms\n", d_poly.nterms);
-    
     if (d_poly.nterms <= 100) {
+        printf("Dixon polynomial: %ld terms\n", d_poly.nterms);
         fq_mvpoly_print_expanded(&d_poly, "Dixon", 1);
     } else {
-        printf("Dixon polynomial too large to display (%ld terms)\n", d_poly.nterms);
+        printf("Dixon polynomial: %ld terms (not shown)\n", d_poly.nterms);
     }
+    printf("Time: %.3f seconds\n", (double)(clock() - step1_start) / CLOCKS_PER_SEC);
 
     for (slong i = 0; i <= nvars; i++) {
         for (slong j = 0; j <= nvars; j++) {
@@ -1880,9 +1979,6 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     flint_free(M_mvpoly);
     flint_free(modified_M_mvpoly);
     
-    // Step 4: Extract coefficient matrix
-    printf("\nStep 4: Extract coefficient matrix\n");
-    
     fq_mvpoly_t **coeff_matrix;
     slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
@@ -1892,10 +1988,10 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                             &matrix_size, &d_poly, nvars, npars);
     
     if (matrix_size > 0) {
-        printf("\nStep 5: Compute determinant of coefficient matrix (fq_nmod)\n");
+        printf("\nStep 4: Compute resultant\n");
         
         slong res_deg_bound = compute_fq_dixon_resultant_degree_bound(polys, nvars+1, nvars, npars);
-        printf("Resultant degree bound: %ld\n", res_deg_bound);
+        printf("Degree bound: %ld\n", res_deg_bound);
         
         ulong field_size = 1;
         for (slong i = 0; i < fq_nmod_ctx_degree(polys[0].ctx); i++) {
@@ -1918,29 +2014,14 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
             coeff_method = dixon_global_method;
             printf("Method overridden by global variable: %d\n", dixon_global_method);
         }
-        printf("Using coefficient matrix determinant method %d:", coeff_method);
         
         compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
                                          npars, polys[0].ctx, coeff_method, res_deg_bound);
         
-        printf("Resultant polynomial has %ld terms\n", result->nterms);
         if (result->nterms <= 100) {
             fq_mvpoly_print(result, "Final Resultant");
         } else {
             printf("Final resultant too large to display (%ld terms)\n", result->nterms);
-            
-            // Display degree information
-            slong max_par_deg = 0;
-            for (slong i = 0; i < result->nterms; i++) {
-                if (result->terms[i].par_exp && result->npars > 0) {
-                    for (slong j = 0; j < result->npars; j++) {
-                        if (result->terms[i].par_exp[j] > max_par_deg) {
-                            max_par_deg = result->terms[i].par_exp[j];
-                        }
-                    }
-                }
-            }
-            printf("Maximum parameter degree in resultant: %ld\n", max_par_deg);
         }
         fq_mvpoly_make_monic(result);
         // Cleanup coefficient matrix
@@ -1961,7 +2042,7 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     flint_free(col_indices);
     
     fq_mvpoly_clear(&d_poly);
-    
+
     printf("\n=== Dixon Resultant Computation Complete ===\n");
 }
 
@@ -1969,33 +2050,29 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                   slong nvars, slong npars,
                                   char **var_names, char **par_names, 
                                   const char *gen_name) {
-
-    printf("Dixon Resultant Computation over Finite Extension Fields\n");
-    printf("========================================================\n");
-    printf("\n=== Dixon Resultant over F_{p^d} ===\n");
     cleanup_unified_workspace();
     
-    printf("\nStep 1: Build Cancellation Matrix\n");
+    printf("\nStep 1: Build Dixon polynomial\n");
+    clock_t step1_start = clock();
     fq_mvpoly_t **M_mvpoly;
+    printf("Build Cancellation Matrix\n");
     build_fq_cancellation_matrix_mvpoly(&M_mvpoly, polys, nvars, npars);
     
-    printf("\nStep 2: Perform Matrix Row Operations\n");
     fq_mvpoly_t **modified_M_mvpoly;
+    printf("Perform Matrix Row Operations\n");
     perform_fq_matrix_row_operations_mvpoly(&modified_M_mvpoly, &M_mvpoly, nvars, npars);
 
-    printf("\nStep 3: Compute determinant of modified matrix\n");
     fq_mvpoly_t d_poly;
+    printf("Computing cancellation matrix determinant using recursive expansion...\n");
     compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, DET_METHOD_RECURSIVE);
     
-    printf("Dixon polynomial has %ld terms\n", d_poly.nterms);
-    
     if (d_poly.nterms <= 100) {
+        printf("Dixon polynomial: %ld terms\n", d_poly.nterms);
         fq_mvpoly_print_with_names(&d_poly, "Dixon", var_names, par_names, gen_name, 1);
     } else {
-        printf("Dixon polynomial too large to display (%ld terms)\n", d_poly.nterms);
+        printf("Dixon polynomial: %ld terms (not shown)\n", d_poly.nterms);
     }
-    
-    printf("\nStep 4: Extract coefficient matrix\n");
+    printf("Time: %.3f seconds\n", (double)(clock() - step1_start) / CLOCKS_PER_SEC);
     
     fq_mvpoly_t **coeff_matrix;
     slong max_indices = d_poly.nterms > 0 ? d_poly.nterms : 1;
@@ -2007,10 +2084,10 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                             &matrix_size, &d_poly, nvars, npars);
     
     if (matrix_size > 0) {
-        printf("\nStep 5: Compute determinant of coefficient matrix (fq_nmod)\n");
+        printf("\nStep 4: Compute resultant\n");
         
         slong res_deg_bound = compute_fq_dixon_resultant_degree_bound(polys, nvars+1, nvars, npars);
-        printf("Resultant degree bound: %ld\n", res_deg_bound);
+        printf("Degree bound: %ld\n", res_deg_bound);
         
         det_method_t coeff_method;
         #ifdef _OPENMP
@@ -2027,42 +2104,14 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
             coeff_method = dixon_global_method;
             printf("Method overridden by global variable: %d\n", dixon_global_method);
         }
-        printf("Using coefficient matrix determinant method %d:", coeff_method);
         
         compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
                                          npars, polys[0].ctx, coeff_method, res_deg_bound);
         
-        printf("Resultant polynomial has %ld terms\n", result->nterms);
         if (result->nterms <= 100) {
             fq_mvpoly_print_with_names(result, "Final Resultant", NULL, par_names, gen_name, 0);
         } else {
             printf("Final resultant too large to display (%ld terms)\n", result->nterms);
-            
-            slong max_par_deg = 0;
-            for (slong i = 0; i < result->nterms; i++) {
-                if (result->terms[i].par_exp && result->npars > 0) {
-                    for (slong j = 0; j < result->npars; j++) {
-                        if (result->terms[i].par_exp[j] > max_par_deg) {
-                            max_par_deg = result->terms[i].par_exp[j];
-                        }
-                    }
-                }
-            }
-            printf("Maximum parameter degree in resultant: %ld\n", max_par_deg);
-
-            max_par_deg = 0;
-            for (slong i = 0; i < result->nterms; i++) {
-                slong term_total_deg = 0;
-                if (result->terms[i].par_exp && result->npars > 0) {
-                    for (slong j = 0; j < result->npars; j++) {
-                        term_total_deg += result->terms[i].par_exp[j];
-                    }
-                }
-                if (term_total_deg > max_par_deg) {
-                    max_par_deg = term_total_deg;
-                }
-            }
-            printf("Maximum total degree in resultant: %ld\n", max_par_deg);
         }
         fq_mvpoly_make_monic(result);
         
@@ -2093,7 +2142,7 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     }
     flint_free(M_mvpoly);
     flint_free(modified_M_mvpoly);
-    
+
     printf("\n=== Dixon Resultant Computation Complete ===\n");
 }
 

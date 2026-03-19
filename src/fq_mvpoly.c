@@ -1430,7 +1430,6 @@ void fq_mvpoly_make_monic(fq_mvpoly_t *poly) {
     
     // Multiply entire polynomial by inverse of leading coefficient
     fq_mvpoly_t normalized;
-    printf("Making monic...");
     fq_mvpoly_scalar_mul(&normalized, poly, inv_leading);
     
     // Replace original polynomial with normalized version

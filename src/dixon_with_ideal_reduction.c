@@ -136,7 +136,7 @@ static void parse_equation_generator(equation_info_t *eq_info,
     split_equation_string(equation_str, &lhs_str, &rhs_str);
     
     /* Set parser state */
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(nvars * sizeof(char*));
     for (slong i = 0; i < nvars; i++) {
         state.var_names[i] = var_names_hint[i] ? strdup(var_names_hint[i]) : NULL;
@@ -1982,14 +1982,6 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
                                 const char **elim_vars, slong num_elim_vars,
                                 const fq_nmod_ctx_t ctx,
                                 unified_triangular_ideal_t *ideal) {
-    printf("\n=== Dixon with Ideal Reduction ===\n");
-    printf("Eliminating variables: ");
-    for (slong i = 0; i < num_elim_vars; i++) {
-        if (i > 0) printf(", ");
-        printf("%s", elim_vars[i]);
-    }
-    printf("\n");
-    
     /* Extract ALL variables from the ideal instead of hardcoding */
     slong total_system_vars = 0;
     char **all_system_vars = NULL;
@@ -2053,7 +2045,7 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     }
     
     /* Parse polynomials */
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(num_elim_vars * sizeof(char*));
     for (slong i = 0; i < num_elim_vars; i++) {
         state.var_names[i] = strdup(elim_vars[i]);
@@ -2162,23 +2154,29 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     }
     
     /* Build cancellation matrix */
-    printf("\nStep 1: Build Cancellation Matrix\n");
+    printf("\nStep 1: Build Dixon polynomial\n");
+    clock_t step1_start = clock();
     fq_mvpoly_t **M_mvpoly;
+    printf("Build Cancellation Matrix\n");
     build_fq_cancellation_matrix_mvpoly(&M_mvpoly, polys, num_elim_vars, state.npars);
     
     /* Perform row operations */
-    printf("\nStep 2: Perform Matrix Row Operations\n");
     fq_mvpoly_t **modified_M_mvpoly;
+    printf("Perform Matrix Row Operations\n");
     perform_fq_matrix_row_operations_mvpoly(&modified_M_mvpoly, &M_mvpoly, num_elim_vars, state.npars);
     
     /* Compute determinant of modified matrix */
-    printf("\nStep 3: Compute determinant of modified matrix\n");
     fq_mvpoly_t d_poly;
+    printf("Computing cancellation matrix determinant using recursive expansion...\n");
     compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, num_elim_vars, state.npars, DET_METHOD_RECURSIVE);
-    printf("Dixon polynomial has %ld terms\n", d_poly.nterms);
+    if (d_poly.nterms <= 100) {
+        printf("Dixon polynomial: %ld terms\n", d_poly.nterms);
+    } else {
+        printf("Dixon polynomial: %ld terms (not shown)\n", d_poly.nterms);
+    }
+    printf("Time: %.3f seconds\n", (double)(clock() - step1_start) / CLOCKS_PER_SEC);
     
     /* Extract coefficient matrix */
-    printf("\nStep 4: Extract coefficient matrix\n");
     fq_mvpoly_t **coeff_matrix = NULL;
     slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
@@ -2190,14 +2188,11 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     /* Compute determinant with ideal reduction */
     fq_mvpoly_t result_poly;
     if (matrix_size > 0) {
-        printf("\nStep 5: Compute determinant of coefficient matrix with ideal reduction\n");
-        printf("Matrix size: %ld x %ld\n", matrix_size, matrix_size);
+        printf("\nStep 4: Compute resultant with ideal reduction\n");
         
         /* Pass parameter names for proper variable mapping during reduction */
         compute_det_with_reduction_from_mvpoly(&result_poly, coeff_matrix, matrix_size, ideal, 
                                              state.par_names);
-        
-        printf("Resultant has %ld terms\n", result_poly.nterms);
         
         /* Cleanup coefficient matrix */
         for (slong i = 0; i < matrix_size; i++) {
@@ -2212,20 +2207,6 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
         printf("Warning: Empty coefficient matrix, resultant is 0\n");
     }
     fq_mvpoly_make_monic(&result_poly);
-
-
-    // Display degree information
-    slong max_par_deg = 0;
-    for (slong i = 0; i < result_poly.nterms; i++) {
-        if (result_poly.terms[i].par_exp && result_poly.npars > 0) {
-            for (slong j = 0; j < result_poly.npars; j++) {
-                if (result_poly.terms[i].par_exp[j] > max_par_deg) {
-                    max_par_deg = result_poly.terms[i].par_exp[j];
-                }
-            }
-        }
-    }
-    printf("Maximum parameter degree in resultant: %ld\n", max_par_deg);
     
     /* Convert result to string */
     find_and_print_roots_of_univariate_resultant(&result_poly, &state);
@@ -2281,9 +2262,9 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     if (state.current.str) {
         free(state.current.str);
     }
-    
+
     printf("\n=== Dixon Resultant Computation Complete ===\n");
-    
+
     return result;
 }
 
@@ -2557,26 +2538,10 @@ char* dixon_with_ideal(const char **poly_strings,
                            const fq_nmod_ctx_t ctx) {
     
     clock_t start_time = clock();
-    printf("\n=== Dixon with Ideal Reduction ===\n");
-    printf("Processing %ld polynomials, eliminating %ld variables\n", num_polys, num_elim_vars);
-    printf("Ideal string: %s\n", ideal_string);
-    
-    /* Print elimination variables */
-    printf("Eliminating variables: ");
-    for (slong i = 0; i < num_elim_vars; i++) {
-        if (i > 0) printf(", ");
-        printf("%s", elim_vars[i]);
-    }
-    printf("\n");
     
     /* Step 1: Split ideal string into individual equations */
     slong num_ideal_equations;
     char **ideal_equations_array = split_string_r(ideal_string, &num_ideal_equations);
-    
-    printf("\nExtracted %ld equations from ideal:\n", num_ideal_equations);
-    for (slong i = 0; i < num_ideal_equations; i++) {
-        printf("  eq%ld: %s\n", i, ideal_equations_array[i]);
-    }
     
     /* Convert to const pointer array */
     const char **ideal_equations = (const char**) malloc(num_ideal_equations * sizeof(char*));
@@ -2589,13 +2554,6 @@ char* dixon_with_ideal(const char **poly_strings,
     char **ideal_vars_auto = extract_all_variables_from_ideal_gens(
         ideal_equations, num_ideal_equations, ctx, &num_ideal_vars);
     
-    printf("\nAuto-extracted %ld variables from ideal: ", num_ideal_vars);
-    for (slong i = 0; i < num_ideal_vars; i++) {
-        if (i > 0) printf(", ");
-        printf("%s", ideal_vars_auto[i]);
-    }
-    printf("\n");
-    
     /* Convert to const pointer array */
     const char **ideal_vars = (const char**) malloc(num_ideal_vars * sizeof(char*));
     for (slong i = 0; i < num_ideal_vars; i++) {
@@ -2607,16 +2565,7 @@ char* dixon_with_ideal(const char **poly_strings,
     construct_triangular_ideal_from_strings(&ideal, ideal_equations, num_ideal_equations,
                                           ideal_vars, num_ideal_vars, ctx);
     
-    printf("\nIdeal construction complete:\n");
-    printf("  Number of generators: %ld\n", ideal.num_gens);
-    for (slong i = 0; i < ideal.num_gens; i++) {
-        printf("  Generator %ld: %s^%ld (index %ld)\n", 
-               i, ideal.var_names[i] ? ideal.var_names[i] : "?", 
-               ideal.leading_degrees[i], ideal.var_indices[i]);
-    }
-    
     /* Step 4: Compute Dixon resultant */
-    printf("\nComputing Dixon resultant with ideal reduction...\n");
     char *result = dixon_with_ideal_reduction(poly_strings, num_polys,
                                             elim_vars, num_elim_vars,
                                             ctx, &ideal);
@@ -2635,8 +2584,6 @@ char* dixon_with_ideal(const char **poly_strings,
     
     /* Cleanup split equations */
     free_split_string_rs(ideal_equations_array, num_ideal_equations);
-    
-    printf("=== Dixon Computation Complete ===\n\n");
     
     clock_t end_time = clock();
     double elapsed = (double)(end_time - start_time) / CLOCKS_PER_SEC;

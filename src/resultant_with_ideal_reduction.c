@@ -204,7 +204,7 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     if (discovery_state.current.str) free(discovery_state.current.str);
     
     // Initialize final parser state with correct variable and parameter setup
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(1 * sizeof(char*));
     state.var_names[0] = strdup(elim_var);
     state.nvars = 1;

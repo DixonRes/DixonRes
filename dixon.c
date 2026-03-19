@@ -22,7 +22,7 @@
 #include "polynomial_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.0.5"
+#define PROGRAM_VERSION "0.0.6"
 
 /* =========================================================================
  * Print usage
@@ -274,49 +274,49 @@ static int parse_field_size(const char *field_str, fmpz_t prime, ulong *power,
     }
 }
 
-static char *generate_output_filename(const char *input_filename)
+static char *generate_tagged_filename(const char *input_filename, const char *tag)
 {
-    if (!input_filename) return NULL;
+    if (!input_filename || !tag) return NULL;
+
     const char *dot = strrchr(input_filename, '.');
+    size_t input_len = strlen(input_filename);
+    size_t tag_len = strlen(tag);
+
     if (dot) {
-        size_t base_len = dot - input_filename;
-        size_t ext_len  = strlen(dot);
-        char  *output   = malloc(base_len + 9 + ext_len + 1);
-        strncpy(output, input_filename, base_len);
-        output[base_len] = '\0';
-        strcat(output, "_solution");
-        strcat(output, dot);
-        return output;
-    } else {
-        size_t len    = strlen(input_filename);
-        char  *output = malloc(len + 9 + 1);
-        strcpy(output, input_filename);
-        strcat(output, "_solution");
+        size_t base_len = (size_t) (dot - input_filename);
+        size_t ext_len = input_len - base_len;
+        char *output = malloc(base_len + tag_len + ext_len + 1);
+        if (!output) return NULL;
+
+        memcpy(output, input_filename, base_len);
+        memcpy(output + base_len, tag, tag_len);
+        memcpy(output + base_len + tag_len, dot, ext_len + 1);
         return output;
     }
+
+    char *output = malloc(input_len + tag_len + 1);
+    if (!output) return NULL;
+
+    memcpy(output, input_filename, input_len);
+    memcpy(output + input_len, tag, tag_len + 1);
+    return output;
 }
 
-/* Generate _comp variant of the output filename */
-static char *generate_comp_filename(const char *input_filename)
+static char *generate_timestamped_filename(const char *prefix)
 {
-    if (!input_filename) return NULL;
-    const char *dot = strrchr(input_filename, '.');
-    if (dot) {
-        size_t base_len = dot - input_filename;
-        size_t ext_len  = strlen(dot);
-        char  *output   = malloc(base_len + 6 + ext_len + 1); /* 6 = "_comp" */
-        strncpy(output, input_filename, base_len);
-        output[base_len] = '\0';
-        strcat(output, "_comp");
-        strcat(output, dot);
-        return output;
+    char format[128];
+    char buffer[128];
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+
+    if (t) {
+        snprintf(format, sizeof(format), "%s_%%Y%%m%%d_%%H%%M%%S.dat", prefix);
+        strftime(buffer, sizeof(buffer), format, t);
     } else {
-        size_t len    = strlen(input_filename);
-        char  *output = malloc(len + 6 + 1);
-        strcpy(output, input_filename);
-        strcat(output, "_comp");
-        return output;
+        snprintf(buffer, sizeof(buffer), "%s.dat", prefix);
     }
+
+    return strdup(buffer);
 }
 
 /* =========================================================================
@@ -699,6 +699,7 @@ static int generate_random_poly_strings(
 
     if (!silent_mode) printf("Generating random polynomial system...\n");
 
+    fflush(stdout);
     int orig_stdout = dup(STDOUT_FILENO);
     int devnull = open("/dev/null", O_WRONLY);
     if (devnull != -1) { dup2(devnull, STDOUT_FILENO); close(devnull); }
@@ -1279,6 +1280,7 @@ static int generate_random_poly_strings_rational(
 
     if (!silent_mode) printf("Generating random polynomial system over Q...\n");
 
+    fflush(stdout);
     for (slong i = 0; i < npolys; i++) {
         char poly_buf[8192];
         int first_term = 1;
@@ -1489,18 +1491,7 @@ int main(int argc, char *argv[])
         deg_str   = effective_argv[1];
         field_str = effective_argv[2];
 
-        char buffer[128];
-        time_t now = time(NULL);
-        struct tm *t = localtime(&now);
-        const char *prefix = comp_mode ? "comp" : (solve_mode ? "solution" : "solution");
-        if (t) strftime(buffer, sizeof(buffer),
-                        comp_mode
-                            ? "comp_%Y%m%d_%H%M%S.dat"
-                            : "solution_%Y%m%d_%H%M%S.dat",
-                        t);
-        else   snprintf(buffer, sizeof(buffer), "%s.dat", prefix);
-        output_filename = strdup(buffer);
-        (void)prefix;   /* suppress unused-variable warning */
+        output_filename = generate_timestamped_filename(comp_mode ? "comp" : "solution");
     /*  --ideal mode */
     } else if (ideal_mode) {
         if (effective_argc == 2) {
@@ -1515,7 +1506,7 @@ int main(int argc, char *argv[])
                 printf("Reading from file (--ideal mode): %s\n", effective_argv[1]);
 
             input_filename  = strdup(effective_argv[1]);
-            output_filename = generate_output_filename(input_filename);
+            output_filename = generate_tagged_filename(input_filename, "_solution");
 
             if (!read_ideal_file(fp, &field_str, &polys_str,
                                  &vars_str, &ideal_str)) {
@@ -1537,12 +1528,7 @@ int main(int argc, char *argv[])
             vars_str  = effective_argv[3];
             field_str = effective_argv[4];
 
-            char buffer[128];
-            time_t now = time(NULL);
-            struct tm *t = localtime(&now);
-            if (t) strftime(buffer, sizeof(buffer), "solution_%Y%m%d_%H%M%S.dat", t);
-            else   strcpy(buffer, "solution.dat");
-            output_filename = strdup(buffer);
+            output_filename = generate_timestamped_filename("solution");
 
         } else {
             if (!silent_mode) {
@@ -1568,7 +1554,7 @@ int main(int argc, char *argv[])
                 printf("Reading from file: %s\n", effective_argv[1]);
 
             input_filename  = strdup(effective_argv[1]);
-            output_filename = generate_comp_filename(input_filename);
+            output_filename = generate_tagged_filename(input_filename, "_comp");
 
             if (!read_multiline_file(fp, &field_str, &polys_str,
                                      &vars_str, &ideal_str, &allvars_str)) {
@@ -1583,12 +1569,7 @@ int main(int argc, char *argv[])
             vars_str  = effective_argv[2];
             field_str = effective_argv[3];
 
-            char buffer[128];
-            time_t now = time(NULL);
-            struct tm *t = localtime(&now);
-            if (t) strftime(buffer, sizeof(buffer), "comp_%Y%m%d_%H%M%S.dat", t);
-            else   strcpy(buffer, "comp.dat");
-            output_filename = strdup(buffer);
+            output_filename = generate_timestamped_filename("comp");
 
         } else {
             if (!silent_mode) {
@@ -1614,7 +1595,7 @@ int main(int argc, char *argv[])
                        effective_argv[1]);
 
             input_filename  = strdup(effective_argv[1]);
-            output_filename = generate_output_filename(input_filename);
+            output_filename = generate_tagged_filename(input_filename, "_solution");
 
             if (!read_solver_file(fp, &field_str, &polys_str)) {
                 fclose(fp); return 1;
@@ -1625,12 +1606,7 @@ int main(int argc, char *argv[])
         } else if (effective_argc == 3) {
             polys_str = effective_argv[1];
             field_str = effective_argv[2];
-            char buffer[128];
-            time_t now = time(NULL);
-            struct tm *t = localtime(&now);
-            if (t) strftime(buffer, sizeof(buffer), "solution_%Y%m%d_%H%M%S.dat", t);
-            else   strcpy(buffer, "solution.dat");
-            output_filename = strdup(buffer);
+            output_filename = generate_timestamped_filename("solution");
 
         } else {
             if (!silent_mode) {
@@ -1655,7 +1631,7 @@ int main(int argc, char *argv[])
                 printf("Reading from file: %s\n", effective_argv[1]);
 
             input_filename  = strdup(effective_argv[1]);
-            output_filename = generate_output_filename(input_filename);
+            output_filename = generate_tagged_filename(input_filename, "_solution");
 
             if (!read_multiline_file(fp, &field_str, &polys_str,
                                      &vars_str, &ideal_str, &allvars_str)) {
@@ -1673,12 +1649,7 @@ int main(int argc, char *argv[])
             } else {
                 field_str = effective_argv[3];
             }
-            char buffer[128];
-            time_t now = time(NULL);
-            struct tm *t = localtime(&now);
-            if (t) strftime(buffer, sizeof(buffer), "solution_%Y%m%d_%H%M%S.dat", t);
-            else   strcpy(buffer, "solution.dat");
-            output_filename = strdup(buffer);
+            output_filename = generate_timestamped_filename("solution");
 
         } else {
             if (!silent_mode) print_usage(argv[0]);
@@ -1718,20 +1689,35 @@ int main(int argc, char *argv[])
     for (ulong i = 0; i < power; i++) field_size *= prime;
 
     if (!silent_mode) {
-        printf("=== %s ===\n",
-               comp_mode  ? "Complexity Analysis" :
-               solve_mode ? "Polynomial System Solver" :
-                            "Dixon Resultant Computation");
-        if (rational_mode) {
-            printf("Field: Q");
-        } else {
-            printf("Field: F_%lu", prime);
-            if (power > 1) {
-                printf("^%lu (size %lu)", power, field_size);
-                printf("\nField extension generator: t");
+        if (!comp_mode && !solve_mode) {
+            printf("=== Dixon Resultant Computation ===\n");
+            printf("Field: ");
+            if (rational_mode) {
+                printf("Q");
+            } else {
+                printf("F_%lu", prime);
+                if (power > 1) {
+                    printf("^%lu (size %lu)", power, field_size);
+                }
             }
+            printf("\n");
+            if (!rational_mode && power > 1) {
+                printf("Field extension generator: t\n");
+            }
+        } else {
+            printf("Mode: %s  |  Field: ",
+                   comp_mode  ? "Complexity analysis" :
+                                "Polynomial system solver");
+            if (rational_mode) {
+                printf("Q");
+            } else {
+                printf("F_%lu", prime);
+                if (power > 1) {
+                    printf("^%lu (size %lu)", power, field_size);
+                }
+            }
+            printf("\n");
         }
-        printf("\n");
     }
 
     if (rational_mode) {
@@ -1803,7 +1789,7 @@ int main(int argc, char *argv[])
     if (!rational_mode && field_eq_mode) {
         fq_mvpoly_set_field_equation_reduction(1);
         if (!silent_mode)
-            printf("Field-equation reduction: ENABLED (x^q = x for each variable)\n");
+            printf("Reduction: field equations enabled\n");
     }
 
     /* ======================================================
@@ -1882,9 +1868,7 @@ int main(int argc, char *argv[])
     if (comp_mode) {
         /* ---- Complexity analysis ---- */
         if (!silent_mode) {
-            int poly_count = count_comma_separated_items(polys_str);
             int var_count  = count_comma_separated_items(vars_str);
-            //printf("\nPolynomials (%d): %s\n", poly_count, polys_str);
             printf("Eliminate   (%d): %s\n", var_count,  vars_str);
             printf("Omega            : %.4g\n", omega);
             printf("--------------------------------\n");
@@ -1934,10 +1918,8 @@ int main(int argc, char *argv[])
     } else if (ideal_str) {
         /* ---- Dixon with ideal reduction ---- */
         if (!silent_mode) {
-            printf("\nMode: Dixon with ideal reduction\n");
-            printf("Polynomials: %s\n", polys_str);
-            printf("Eliminate: %s\n", vars_str);
-            printf("Ideal generators: %s\n", ideal_str);
+            printf("Task: Dixon + ideal reduction  |  Eliminate: %s\n", vars_str);
+            printf("Ideal: %s\n", ideal_str);
             printf("--------------------------------\n");
         }
         result = dixon_with_ideal_reduction_str(polys_str, vars_str, ideal_str, ctx);
@@ -1945,11 +1927,10 @@ int main(int argc, char *argv[])
     } else {
         /* ---- Basic Dixon resultant ---- */
         if (!silent_mode) {
-            printf("\nMode: Basic Dixon resultant\n");
             int poly_count = count_comma_separated_items(polys_str);
             int var_count  = count_comma_separated_items(vars_str);
-            printf("Number of polynomials: %d\n", poly_count);
-            printf("Variables to ELIMINATE: %s (count: %d)\n", vars_str, var_count);
+            printf("Task: Dixon resultant  |  Equations: %d  |  Eliminate: %s\n",
+                   poly_count, vars_str);
             if (var_count != poly_count - 1)
                 printf("WARNING: Dixon method requires eliminating exactly %d variables "
                        "for %d equations!\n", poly_count - 1, poly_count);

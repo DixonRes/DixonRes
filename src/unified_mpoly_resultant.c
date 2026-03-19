@@ -331,7 +331,6 @@ int unified_mpoly_resultant(unified_mpoly_t R, const unified_mpoly_t A,
     unified_mpoly_t *R_ptr = &R;
     
     /* Compute resultant */
-    printf("Compute resultant...\n");
     success = mpoly_univar_resultant(R_ptr, Ax_generic, Bx_generic, ring);
     //printf("end compute...\n");
     

@@ -166,6 +166,45 @@ void nmod_extract_linear_factors(nmod_roots_t roots, const nmod_poly_t poly, fli
     nmod_poly_clear(r);
 }
 
+static slong nmod_poly_roots_gf2(nmod_roots_t roots, const nmod_poly_t poly, int with_multiplicity) {
+    nmod_poly_t work, factor, quotient, remainder;
+
+    nmod_poly_init(work, 2);
+    nmod_poly_init(factor, 2);
+    nmod_poly_init(quotient, 2);
+    nmod_poly_init(remainder, 2);
+    nmod_poly_set(work, poly);
+
+    for (mp_limb_t root = 0; root <= 1; root++) {
+        slong multiplicity = 0;
+
+        nmod_poly_zero(factor);
+        nmod_poly_set_coeff_ui(factor, 1, 1);
+        nmod_poly_set_coeff_ui(factor, 0, root);
+
+        while (nmod_poly_degree(work) > 0 &&
+               nmod_poly_evaluate_nmod(work, root) == 0) {
+            nmod_poly_divrem(quotient, remainder, work, factor);
+            if (nmod_poly_degree(remainder) >= 0) {
+                break;
+            }
+            multiplicity++;
+            nmod_poly_set(work, quotient);
+        }
+
+        if (multiplicity > 0) {
+            nmod_roots_add(roots, root, with_multiplicity ? multiplicity : 1);
+        }
+    }
+
+    nmod_poly_clear(work);
+    nmod_poly_clear(factor);
+    nmod_poly_clear(quotient);
+    nmod_poly_clear(remainder);
+
+    return roots->num;
+}
+
 slong our_nmod_poly_roots(nmod_roots_t roots, const nmod_poly_t poly, int with_multiplicity) {
     slong deg = nmod_poly_degree(poly);
     
@@ -182,6 +221,10 @@ slong our_nmod_poly_roots(nmod_roots_t roots, const nmod_poly_t poly, int with_m
             return 1;
         }
         return 0;
+    }
+
+    if (poly->mod.n == 2) {
+        return nmod_poly_roots_gf2(roots, poly, with_multiplicity);
     }
     
     // Cantor-Zassenhaus algorithm core

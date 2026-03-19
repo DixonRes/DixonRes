@@ -352,10 +352,6 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
 #ifdef HAVE_PML
     /* Check if we're in a prime field (degree 1) */
     if (fq_nmod_ctx_degree(ctx) == 1) {
-        printf("\n=== Prime Field Detected ===\n");
-        printf("Field: GF(%lu)\n", fq_nmod_ctx_prime(ctx));
-        printf("Using optimized nmod_poly_mat_det_iter from PML library\n");
-        
         /* Convert to nmod_poly_mat and use the optimized prime field version */
         nmod_poly_mat_t nmod_mat;
         nmod_poly_t nmod_det;
@@ -415,8 +411,7 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
         nmod_poly_clear(nmod_det);
         
         double nmod_time = ((double)(nmod_end - nmod_start)) / CLOCKS_PER_SEC;
-        printf("nmod_poly_mat_det_iter completed in %.2f seconds\n", nmod_time);
-        printf("Determinant degree: %ld\n", fq_nmod_poly_degree(det, ctx));
+        (void) nmod_time;
         
         return;
     }
@@ -424,9 +419,7 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
 #else
     /* No PML optimization available */
     if (fq_nmod_ctx_degree(ctx) == 1) {
-        printf("\n=== Prime Field Detected ===\n");
-        printf("Field: GF(%lu)\n", fq_nmod_ctx_prime(ctx));
-        printf("WARNING: PML library not available - using general algorithm (slower for prime fields)\n");
+        /* fall through to the general algorithm */
     }
 #endif
     
@@ -563,8 +556,6 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
     
     if (_show_progress || g_show_progress) {
         printf("\r                                                                          \r");
-        printf("\n=== Results ===\n");
-        printf("Determinant degree: %ld\n", fq_nmod_poly_degree(det, ctx));
-        printf("Total time: %.2f seconds\n", total_time);
+        printf("  Time: %.2f seconds\n", total_time);
     }
 }

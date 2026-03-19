@@ -2212,15 +2212,8 @@ void compute_fq_det_unified_interface(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     unified_mpoly_clear(det_unified);
     unified_mpoly_ctx_clear(unified_ctx);
     
-    // Print total timing
     timing_info_t total_elapsed = end_timing(total_start);
-    printf("Total computation (unified interface): Wall time: %.6f s, CPU time: %.6f s",  total_elapsed.wall_time, total_elapsed.cpu_time);
-    if (total_elapsed.wall_time > 0) {
-        printf(" (CPU efficiency: %.1f%%)\n", 
-               (total_elapsed.cpu_time / total_elapsed.wall_time) * 100.0);
-    } else {
-        printf("\n");
-    }
+    (void) total_elapsed;
 }
 // ============= Main Interface with Algorithm Selection Implementation =============
 
@@ -2267,11 +2260,8 @@ void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, s
     }
     #elif DET_ALGORITHM == DET_ALGORITHM_HUANG
     {
-        printf("Using Huang sparse interpolation algorithm\n");
-        
         // Check if we're in a prime field
         if (!is_prime_field(ctx)) {
-            printf("WARNING: Huang algorithm requires prime field, falling back to recursive\n");
             // Fall back to recursive algorithm (use code below)
         } else {
             compute_fq_det_huang_interpolation(result, matrix, size);
@@ -2280,7 +2270,6 @@ void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, s
     }
     #else
     {
-        printf("Using direct recursive algorithm\n");
         compute_fq_det_unified_interface(result, matrix, size);
     }
     #endif

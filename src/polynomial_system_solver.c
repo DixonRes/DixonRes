@@ -474,7 +474,7 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
     // Use parsing mechanism from DIXON_INTERFACE_FLINT_H
     char *gen_name = get_generator_name_for_solver(ctx);
     
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(sizeof(char*));
     state.var_names[0] = strdup(var_name);
     state.nvars = 1;
@@ -567,7 +567,7 @@ char* substitute_variable_in_polynomial(const char *poly_str, const char *var_na
     // Use parsing mechanism from DIXON_INTERFACE_FLINT_H
     char *gen_name = get_generator_name_for_solver(ctx);
     
-    parser_state_t state;
+    parser_state_t state = {0};
     state.var_names = (char**) malloc(sizeof(char*));
     state.var_names[0] = strdup(var_name);
     state.nvars = 1;
@@ -708,7 +708,7 @@ int verify_solution_set(char **original_polys, slong num_polys,
         // Check if the result is zero (or close to zero)
         // Parse the result to check if it's zero
         char *gen_name = get_generator_name(ctx);
-        parser_state_t state;
+        parser_state_t state = {0};
         state.var_names = NULL;
         state.nvars = 0;
         state.npars = 0;

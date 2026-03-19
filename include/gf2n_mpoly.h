@@ -229,10 +229,6 @@ void gf28_mpoly_ctx_init(gf28_mpoly_ctx_t ctx, slong nvars, const ordering_t ord
 void gf28_mpoly_ctx_clear(gf28_mpoly_ctx_t ctx);
 void gf28_mpoly_zero(gf28_mpoly_t poly, const gf28_mpoly_ctx_t ctx);
 void gf28_mpoly_set(gf28_mpoly_t res, const gf28_mpoly_t poly, const gf28_mpoly_ctx_t ctx);
-static void _gf28_mpoly_repack_exps(
-    gf28_mpoly_t poly,
-    flint_bitcnt_t new_bits,
-    const gf28_mpoly_ctx_t ctx);
 /* Coefficient access */
 void gf28_mpoly_set_coeff_ui_ui(gf28_mpoly_t poly, uint8_t c, 
                                 const ulong *exp, const gf28_mpoly_ctx_t ctx);

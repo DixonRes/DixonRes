@@ -223,8 +223,6 @@ void init_nested_parallelism(void) {
     #ifdef _OPENMP
     omp_set_nested(1);  /* Enable nested parallelism */
     omp_set_max_active_levels(2);  /* Allow 2 levels of parallelism */
-    printf("Nested parallelism enabled with max 2 levels\n");
-    printf("Max threads available: %d\n", omp_get_max_threads());
     #endif
 }
 
@@ -468,7 +466,6 @@ void compute_unified_mpoly_det(unified_mpoly_t det_result,
     /* Special case: 3x3 matrix with parallel computation available */
     #ifdef _OPENMP
     if (size == 3 && use_parallel && omp_get_max_threads() > 1) {
-        printf("Using optimized parallel 3x3 determinant computation\n");
         compute_det_3x3_unified(det_result, mpoly_matrix, ctx);
         return;
     }
@@ -481,14 +478,11 @@ void compute_unified_mpoly_det(unified_mpoly_t det_result,
             init_nested_parallelism();
             nested_init = 1;
         }
-        printf("Using parallel determinant computation\n");
         compute_unified_mpoly_det_parallel(det_result, mpoly_matrix, size, ctx, 0);
         #else
-        printf("OpenMP not available, using sequential computation\n");
         compute_unified_mpoly_det_recursive(det_result, mpoly_matrix, size, ctx);
         #endif
     } else {
-        printf("Using sequential determinant computation\n");
         compute_unified_mpoly_det_recursive(det_result, mpoly_matrix, size, ctx);
     }
 }

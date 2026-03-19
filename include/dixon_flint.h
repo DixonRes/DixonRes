@@ -72,12 +72,6 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                                       slong size, slong npars, const fq_nmod_ctx_t ctx,
                                       det_method_t method, slong res_deg_bound);
 
-// Helper functions for total degree computation
-static slong compute_fq_polynomial_total_degree(fq_mvpoly_t *poly, slong npars);
-static slong compute_fq_row_max_total_degree(fq_mvpoly_t **matrix_row, slong ncols, slong npars);
-static slong compute_fq_col_max_total_degree(fq_mvpoly_t ***matrix, slong col_idx, 
-                                           slong nrows, slong npars);
-
 // Row basis tracker structure for linear independence checking
 typedef struct {
     field_elem_u *reduced_rows;    // Reduced row vectors
@@ -94,35 +88,6 @@ typedef struct {
     field_elem_u *temp_vars;       // Temporary variable pool: [factor, temp, pivot_val, neg_temp]
     int workspace_initialized;     // Workspace initialization flag
 } unified_row_basis_tracker_t;
-
-// Initialize optimized tracker
-static void unified_row_basis_tracker_init(unified_row_basis_tracker_t *tracker, 
-                                          slong max_size, slong ncols, 
-                                          field_ctx_t *ctx);
-
-// Clear optimized tracker
-static void unified_row_basis_tracker_clear(unified_row_basis_tracker_t *tracker);
-
-// Try adding row to basis - optimized version with pre-allocated workspace
-static int unified_try_add_row_to_basis(unified_row_basis_tracker_t *tracker, 
-                                       const field_elem_u *unified_mat,
-                                       slong new_row_idx, slong ncols);
-
-// Degree-based row/column selection helper functions
-static slong compute_fq_selected_rows_col_max_total_degree(fq_mvpoly_t ***full_matrix, 
-                                                         slong *selected_rows, 
-                                                         slong num_selected_rows,
-                                                         slong col_idx, 
-                                                         slong npars);
-
-static slong compute_fq_selected_cols_row_max_total_degree(fq_mvpoly_t ***full_matrix, 
-                                                         slong row_idx,
-                                                         slong *selected_cols, 
-                                                         slong num_selected_cols,
-                                                         slong npars);
-
-// Index array comparison
-static int indices_equal(slong *indices1, slong *indices2, slong size);
 
 // Pivot row finding functions
 void find_pivot_rows_nmod_fixed(slong **selected_rows_out, slong *num_selected,

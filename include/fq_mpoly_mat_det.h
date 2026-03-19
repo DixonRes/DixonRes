@@ -75,12 +75,6 @@ static inline int is_prime_field(const fq_nmod_ctx_t ctx) {
 
 // ============= Polynomial Operation Optimizations =============
 
-// Optimized multiplication for dense polynomials
-static inline void poly_mul_dense_optimized(fq_nmod_mpoly_t c, 
-                                           const fq_nmod_mpoly_t a,
-                                           const fq_nmod_mpoly_t b,
-                                           const fq_nmod_mpoly_ctx_t ctx);
-
 // ============= Conversion Functions for Polynomial Recursive =============
 
 // Convert fq_mvpoly to fq_nmod_poly for a specific variable
