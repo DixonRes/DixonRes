@@ -131,9 +131,11 @@ ifeq ($(ENABLE_ASAN),yes)
 	@echo "AddressSanitizer: ENABLED"
 endif
 	@echo "==========================="
+ifneq ($(ATTACK_C_FILES),)
 	@echo ""
 	@echo "Now building Attack programs..."
 	@$(MAKE) attack-programs-verbose
+endif
 
 # Also build libraries with LTO for better performance
 all: default
