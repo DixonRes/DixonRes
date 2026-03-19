@@ -32,6 +32,7 @@ Optional:
 
 ## Build
 ```bash
+git clone https://github.com/DixonRes/DixonRes.git && cd DixonRes
 ./configure
 make
 make check                         # optional
