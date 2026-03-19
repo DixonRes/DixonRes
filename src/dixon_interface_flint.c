@@ -45,12 +45,30 @@ static void parse_number(parser_state_t *state) {
     state->current.str = (char*) malloc(len + 1);
     strncpy(state->current.str, state->input + start, len);
     state->current.str[len] = '\0';
-    
-    state->current.int_value = atol(state->current.str);
-    fq_nmod_set_ui(state->current.value, state->current.int_value, state->ctx);
+
+    fmpz_t parsed_value;
+    fmpz_init(parsed_value);
+
+    if (fmpz_set_str(parsed_value, state->current.str, 10) == 0) {
+        fq_nmod_set_fmpz(state->current.value, parsed_value, state->ctx);
+        if (fmpz_fits_si(parsed_value)) {
+            state->current.int_value = fmpz_get_si(parsed_value);
+            state->current.int_value_valid = 1;
+        } else {
+            state->current.int_value = 0;
+            state->current.int_value_valid = 0;
+        }
+    } else {
+        state->current.int_value = 0;
+        state->current.int_value_valid = 0;
+        fq_nmod_zero(state->current.value, state->ctx);
+    }
+
+    fmpz_clear(parsed_value);
     state->current.type = TOK_NUMBER;
     
-    DEBUG_PRINT("Number: %s (%ld)\n", state->current.str, state->current.int_value);
+    DEBUG_PRINT("Number: %s (%ld)%s\n", state->current.str, state->current.int_value,
+                state->current.int_value_valid ? "" : " [no slong fit]");
 }
 
 static void parse_identifier(parser_state_t *state) {
@@ -77,6 +95,8 @@ static void parse_identifier(parser_state_t *state) {
 
 void next_token(parser_state_t *state) {
     skip_whitespace(state);
+    state->current.int_value = 0;
+    state->current.int_value_valid = 0;
     
     if (state->current.str) {
         free(state->current.str);
@@ -85,6 +105,7 @@ void next_token(parser_state_t *state) {
     
     if (at_end(state)) {
         state->current.type = TOK_EOF;
+        state->current.int_value_valid = 0;
         return;
     }
     
@@ -217,6 +238,12 @@ void parse_factor(parser_state_t *state, fq_mvpoly_t *poly) {
     if (state->current.type == TOK_POWER) {
         next_token(state);
         if (state->current.type == TOK_NUMBER) {
+            if (!state->current.int_value_valid) {
+                fprintf(stderr, "Error: exponent '%s' exceeds supported slong range\n",
+                        state->current.str ? state->current.str : "<unknown>");
+                fq_mvpoly_clear(&base);
+                return;
+            }
             slong exp = state->current.int_value;
             next_token(state);
             
@@ -1486,7 +1513,9 @@ static char *qq_reconstruct_from_modular_dixon(const char *poly_string,
                                                const char *vars_string,
                                                qq_poly_recon_t *best_recon_out,
                                                int *have_best_recon_out) {
-    const slong max_primes = 8;
+    const slong max_primes = 24;
+    const slong min_primes_before_stopping = 12;
+    const slong stable_rounds_before_stopping = 8;
     ulong primes[max_primes];
     slong num_primes = 0;
     slong num_remaining;
@@ -1570,7 +1599,8 @@ static char *qq_reconstruct_from_modular_dixon(const char *poly_string,
                 printf("Reconstruction updated after p = %lu.\n", primes[i]);
             }
             free(candidate_result);
-            if (i >= 1 && stable_count >= 1) {
+            if (i + 1 >= min_primes_before_stopping &&
+                stable_count >= stable_rounds_before_stopping) {
                 printf("Reconstruction stabilized after %ld prime(s).\n", i + 1);
                 fq_mvpoly_clear(&mod_poly);
                 free(mod_result);
