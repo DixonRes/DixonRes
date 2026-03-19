@@ -27,9 +27,24 @@ typedef struct polynomial_solutions {
     fq_nmod_t ***solution_sets; // 3D array: [solution_set][variable][solution_index]
     slong *solutions_per_var;   // Number of solutions for each variable in each set
     slong num_solution_sets;    // Number of complete solution sets
+    slong num_equations;        // Number of input equations
     int is_valid;               // Whether the solution is valid
     int has_no_solutions;       // 1 = no solutions, 0 = has solutions, -1 = dimension > 0
     char *error_message;        // Error message
+    char *variable_order;       // Variable order used by solver
+    char *elimination_summary;  // Summary of elimination strategy
+    slong total_combinations;   // Total equation combinations tried
+    slong successful_combinations; // Non-zero resultant combinations
+    slong num_base_solutions;   // Number of roots of final univariate polynomial
+    slong checked_solution_sets;    // Candidate sets checked by verification
+    slong verified_solution_sets;   // Candidate sets that passed verification
+    char **resultant_steps;     // Logged resultant/elimination steps
+    slong num_resultant_steps;  // Number of logged steps
+    slong resultant_steps_cap;  // Capacity of logged steps
+    char **candidate_solution_lines; // Human-readable candidate solutions
+    int *candidate_solution_pass;    // Verification result for each candidate
+    slong num_candidate_solution_lines; // Number of candidate solution lines
+    slong candidate_solution_lines_cap; // Capacity of candidate solution lines
     const fq_nmod_ctx_struct *ctx;  // Finite field context
 } polynomial_solutions_t;
 
@@ -63,6 +78,7 @@ void generate_equation_combinations(slong num_equations, slong target_equations,
 void free_equation_combinations(equation_combination_t *combinations, slong num_combinations);
 
 // Solution structure management
+void polynomial_solver_set_realtime_progress(int enabled);
 void polynomial_solutions_init(polynomial_solutions_t *sols, slong num_vars, 
                                const fq_nmod_ctx_t ctx);
 void polynomial_solutions_clear(polynomial_solutions_t *sols);
