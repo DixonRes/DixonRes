@@ -46,7 +46,9 @@ static void print_usage(const char *prog_name)
 
     printf("  Polynomial system solver:\n");
     printf("    %s --solve \"polynomials\" field_size\n", prog_name);
+    printf("    %s --solve-verbose \"polynomials\" field_size\n", prog_name);
     printf("    -> Writes all solutions to solution+timestamp.dat\n");
+    printf("    -> `--solve` prints a concise summary; `--solve-verbose` keeps full solver logs\n");
 
     printf("  Complexity analysis:\n");
     printf("    %s --comp \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
@@ -1058,7 +1060,11 @@ static void save_solver_result_to_file(const char *filename,
         fprintf(out_fp, "\n");
         fclose(out_fp); return;
     }
-    if (sols->has_no_solutions) {
+    if (sols->has_no_solutions == -1) {
+        fprintf(out_fp, "System has positive dimension; finite solution listing skipped\n");
+        fclose(out_fp); return;
+    }
+    if (sols->has_no_solutions == 1) {
         fprintf(out_fp, "System has no solutions over the finite field\n");
         fclose(out_fp); return;
     }
@@ -1113,6 +1119,188 @@ static void save_solver_result_to_file(const char *filename,
     }
     fprintf(out_fp, "=== Solution Complete ===\n\n");
     fclose(out_fp);
+}
+
+static int redirect_fd_to_devnull(int target_fd, int *orig_fd)
+{
+    int devnull;
+
+    if (!orig_fd) {
+        return 0;
+    }
+
+    fflush(stdout);
+    fflush(stderr);
+
+    *orig_fd = dup(target_fd);
+    if (*orig_fd == -1) {
+        return 0;
+    }
+
+    devnull = open("/dev/null", O_WRONLY);
+    if (devnull == -1) {
+        close(*orig_fd);
+        *orig_fd = -1;
+        return 0;
+    }
+
+    if (dup2(devnull, target_fd) == -1) {
+        close(devnull);
+        close(*orig_fd);
+        *orig_fd = -1;
+        return 0;
+    }
+
+    close(devnull);
+    return 1;
+}
+
+static void restore_fd(int target_fd, int orig_fd);
+
+static int redirect_stdio_to_devnull(int *orig_stdout, int *orig_stderr)
+{
+    if (!orig_stdout || !orig_stderr) {
+        return 0;
+    }
+
+    *orig_stdout = -1;
+    *orig_stderr = -1;
+
+    if (!redirect_fd_to_devnull(STDOUT_FILENO, orig_stdout)) {
+        return 0;
+    }
+
+    if (!redirect_fd_to_devnull(STDERR_FILENO, orig_stderr)) {
+        restore_fd(STDOUT_FILENO, *orig_stdout);
+        *orig_stdout = -1;
+        return 0;
+    }
+
+    return 1;
+}
+
+static void restore_fd(int target_fd, int orig_fd)
+{
+    fflush(stdout);
+    fflush(stderr);
+
+    if (orig_fd != -1) {
+        dup2(orig_fd, target_fd);
+        close(orig_fd);
+    }
+}
+
+static void restore_stdio(int orig_stdout, int orig_stderr)
+{
+    restore_fd(STDOUT_FILENO, orig_stdout);
+    restore_fd(STDERR_FILENO, orig_stderr);
+}
+
+static void print_solution_set_brief(FILE *out_fp,
+                                     const polynomial_solutions_t *sols,
+                                     slong set_idx)
+{
+    for (slong var = 0; var < sols->num_variables; var++) {
+        slong num_sols = sols->solutions_per_var[set_idx * sols->num_variables + var];
+
+        if (var > 0) {
+            fprintf(out_fp, ", ");
+        }
+
+        fprintf(out_fp, "%s=", sols->variable_names[var]);
+        if (num_sols == 0) {
+            fprintf(out_fp, "no solution");
+        } else if (num_sols == 1) {
+            char *sol_str = fq_nmod_get_str_pretty(sols->solution_sets[set_idx][var][0], sols->ctx);
+            if (sol_str) {
+                fprintf(out_fp, "%s", sol_str);
+                free(sol_str);
+            }
+        } else {
+            fprintf(out_fp, "{");
+            for (slong sol = 0; sol < num_sols; sol++) {
+                char *sol_str = fq_nmod_get_str_pretty(sols->solution_sets[set_idx][var][sol], sols->ctx);
+                if (sol > 0) {
+                    fprintf(out_fp, ", ");
+                }
+                if (sol_str) {
+                    fprintf(out_fp, "%s", sol_str);
+                    free(sol_str);
+                }
+            }
+            fprintf(out_fp, "}");
+        }
+    }
+}
+
+static void print_polynomial_solutions_brief(const polynomial_solutions_t *sols)
+{
+    if (!sols) {
+        printf("Status: solve failed (no solution data available)\n");
+        return;
+    }
+
+    if (!sols->is_valid) {
+        printf("Status: solve failed");
+        if (sols->error_message) {
+            printf(" (%s)", sols->error_message);
+        }
+        printf("\n");
+        return;
+    }
+
+    if (sols->has_no_solutions == -1) {
+        printf("Status: positive-dimensional system\n");
+        if (sols->elimination_summary) {
+            printf("Elimination: %s\n", sols->elimination_summary);
+        }
+        if (sols->total_combinations > 0) {
+            printf("Resultants: %ld/%ld non-zero combination(s)\n",
+                   sols->successful_combinations, sols->total_combinations);
+        }
+        return;
+    }
+
+    if (sols->has_no_solutions == 1) {
+        printf("Status: no finite-field solutions\n");
+        if (sols->elimination_summary) {
+            printf("Elimination: %s\n", sols->elimination_summary);
+        }
+        if (sols->total_combinations > 0) {
+            printf("Resultants: %ld/%ld non-zero combination(s)\n",
+                   sols->successful_combinations, sols->total_combinations);
+        }
+        if (sols->num_base_solutions > 0) {
+            printf("Base roots: %ld\n", sols->num_base_solutions);
+        }
+        return;
+    }
+
+    printf("Status: found %ld solution set(s)\n", sols->num_solution_sets);
+    if (sols->variable_order) {
+        printf("Variables: %s\n", sols->variable_order);
+    }
+    if (sols->elimination_summary) {
+        printf("Elimination: %s\n", sols->elimination_summary);
+    }
+    if (sols->total_combinations > 0) {
+        printf("Resultants: %ld/%ld non-zero combination(s)\n",
+               sols->successful_combinations, sols->total_combinations);
+    }
+    if (sols->num_base_solutions > 0) {
+        printf("Base roots: %ld\n", sols->num_base_solutions);
+    }
+    if (sols->checked_solution_sets >= 0 && sols->verified_solution_sets >= 0) {
+        printf("Verification: %ld/%ld candidate set(s) passed\n",
+               sols->verified_solution_sets, sols->checked_solution_sets);
+    }
+
+    printf("Solutions:\n");
+    for (slong set = 0; set < sols->num_solution_sets; set++) {
+        printf("  [%ld] ", set + 1);
+        print_solution_set_brief(stdout, sols, set);
+        printf("\n");
+    }
 }
 
 static void save_result_to_file(const char *filename,
@@ -1394,6 +1582,7 @@ int main(int argc, char *argv[])
     /* ---- parse leading flags ---- */
     int    silent_mode = 0;
     int    solve_mode  = 0;
+    int    solve_verbose_mode = 0;
     int    comp_mode   = 0;
     int    rand_mode   = 0;   /* --random / -r */
     int    ideal_mode  = 0;   /*  --ideal flag */
@@ -1404,6 +1593,8 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--silent") == 0) {
             silent_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--solve-verbose") == 0) {
+            solve_mode = 1; solve_verbose_mode = 1; arg_offset++;
         } else if (strcmp(argv[i], "--solve") == 0) {
             solve_mode = 1; arg_offset++;
         } else if (strcmp(argv[i], "--comp") == 0 ||
@@ -1711,10 +1902,12 @@ int main(int argc, char *argv[])
             if (!rational_mode && power > 1) {
                 printf("Field extension generator: t\n");
             }
+        } else if (comp_mode) {
+            printf("Mode: Complexity analysis  |  Field: ");
+            print_field_label(stdout, p_fmpz, power);
+            printf("\n");
         } else {
-            printf("Mode: %s  |  Field: ",
-                   comp_mode  ? "Complexity analysis" :
-                                "Polynomial system solver");
+            printf("Mode: Polynomial system solver  |  Field: ");
             print_field_label(stdout, p_fmpz, power);
             printf("\n");
         }
@@ -1916,34 +2109,29 @@ int main(int argc, char *argv[])
     } else if (solve_mode) {
         /* ---- Polynomial system solver ---- */
         if (!silent_mode) {
-            printf("\nMode: Polynomial System Solver\n");
             int poly_count = count_comma_separated_items(polys_str);
-            printf("Number of polynomials: %d\n", poly_count);
-            printf("Polynomials: %s\n", polys_str);
-            printf("Note: Number of variables must equal number of equations\n");
+            printf("\nEquations: %d\n", poly_count);
             printf("--------------------------------\n");
         }
 
-        int orig_stdout = -1, orig_stderr = -1, devnull = -1;
-        if (silent_mode) {
-            fflush(stdout); fflush(stderr);
-            orig_stdout = dup(STDOUT_FILENO);
-            orig_stderr = dup(STDERR_FILENO);
-            devnull = open("/dev/null", O_WRONLY);
-            if (devnull != -1) {
-                dup2(devnull, STDOUT_FILENO);
-                dup2(devnull, STDERR_FILENO);
-                close(devnull);
-            }
+        int orig_stdout = -1, orig_stderr = -1;
+        int suppress_solver_stdout = !silent_mode && !solve_verbose_mode;
+        int suppress_solver_trace = silent_mode;
+
+        polynomial_solver_set_realtime_progress(0);
+
+        if (suppress_solver_trace) {
+            redirect_stdio_to_devnull(&orig_stdout, &orig_stderr);
+        } else if (suppress_solver_stdout) {
+            redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
         }
 
         solutions = solve_polynomial_system_string(polys_str, ctx);
 
-        if (silent_mode && orig_stdout != -1) {
-            fflush(stdout); fflush(stderr);
-            dup2(orig_stdout, STDOUT_FILENO);
-            dup2(orig_stderr, STDERR_FILENO);
-            close(orig_stdout); close(orig_stderr);
+        if (suppress_solver_trace) {
+            restore_stdio(orig_stdout, orig_stderr);
+        } else if (suppress_solver_stdout) {
+            restore_fd(STDOUT_FILENO, orig_stdout);
         }
 
     } else if (ideal_str) {
@@ -2007,16 +2195,16 @@ int main(int argc, char *argv[])
         ;
     } else if (solve_mode) {
         if (solutions) {
-            printf("\n=== POLYNOMIAL SYSTEM SOLUTIONS ===\n");
-            print_polynomial_solutions(solutions);
-            printf("====================================\n");
+            if (!silent_mode) {
+                print_polynomial_solutions(solutions);
+            }
 
             if (output_filename) {
                 save_solver_result_to_file(output_filename, polys_str,
                                            p_fmpz, power, solutions,
                                            computation_time);
                 if (!silent_mode)
-                    printf("\nResult saved to: %s\n", output_filename);
+                    printf("Result saved to: %s\n", output_filename);
             }
             polynomial_solutions_clear(solutions);
             free(solutions);
