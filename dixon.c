@@ -22,7 +22,7 @@
 #include "polynomial_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.0.7"
+#define PROGRAM_VERSION "0.0.6"
 
 /* =========================================================================
  * Print usage
