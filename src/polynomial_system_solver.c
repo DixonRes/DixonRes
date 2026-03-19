@@ -618,6 +618,13 @@ void print_polynomial_solutions(const polynomial_solutions_t *sols) {
         return;
     }
 
+    if (sols->num_resultant_steps > 0) {
+        for (slong i = 0; i < sols->num_resultant_steps; i++) {
+            printf("Progress: %s\n", sols->resultant_steps[i]);
+        }
+        printf("\n");
+    }
+
     if (!sols->is_valid) {
         printf("Solve failed");
         if (sols->error_message) {
@@ -647,23 +654,6 @@ void print_polynomial_solutions(const polynomial_solutions_t *sols) {
         return;
     }
 
-    if (sols->variable_order) {
-        printf("Solve order: %s\n", sols->variable_order);
-    }
-    if (sols->elimination_summary) {
-        printf("Elimination: %s\n", sols->elimination_summary);
-    }
-    if (sols->total_combinations > 0) {
-        printf("Resultants: %ld/%ld non-zero combination(s)\n",
-               sols->successful_combinations, sols->total_combinations);
-    }
-    if (sols->num_base_solutions > 0) {
-        printf("Base roots: %ld\n", sols->num_base_solutions);
-    }
-    if (sols->checked_solution_sets >= 0 && sols->verified_solution_sets >= 0) {
-        printf("Verification: %ld/%ld candidate set(s) passed\n",
-               sols->verified_solution_sets, sols->checked_solution_sets);
-    }
     if (sols->num_candidate_solution_lines > 0) {
         printf("Candidate sets:\n");
         for (slong i = 0; i < sols->num_candidate_solution_lines; i++) {
@@ -673,7 +663,6 @@ void print_polynomial_solutions(const polynomial_solutions_t *sols) {
                    sols->candidate_solution_pass[i] ? "PASS" : "FAIL");
         }
     }
-
     printf("Found %ld solution set(s):\n", sols->num_solution_sets);
 
     for (slong set = 0; set < sols->num_solution_sets; set++) {
@@ -1130,9 +1119,6 @@ void filter_solutions_by_verification(polynomial_solutions_t *sols,
             pass = 1;
         }
         add_candidate_solution(sols, candidate_line, pass);
-        solver_progress("candidate set %ld -> %s",
-                        set + 1,
-                        pass ? "PASS" : "FAIL");
     }
     
     printf("  Verification complete: %ld out of %ld solution sets are valid\n", 
