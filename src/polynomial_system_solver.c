@@ -1,5 +1,246 @@
 #include "polynomial_system_solver.h"
 #include <ctype.h>
+#include <stdarg.h>
+
+static int solver_realtime_progress_enabled = 0;
+
+void polynomial_solver_set_realtime_progress(int enabled) {
+    solver_realtime_progress_enabled = enabled;
+}
+
+static void solver_progress(const char *fmt, ...) {
+    if (!solver_realtime_progress_enabled) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "Progress: ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    va_end(args);
+}
+
+static char *join_variable_names(variable_info_t *vars, slong num_vars) {
+    if (!vars || num_vars <= 0) {
+        return NULL;
+    }
+
+    size_t total_len = 1;
+    for (slong i = 0; i < num_vars; i++) {
+        total_len += strlen(vars[i].name) + 2;
+    }
+
+    char *result = (char *) malloc(total_len);
+    if (!result) {
+        return NULL;
+    }
+
+    result[0] = '\0';
+    for (slong i = 0; i < num_vars; i++) {
+        if (i > 0) {
+            strcat(result, ", ");
+        }
+        strcat(result, vars[i].name);
+    }
+
+    return result;
+}
+
+static char *format_equation_index_list(const slong *indices, slong count) {
+    if (!indices || count <= 0) {
+        return NULL;
+    }
+
+    size_t total_len = 1;
+    for (slong i = 0; i < count; i++) {
+        total_len += 24;
+    }
+
+    char *result = (char *) malloc(total_len);
+    if (!result) {
+        return NULL;
+    }
+
+    result[0] = '\0';
+    for (slong i = 0; i < count; i++) {
+        char piece[32];
+        if (i > 0) {
+            strcat(result, ",");
+        }
+        snprintf(piece, sizeof(piece), "%ld", indices[i] + 1);
+        strcat(result, piece);
+    }
+
+    return result;
+}
+
+static void append_string_entry(char ***items, slong *count, slong *cap, char *entry) {
+    if (!entry) {
+        return;
+    }
+
+    if (*count >= *cap) {
+        slong new_cap = (*cap == 0) ? 8 : (*cap * 2);
+        char **new_items = (char **) realloc(*items, new_cap * sizeof(char *));
+        if (!new_items) {
+            free(entry);
+            return;
+        }
+        *items = new_items;
+        *cap = new_cap;
+    }
+
+    (*items)[*count] = entry;
+    (*count)++;
+}
+
+static void store_resultant_step(polynomial_solutions_t *sols, char *buffer) {
+    if (!sols || !buffer) {
+        free(buffer);
+        return;
+    }
+
+    append_string_entry(&sols->resultant_steps,
+                        &sols->num_resultant_steps,
+                        &sols->resultant_steps_cap,
+                        buffer);
+}
+
+static void add_resultant_step(polynomial_solutions_t *sols, const char *fmt, ...) {
+    if (!sols) {
+        return;
+    }
+
+    va_list args;
+    va_list args_copy;
+    va_start(args, fmt);
+    va_copy(args_copy, args);
+    int needed = vsnprintf(NULL, 0, fmt, args_copy);
+    va_end(args_copy);
+
+    if (needed < 0) {
+        va_end(args);
+        return;
+    }
+
+    char *buffer = (char *) malloc((size_t) needed + 1);
+    if (!buffer) {
+        va_end(args);
+        return;
+    }
+
+    vsnprintf(buffer, (size_t) needed + 1, fmt, args);
+    va_end(args);
+
+    store_resultant_step(sols, buffer);
+    solver_progress("%s", buffer);
+}
+
+static char *format_solution_set_line_from_arrays(char **variable_names, slong num_variables,
+                                                  fq_nmod_t **solution_set, slong *solutions_per_var,
+                                                  const fq_nmod_ctx_t ctx) {
+    if (!variable_names || !solution_set || !solutions_per_var || num_variables <= 0) {
+        return NULL;
+    }
+
+    size_t total_len = 1;
+    for (slong var = 0; var < num_variables; var++) {
+        total_len += strlen(variable_names[var]) + 16;
+        slong num_sols = solutions_per_var[var];
+        if (num_sols == 0) {
+            total_len += strlen("no solution");
+        } else {
+            for (slong sol = 0; sol < num_sols; sol++) {
+                char *sol_str = fq_nmod_get_str_pretty(solution_set[var][sol], ctx);
+                if (sol_str) {
+                    total_len += strlen(sol_str) + 2;
+                    free(sol_str);
+                }
+            }
+        }
+    }
+
+    char *line = (char *) malloc(total_len);
+    if (!line) {
+        return NULL;
+    }
+
+    line[0] = '\0';
+    for (slong var = 0; var < num_variables; var++) {
+        slong num_sols = solutions_per_var[var];
+
+        if (var > 0) {
+            strcat(line, ", ");
+        }
+        strcat(line, variable_names[var]);
+        strcat(line, " = ");
+
+        if (num_sols == 0) {
+            strcat(line, "no solution");
+        } else if (num_sols == 1) {
+            char *sol_str = fq_nmod_get_str_pretty(solution_set[var][0], ctx);
+            if (sol_str) {
+                strcat(line, sol_str);
+                free(sol_str);
+            }
+        } else {
+            strcat(line, "{");
+            for (slong sol = 0; sol < num_sols; sol++) {
+                char *sol_str = fq_nmod_get_str_pretty(solution_set[var][sol], ctx);
+                if (sol > 0) {
+                    strcat(line, ", ");
+                }
+                if (sol_str) {
+                    strcat(line, sol_str);
+                    free(sol_str);
+                }
+            }
+            strcat(line, "}");
+        }
+    }
+
+    return line;
+}
+
+static void add_candidate_solution(polynomial_solutions_t *sols, char *line, int pass) {
+    if (!sols || !line) {
+        return;
+    }
+
+    if (sols->num_candidate_solution_lines >= sols->candidate_solution_lines_cap) {
+        slong new_cap = (sols->candidate_solution_lines_cap == 0)
+                        ? 8 : (sols->candidate_solution_lines_cap * 2);
+        char **new_lines = (char **) realloc(sols->candidate_solution_lines,
+                                             new_cap * sizeof(char *));
+        int *new_pass = (int *) realloc(sols->candidate_solution_pass,
+                                        new_cap * sizeof(int));
+        if (!new_lines || !new_pass) {
+            free(line);
+            if (new_lines) sols->candidate_solution_lines = new_lines;
+            if (new_pass) sols->candidate_solution_pass = new_pass;
+            return;
+        }
+        sols->candidate_solution_lines = new_lines;
+        sols->candidate_solution_pass = new_pass;
+        sols->candidate_solution_lines_cap = new_cap;
+    }
+
+    sols->candidate_solution_lines[sols->num_candidate_solution_lines] = line;
+    sols->candidate_solution_pass[sols->num_candidate_solution_lines] = pass;
+    sols->num_candidate_solution_lines++;
+}
+
+static void merge_solver_logs(polynomial_solutions_t *dst, const polynomial_solutions_t *src) {
+    if (!dst || !src) {
+        return;
+    }
+
+    for (slong i = 0; i < src->num_resultant_steps; i++) {
+        store_resultant_step(dst, strdup(src->resultant_steps[i]));
+    }
+}
 
 // ============= BASIC UTILITY FUNCTIONS =============
 
@@ -278,6 +519,21 @@ void polynomial_solutions_init(polynomial_solutions_t *sols, slong num_vars,
     sols->has_no_solutions = 0;
     sols->error_message = NULL;
     sols->num_solution_sets = 0;
+    sols->num_equations = 0;
+    sols->variable_order = NULL;
+    sols->elimination_summary = NULL;
+    sols->total_combinations = 0;
+    sols->successful_combinations = 0;
+    sols->num_base_solutions = 0;
+    sols->checked_solution_sets = -1;
+    sols->verified_solution_sets = -1;
+    sols->resultant_steps = NULL;
+    sols->num_resultant_steps = 0;
+    sols->resultant_steps_cap = 0;
+    sols->candidate_solution_lines = NULL;
+    sols->candidate_solution_pass = NULL;
+    sols->num_candidate_solution_lines = 0;
+    sols->candidate_solution_lines_cap = 0;
     
     if (num_vars > 0) {
         sols->variable_names = (char**) calloc(num_vars, sizeof(char*));
@@ -325,6 +581,32 @@ void polynomial_solutions_clear(polynomial_solutions_t *sols) {
     if (sols->error_message) {
         free(sols->error_message);
     }
+
+    if (sols->variable_order) {
+        free(sols->variable_order);
+    }
+
+    if (sols->elimination_summary) {
+        free(sols->elimination_summary);
+    }
+
+    if (sols->resultant_steps) {
+        for (slong i = 0; i < sols->num_resultant_steps; i++) {
+            free(sols->resultant_steps[i]);
+        }
+        free(sols->resultant_steps);
+    }
+
+    if (sols->candidate_solution_lines) {
+        for (slong i = 0; i < sols->num_candidate_solution_lines; i++) {
+            free(sols->candidate_solution_lines[i]);
+        }
+        free(sols->candidate_solution_lines);
+    }
+
+    if (sols->candidate_solution_pass) {
+        free(sols->candidate_solution_pass);
+    }
     
     memset(sols, 0, sizeof(polynomial_solutions_t));
 }
@@ -332,48 +614,78 @@ void polynomial_solutions_clear(polynomial_solutions_t *sols) {
 // Enhanced print solutions function
 void print_polynomial_solutions(const polynomial_solutions_t *sols) {
     if (!sols) {
-        printf("Solution structure is null\n");
+        printf("No solution data available.\n");
         return;
     }
-    
-    printf("\n=== Polynomial System Solutions ===\n");
-    
+
     if (!sols->is_valid) {
-        printf("Solving failed");
+        printf("Solve failed");
         if (sols->error_message) {
             printf(": %s", sols->error_message);
         }
         printf("\n");
         return;
     }
-    
+
     if (sols->has_no_solutions == -1) {
-        printf("Solving failed: polynomial system dimension greater than zero, please use Dixon resultant elimination\n");
+        printf("System has positive dimension; please use Dixon resultant elimination.\n");
         return;
     }
-    
+
     if (sols->has_no_solutions == 1) {
-        printf("System has no solutions over the finite field\n");
+        printf("No solutions over the finite field.\n");
         return;
     }
-    
+
     if (sols->num_variables == 0) {
-        printf("No variables\n");
+        printf("No variables.\n");
         return;
     }
-    
+
     if (sols->num_solution_sets == 0) {
-        printf("No solutions found\n");
+        printf("No solutions found.\n");
         return;
     }
-    
-    printf("Found %ld complete solution set(s):\n", sols->num_solution_sets);
-    
+
+    if (sols->variable_order) {
+        printf("Solve order: %s\n", sols->variable_order);
+    }
+    if (sols->elimination_summary) {
+        printf("Elimination: %s\n", sols->elimination_summary);
+    }
+    if (sols->total_combinations > 0) {
+        printf("Resultants: %ld/%ld non-zero combination(s)\n",
+               sols->successful_combinations, sols->total_combinations);
+    }
+    if (sols->num_base_solutions > 0) {
+        printf("Base roots: %ld\n", sols->num_base_solutions);
+    }
+    if (sols->checked_solution_sets >= 0 && sols->verified_solution_sets >= 0) {
+        printf("Verification: %ld/%ld candidate set(s) passed\n",
+               sols->verified_solution_sets, sols->checked_solution_sets);
+    }
+    if (sols->num_candidate_solution_lines > 0) {
+        printf("Candidate sets:\n");
+        for (slong i = 0; i < sols->num_candidate_solution_lines; i++) {
+            printf("  [%ld] %s [%s]\n",
+                   i + 1,
+                   sols->candidate_solution_lines[i],
+                   sols->candidate_solution_pass[i] ? "PASS" : "FAIL");
+        }
+    }
+
+    printf("Found %ld solution set(s):\n", sols->num_solution_sets);
+
     for (slong set = 0; set < sols->num_solution_sets; set++) {
-        printf("\nSolution set %ld:\n", set + 1);
+        printf("  [%ld] ", set + 1);
         for (slong var = 0; var < sols->num_variables; var++) {
-            printf("  %s = ", sols->variable_names[var]);
             slong num_sols = sols->solutions_per_var[set * sols->num_variables + var];
+
+            if (var > 0) {
+                printf(", ");
+            }
+
+            printf("%s = ", sols->variable_names[var]);
             if (num_sols == 0) {
                 printf("no solution");
             } else if (num_sols == 1) {
@@ -386,10 +698,9 @@ void print_polynomial_solutions(const polynomial_solutions_t *sols) {
                 }
                 printf("}");
             }
-            printf("\n");
         }
+        printf("\n");
     }
-    printf("=== Solution Complete ===\n\n");
 }
 
 // ============= VARIABLE ANALYSIS FUNCTIONS =============
@@ -786,6 +1097,14 @@ void filter_solutions_by_verification(polynomial_solutions_t *sols,
     // Check each solution set
     for (slong set = 0; set < sols->num_solution_sets; set++) {
         printf("  Checking solution set %ld...\n", set + 1);
+        int pass = 0;
+        char *candidate_line = format_solution_set_line_from_arrays(
+            sols->variable_names,
+            sols->num_variables,
+            sols->solution_sets[set],
+            &sols->solutions_per_var[set * sols->num_variables],
+            sols->ctx
+        );
         
         // Check if this solution set is complete
         int is_complete = 1;
@@ -799,6 +1118,7 @@ void filter_solutions_by_verification(polynomial_solutions_t *sols,
         }
         
         if (!is_complete) {
+            add_candidate_solution(sols, candidate_line, 0);
             continue;
         }
         
@@ -807,11 +1127,18 @@ void filter_solutions_by_verification(polynomial_solutions_t *sols,
                                sols->solution_sets[set], sols->ctx)) {
             valid_sets[set] = 1;
             verified_count++;
+            pass = 1;
         }
+        add_candidate_solution(sols, candidate_line, pass);
+        solver_progress("candidate set %ld -> %s",
+                        set + 1,
+                        pass ? "PASS" : "FAIL");
     }
     
     printf("  Verification complete: %ld out of %ld solution sets are valid\n", 
            verified_count, sols->num_solution_sets);
+    sols->checked_solution_sets = sols->num_solution_sets;
+    sols->verified_solution_sets = verified_count;
     
     if (verified_count == 0) {
         // No valid solutions - mark as having no solutions
@@ -917,7 +1244,6 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
         printf("\n--- Processing base solution %ld: ", base_idx + 1);
         fq_nmod_print_pretty(base_solutions[base_idx], sols->ctx);
         printf(" ---\n");
-        
         // Substitute base solution
         char **reduced_polys = (char**) malloc(num_polys * sizeof(char*));
         slong num_nonzero_polys = 0;
@@ -1006,6 +1332,27 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
                 for (slong i = 0; i < target_equations; i++) {
                     final_polys[i] = strdup(reduced_polys[combinations[comb_idx].equation_indices[i]]);
                 }
+
+                {
+                    char *base_str = fq_nmod_get_str_pretty(base_solutions[base_idx], sols->ctx);
+                    char *eq_list = format_equation_index_list(combinations[comb_idx].equation_indices,
+                                                               target_equations);
+                    if (target_equations == 1) {
+                        add_resultant_step(sols,
+                                           "Base %s = %s -> solve reduced eq(%s)",
+                                           sorted_vars[0].name,
+                                           base_str ? base_str : "?",
+                                           eq_list ? eq_list : "?");
+                    } else {
+                        add_resultant_step(sols,
+                                           "Base %s = %s -> compute reduced resultants from eq(%s)",
+                                           sorted_vars[0].name,
+                                           base_str ? base_str : "?",
+                                           eq_list ? eq_list : "?");
+                    }
+                    if (eq_list) free(eq_list);
+                    if (base_str) free(base_str);
+                }
                 
                 variable_info_t *remaining_vars = (variable_info_t*) malloc((num_vars - 1) * sizeof(variable_info_t));
                 for (slong i = 1; i < num_vars; i++) {
@@ -1020,6 +1367,7 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
                                                                                            sols->ctx);
                 
                 if (test_sols && test_sols->is_valid) {
+                    merge_solver_logs(sols, test_sols);
                     if (test_sols->has_no_solutions == -1) {
                         printf("  Combination %ld: dimension > 0\n", comb_idx + 1);
                         found_dimension_gt_zero++;
@@ -1166,8 +1514,17 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
         // Single variable case (unchanged)
         char *final_var = sorted_vars[0].name;
         slong num_base_solutions;
+        sols->total_combinations = 1;
         fq_nmod_t *base_solutions = solve_univariate_equation_all_roots(poly_strings[0], final_var, 
                                                                        &num_base_solutions, sols->ctx);
+        sols->num_base_solutions = num_base_solutions;
+        if (!sols->elimination_summary) {
+            size_t len = strlen(final_var) + 32;
+            sols->elimination_summary = (char *) malloc(len);
+            if (sols->elimination_summary) {
+                snprintf(sols->elimination_summary, len, "Directly solve for %s", final_var);
+            }
+        }
         
         if (num_base_solutions == 0) {
             sols->is_valid = 1;
@@ -1190,6 +1547,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
             fq_nmod_set(sols->solution_sets[i][0][0], base_solutions[i], sols->ctx);
             sols->solutions_per_var[i * num_vars + 0] = 1;
         }
+        sols->successful_combinations = (num_base_solutions > 0) ? 1 : 0;
         
         for (slong i = 0; i < num_base_solutions; i++) {
             fq_nmod_clear(base_solutions[i], sols->ctx);
@@ -1203,6 +1561,18 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     
     char *elim_var = sorted_vars[num_vars-1].name;
     char *keep_var = sorted_vars[0].name;
+
+    if (sols->elimination_summary) {
+        free(sols->elimination_summary);
+        sols->elimination_summary = NULL;
+    }
+    {
+        size_t len = strlen(elim_var) + strlen(keep_var) + 32;
+        sols->elimination_summary = (char *) malloc(len);
+        if (sols->elimination_summary) {
+            snprintf(sols->elimination_summary, len, "Eliminate %s, keep %s", elim_var, keep_var);
+        }
+    }
     
     printf("--- Attempting elimination: eliminate %s, keep %s ---\n", elim_var, keep_var);
     
@@ -1217,12 +1587,20 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     if (num_vars == 2) {
         if (num_polys == 2) {
             total_combinations = 1;
+            add_resultant_step(sols,
+                               "Compute resultant of eq(1,2) eliminating %s",
+                               elim_var);
             char *resultant = bivariate_resultant(poly_strings[0], poly_strings[1], elim_var, sols->ctx);
             if (resultant && strcmp(resultant, "0") != 0) {
                 working_resultant = resultant;
                 successful_combinations = 1;
+                add_resultant_step(sols,
+                                   "eq(1,2) -> non-zero resultant in %s",
+                                   keep_var);
             } else {
                 printf("Bivariate resultant is zero\n");
+                add_resultant_step(sols,
+                                   "eq(1,2) -> zero resultant");
                 if (resultant) free(resultant);
             }
         } else if (num_polys > 2) {
@@ -1237,6 +1615,11 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                        comb_idx + 1, 
                        combinations[comb_idx].equation_indices[0],
                        combinations[comb_idx].equation_indices[1]);
+                add_resultant_step(sols,
+                                   "Compute resultant of eq(%ld,%ld) eliminating %s",
+                                   combinations[comb_idx].equation_indices[0] + 1,
+                                   combinations[comb_idx].equation_indices[1] + 1,
+                                   elim_var);
                 
                 char *test_resultant = eliminate_variable_dixon_with_selection(poly_strings, num_polys, 
                                                                               elim_var, sols->ctx,
@@ -1244,6 +1627,11 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                 
                 if (test_resultant && strcmp(test_resultant, "0") != 0) {
                     printf("  ✓ Combination %ld succeeded!\n", comb_idx + 1);
+                    add_resultant_step(sols,
+                                       "eq(%ld,%ld) -> non-zero resultant in %s",
+                                       combinations[comb_idx].equation_indices[0] + 1,
+                                       combinations[comb_idx].equation_indices[1] + 1,
+                                       keep_var);
                     if (!working_resultant) {
                         working_resultant = test_resultant;
                     } else {
@@ -1252,6 +1640,10 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                     successful_combinations++;
                 } else {
                     printf("  ✗ Combination %ld failed (resultant = 0)\n", comb_idx + 1);
+                    add_resultant_step(sols,
+                                       "eq(%ld,%ld) -> zero resultant",
+                                       combinations[comb_idx].equation_indices[0] + 1,
+                                       combinations[comb_idx].equation_indices[1] + 1);
                     if (test_resultant) free(test_resultant);
                 }
             }
@@ -1272,13 +1664,22 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
             for (slong i = 0; i < num_polys; i++) {
                 poly_const[i] = poly_strings[i];
             }
+            add_resultant_step(sols,
+                               "Compute Dixon resultant of eq(1..%ld) eliminating %ld variable(s)",
+                               num_polys, num_elim_vars);
             
             char *resultant = dixon(poly_const, num_polys, elim_vars, num_elim_vars, sols->ctx);
             
             if (resultant && strcmp(resultant, "0") != 0) {
                 working_resultant = resultant;
                 successful_combinations = 1;
+                add_resultant_step(sols,
+                                   "eq(1..%ld) -> non-zero resultant in %s",
+                                   num_polys, keep_var);
             } else {
+                add_resultant_step(sols,
+                                   "eq(1..%ld) -> zero resultant",
+                                   num_polys);
                 if (resultant) free(resultant);
             }
             
@@ -1297,6 +1698,12 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                     printf("%ld", combinations[comb_idx].equation_indices[i]);
                 }
                 printf("\n");
+                char *eq_list = format_equation_index_list(combinations[comb_idx].equation_indices,
+                                                           num_vars);
+                add_resultant_step(sols,
+                                   "Compute Dixon resultant of eq(%s) eliminating %ld variable(s)",
+                                   eq_list ? eq_list : "?",
+                                   num_elim_vars);
                 
                 const char **poly_const = (const char**) malloc(num_vars * sizeof(char*));
                 for (slong i = 0; i < num_vars; i++) {
@@ -1309,6 +1716,10 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                 
                 if (test_resultant && strcmp(test_resultant, "0") != 0) {
                     printf("  ✓ Combination %ld succeeded!\n", comb_idx + 1);
+                    add_resultant_step(sols,
+                                       "eq(%s) -> non-zero resultant in %s",
+                                       eq_list ? eq_list : "?",
+                                       keep_var);
                     if (!working_resultant) {
                         working_resultant = test_resultant;
                     } else {
@@ -1317,8 +1728,12 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                     successful_combinations++;
                 } else {
                     printf("  ✗ Combination %ld failed (resultant = 0)\n", comb_idx + 1);
+                    add_resultant_step(sols,
+                                       "eq(%s) -> zero resultant",
+                                       eq_list ? eq_list : "?");
                     if (test_resultant) free(test_resultant);
                 }
+                if (eq_list) free(eq_list);
             }
             
             free_equation_combinations(combinations, num_combinations);
@@ -1329,6 +1744,8 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     
     // CRITICAL DECISION: Only report dimension > 0 if ALL combinations failed
     if (successful_combinations == 0) {
+        sols->total_combinations = total_combinations;
+        sols->successful_combinations = 0;
         printf("All %ld equation combinations resulted in zero resultant\n", total_combinations);
         printf("System has dimension greater than zero\n");
         sols->is_valid = 1;
@@ -1336,6 +1753,9 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
         printf("EARLY RETURN: Dimension > 0 detected, skipping all further processing\n");
         return 1;
     }
+
+    sols->total_combinations = total_combinations;
+    sols->successful_combinations = successful_combinations;
     
     printf("Found %ld non-zero resultant(s) out of %ld combinations, proceeding with solving...\n", 
            successful_combinations, total_combinations);
@@ -1344,6 +1764,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     slong num_base_solutions;
     fq_nmod_t *base_solutions = solve_univariate_equation_all_roots(working_resultant, keep_var, 
                                                                    &num_base_solutions, sols->ctx);
+    sols->num_base_solutions = num_base_solutions;
     
     if (num_base_solutions == 0) {
         printf("Univariate resultant has no solutions\n");
@@ -1389,6 +1810,8 @@ polynomial_solutions_t* solve_polynomial_system_array_with_vars(char **poly_stri
     // Initialize solution structure
     polynomial_solutions_t *sols = (polynomial_solutions_t*) malloc(sizeof(polynomial_solutions_t));
     polynomial_solutions_init(sols, num_original_vars, ctx);
+    sols->num_equations = num_polys;
+    sols->variable_order = join_variable_names(original_vars, num_original_vars);
     
     // Copy variable names
     for (slong i = 0; i < num_original_vars; i++) {
@@ -1439,6 +1862,8 @@ polynomial_solutions_t* solve_polynomial_system_array(char **poly_strings, slong
     
     polynomial_solutions_t *sols = (polynomial_solutions_t*) malloc(sizeof(polynomial_solutions_t));
     polynomial_solutions_init(sols, num_vars, ctx);
+    sols->num_equations = num_polys;
+    sols->variable_order = join_variable_names(sorted_vars, num_vars);
     
     for (slong i = 0; i < num_vars; i++) {
         sols->variable_names[i] = strdup(sorted_vars[i].name);
