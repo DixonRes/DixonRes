@@ -1,5 +1,5 @@
 # DixonRes: Dixon Resultant & Polynomial System Solver
-A C implementation for computing Dixon resultants and solving polynomial systems over finite fields, based on the FLINT and PML library.
+A C implementation for computing Dixon resultants and solving polynomial systems over finite fields and the rationals ℚ, based on the FLINT and PML libraries.
 
 **Note:** This repository is under active development. The version submitted to Crypto 2026 is archived and available at:  
  - Release page: <https://github.com/DixonRes/DixonRes/releases/tag/0.0.1>
@@ -10,8 +10,9 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 - Polynomial system solver for n×n systems
 - Dixon with triangular ideal reduction
 - Finite fields:
-  - Prime fields F_p (**any size**): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
+  - Prime fields F_p (any size): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
   - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {8, 16, 32, 64, 128}.
+- Rational field Q: Rational reconstruction via multi-prime CRT. Set field_size = 0 to enable.
 - Complexity analysis — estimates Dixon matrix size, Bezout degree bound, and operation count before computing
 - Command line input or file input. Automatic output to solution files
 
@@ -44,9 +45,10 @@ For more options, run `./configure --help` or `make help`.
 ```bash
 ./dixon "polynomials" "eliminate_vars" field_size
 ```
-Example:
+Examples:
 ```bash
 ./dixon "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257
+./dixon "x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z" "x,y" 0
 ```
 
 ---
@@ -72,7 +74,7 @@ Reports equation count, variable count, degree sequence, Dixon matrix size
 ./dixon -c     "polynomials" "eliminate_vars" field_size
 ```
 
-Example:
+Examples:
 ```bash
 ./dixon --comp "x^3+y^3+z^3, x^2*y+y^2*z+z^2*x, x+y+z-1" "x,y" 257
 ```
@@ -146,7 +148,7 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 - `[d1,d2,...,dn]`: degree list (comma-separated) for n polynomials
 - `[d]*n`: all n polynomials have same degree d
-- `field_size`: field size (prime or extension)
+- `field_size`: field size (prime or extension); use `0` for Q
 
 ### Combine with Compute Flags
 ```bash
@@ -166,6 +168,9 @@ Generate random polynomial systems with specified degrees for testing and benchm
 # 3 polynomials (deg 3,3,2) in GF(257)
 ./dixon --random "[3,3,2]" 257
 
+# 3 polynomials (deg 3,3,2) over Q
+./dixon --random "[3,3,2]" 0
+
 # Solve 3 quadratic system in GF(257)
 ./dixon -r --solve "[2]*3" 257
 
@@ -180,8 +185,8 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 ### Dixon Mode / Complexity Mode (multiline)
 ```
-Line 1 : field size
-Line 2+: polynomials (comma-separated or multiline)
+Line 1 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
+Line 2+: polynomials (comma-separated, may span multiple lines)
 Last   : variables to ELIMINATE (comma-separated)
          (#eliminate = #equations - 1)
 ```
@@ -225,6 +230,21 @@ and the resultant, solutions, or complexity report.
 - Extension fields are slower than prime fields due to polynomial arithmetic
 - The optional PML library only accelerates well-determined systems over prime fields
 - Complexity analysis does not run any polynomial arithmetic; it parses only
+- Over Q (`field_size=0`), `--solve`, `--ideal`, and `--field-equation` are not yet supported
+
+---
+
+## Feature Support by Field
+
+| Feature | F_p | F_{p^k} | Q |
+|---|---|---|---|
+| Dixon resultant | ✅ | ✅ | ✅ |
+| Complexity analysis (`--comp`) | ✅ | ✅ | ✅ |
+| Random mode (`-r`) | ✅ | ✅ | ✅ |
+| Polynomial solver (`--solve`) | ✅ | ✅ | ❌ |
+| Ideal reduction (`--ideal`) | ✅ | ✅ | ❌ |
+| Field-equation reduction | ✅ | ✅ | ❌ |
+| PML acceleration | ✅ | ❌ | ❌ |
 
 ---
 
