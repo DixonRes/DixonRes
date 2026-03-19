@@ -60,17 +60,56 @@ if [ -n "$C_INCLUDE_PATH" ]; then
 fi
 
 # ============================================================
-# Helper: test if a header is found by the compiler
+# Helper: test if a header file physically exists under any
+# include search path.  Does NOT invoke the preprocessor, so
+# transitive #include failures can never cause a false "no".
 # ============================================================
-TEMP_TEST_FILE=".configure_header_test.c"
 test_header() {
-    echo "#include <$1>" > "$TEMP_TEST_FILE"
-    if $CC -E $HEADER_TEST_FLAGS "$TEMP_TEST_FILE" >/dev/null 2>&1; then
-        echo "yes"
-    else
-        echo "no"
+    _header="$1"
+    # Paths to search: explicit flags + gcc's own built-in paths
+    _search_paths="./include"
+    if [ -n "$C_INCLUDE_PATH" ]; then
+        OLD_IFS="$IFS"; IFS=":"
+        for p in $C_INCLUDE_PATH; do
+            [ -n "$p" ] && _search_paths="$_search_paths $p"
+        done
+        IFS="$OLD_IFS"
     fi
-    rm -f "$TEMP_TEST_FILE"
+    # Pull gcc's built-in system include paths
+    _gcc_paths=$($CC -E -v - </dev/null 2>&1 \
+        | awk '/#include <\.\.\.> search starts here:/{p=1;next} /End of search list/{p=0} p{print $1}')
+    _search_paths="$_search_paths $_gcc_paths"
+
+    for _dir in $_search_paths; do
+        [ -n "$_dir" ] && [ -f "$_dir/$_header" ] && echo "yes" && return 0
+    done
+    echo "no"
+}
+
+# ============================================================
+# Helper: find the directory that actually contains a header.
+# Returns the first matching search-path directory, or empty.
+# ============================================================
+find_header_dir() {
+    _header="$1"
+    _search_paths="./include"
+    if [ -n "$C_INCLUDE_PATH" ]; then
+        OLD_IFS="$IFS"; IFS=":"
+        for p in $C_INCLUDE_PATH; do
+            [ -n "$p" ] && _search_paths="$_search_paths $p"
+        done
+        IFS="$OLD_IFS"
+    fi
+    _gcc_paths=$($CC -E -v - </dev/null 2>&1 \
+        | awk '/#include <\.\.\.> search starts here:/{p=1;next} /End of search list/{p=0} p{print $1}')
+    _search_paths="$_search_paths $_gcc_paths"
+
+    for _dir in $_search_paths; do
+        if [ -n "$_dir" ] && [ -f "$_dir/$_header" ]; then
+            echo "$_dir"
+            return 0
+        fi
+    done
 }
 
 # ============================================================
@@ -174,16 +213,41 @@ else
 fi
 
 # --- PML headers ---
+# Try flat layout first (pml.h), then pml/ subdirectory layout (pml/pml.h).
+# All three headers must be consistently found under the same prefix.
+
 printf "checking for pml.h... "
 PML_HEADER_CHECK=$(test_header "pml.h")
-echo "$PML_HEADER_CHECK"
+if [ "$PML_HEADER_CHECK" = "yes" ]; then
+    echo "yes"
+    PML_HEADER_PREFIX=""
+    # Record the directory that contains pml.h directly
+    PML_HEADER_DIR=$(find_header_dir "pml.h")
+else
+    echo "no"
+    printf "checking for pml/pml.h... "
+    PML_SUB_CHECK=$(test_header "pml/pml.h")
+    echo "$PML_SUB_CHECK"
+    if [ "$PML_SUB_CHECK" = "yes" ]; then
+        PML_HEADER_CHECK="yes"
+        PML_HEADER_PREFIX="pml/"
+        # The parent dir contains the pml/ subdirectory; headers inside it
+        # use bare names (e.g. #include <nmod_poly_mat_utils.h>), so we need
+        # to add <parent>/pml to the compiler include path.
+        _pml_parent=$(find_header_dir "pml/pml.h")
+        PML_HEADER_DIR="${_pml_parent}/pml"
+    else
+        PML_HEADER_PREFIX=""
+        PML_HEADER_DIR=""
+    fi
+fi
 
-printf "checking for nmod_poly_mat_utils.h... "
-NMOD_POLY_MAT_UTILS_CHECK=$(test_header "nmod_poly_mat_utils.h")
+printf "checking for ${PML_HEADER_PREFIX}nmod_poly_mat_utils.h... "
+NMOD_POLY_MAT_UTILS_CHECK=$(test_header "${PML_HEADER_PREFIX}nmod_poly_mat_utils.h")
 echo "$NMOD_POLY_MAT_UTILS_CHECK"
 
-printf "checking for nmod_poly_mat_extra.h... "
-NMOD_POLY_MAT_EXTRA_CHECK=$(test_header "nmod_poly_mat_extra.h")
+printf "checking for ${PML_HEADER_PREFIX}nmod_poly_mat_extra.h... "
+NMOD_POLY_MAT_EXTRA_CHECK=$(test_header "${PML_HEADER_PREFIX}nmod_poly_mat_extra.h")
 echo "$NMOD_POLY_MAT_EXTRA_CHECK"
 
 # --- PML libraries ---
@@ -217,14 +281,10 @@ fi
 
 # --- System libraries ---
 printf "checking for -lmpfr... "
-echo "#include <mpfr.h>" > "$TEMP_TEST_FILE"
-if $CC -E $HEADER_TEST_FLAGS "$TEMP_TEST_FILE" >/dev/null 2>&1; then echo "yes"; else echo "no (continuing anyway)"; fi
-rm -f "$TEMP_TEST_FILE"
+if [ "$(test_header mpfr.h)" = "yes" ]; then echo "yes"; else echo "no (continuing anyway)"; fi
 
 printf "checking for -lgmp... "
-echo "#include <gmp.h>" > "$TEMP_TEST_FILE"
-if $CC -E $HEADER_TEST_FLAGS "$TEMP_TEST_FILE" >/dev/null 2>&1; then echo "yes"; else echo "no (continuing anyway)"; fi
-rm -f "$TEMP_TEST_FILE"
+if [ "$(test_header gmp.h)" = "yes" ]; then echo "yes"; else echo "no (continuing anyway)"; fi
 
 # --- AddressSanitizer ---
 ASAN_CFLAGS=""
@@ -233,12 +293,13 @@ printf "checking whether to enable AddressSanitizer... "
 if [ "$ENABLE_ASAN" = "yes" ]; then
     echo "yes"
     printf "checking for -fsanitize=address support... "
-    echo "int main(){return 0;}" > "$TEMP_TEST_FILE"
-    if $CC -fsanitize=address -static-libasan -o /dev/null "$TEMP_TEST_FILE" >/dev/null 2>&1; then
+    _asan_tmp=".configure_asan_test.c"
+    echo "int main(){return 0;}" > "$_asan_tmp"
+    if $CC -fsanitize=address -static-libasan -o /dev/null "$_asan_tmp" >/dev/null 2>&1; then
         echo "yes"
         ASAN_CFLAGS="-fsanitize=address -static-libasan"
         ASAN_LDFLAGS="-fsanitize=address -static-libasan"
-    elif $CC -fsanitize=address -o /dev/null "$TEMP_TEST_FILE" >/dev/null 2>&1; then
+    elif $CC -fsanitize=address -o /dev/null "$_asan_tmp" >/dev/null 2>&1; then
         echo "yes (without static-libasan)"
         ASAN_CFLAGS="-fsanitize=address"
         ASAN_LDFLAGS="-fsanitize=address"
@@ -247,7 +308,7 @@ if [ "$ENABLE_ASAN" = "yes" ]; then
         echo "configure: warning: compiler does not support -fsanitize=address, ASan disabled"
         ENABLE_ASAN="no"
     fi
-    rm -f "$TEMP_TEST_FILE"
+    rm -f "$_asan_tmp"
 else
     echo "no (use --enable-asan to enable)"
 fi
@@ -282,6 +343,16 @@ if [ -n "$C_INCLUDE_PATH" ]; then
         [ -n "$p" ] && INCLUDE_FLAGS="$INCLUDE_FLAGS -I$p"
     done
     IFS="$OLD_IFS"
+fi
+
+# If PML headers live inside a pml/ subdirectory, the headers themselves
+# use bare #include <nmod_poly_mat_utils.h> etc., so we must add the pml/
+# directory itself (not just its parent) to the compiler search path.
+# Example: headers at /usr/local/include/pml/pml.h
+#   -> we add -I/usr/local/include/pml so bare includes resolve correctly.
+if [ "$PML_AVAILABLE" = "yes" ] && [ -n "$PML_HEADER_PREFIX" ] && [ -n "$PML_HEADER_DIR" ]; then
+    # Only add if not already covered by C_INCLUDE_PATH or gcc paths
+    INCLUDE_FLAGS="$INCLUDE_FLAGS -I$PML_HEADER_DIR"
 fi
 
 # Preprocessor defines
@@ -335,6 +406,8 @@ PML_LIB_PATH = $PML_LIB_PATH
 # Detection results
 FLINT_HEADER_CHECK = $FLINT_HEADER_CHECK
 PML_HEADER_CHECK = $PML_HEADER_CHECK
+PML_HEADER_PREFIX = $PML_HEADER_PREFIX
+PML_HEADER_DIR = $PML_HEADER_DIR
 NMOD_POLY_MAT_UTILS_CHECK = $NMOD_POLY_MAT_UTILS_CHECK
 NMOD_POLY_MAT_EXTRA_CHECK = $NMOD_POLY_MAT_EXTRA_CHECK
 PML_DYNAMIC_LIB_CHECK = $PML_DYNAMIC_LIB_CHECK
