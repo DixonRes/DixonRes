@@ -22,7 +22,7 @@
 #include "polynomial_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.0.6"
+#define PROGRAM_VERSION "0.0.7"
 
 /* =========================================================================
  * Print usage
@@ -319,6 +319,37 @@ static char *generate_timestamped_filename(const char *prefix)
     return strdup(buffer);
 }
 
+static void print_field_label(FILE *out, const fmpz_t prime, ulong power)
+{
+    if (fmpz_is_zero(prime)) {
+        fprintf(out, "Q");
+        return;
+    }
+
+    fprintf(out, "F_");
+    fmpz_fprint(out, prime);
+    if (power > 1) {
+        fprintf(out, "^%lu", power);
+        if (fmpz_abs_fits_ui(prime)) {
+            mp_limb_t prime_ui = fmpz_get_ui(prime);
+            mp_limb_t field_size = 1;
+            int overflow = 0;
+
+            for (ulong i = 0; i < power; i++) {
+                if (prime_ui != 0 && field_size > UWORD_MAX / prime_ui) {
+                    overflow = 1;
+                    break;
+                }
+                field_size *= prime_ui;
+            }
+
+            if (!overflow) {
+                fprintf(out, " (size %lu)", field_size);
+            }
+        }
+    }
+}
+
 /* =========================================================================
  * Complexity analysis: save to file
  * ========================================================================= */
@@ -326,7 +357,7 @@ static void save_comp_result_to_file(
         const char   *filename,
         const char   *polys_str,
         const char   *vars_str,
-        mp_limb_t     prime,
+        const fmpz_t  prime,
         ulong         power,
         slong         num_polys,
         slong         num_all_vars,
@@ -346,17 +377,10 @@ static void save_comp_result_to_file(
         return;
     }
 
-    mp_limb_t field_size = 1;
-    for (ulong i = 0; i < power; i++) field_size *= prime;
-
     fprintf(fp, "Dixon Complexity Analysis\n");
     fprintf(fp, "=========================\n");
-    if (prime == 0) {
-        fprintf(fp, "Field: Q");
-    } else {
-        fprintf(fp, "Field: F_%lu", prime);
-        if (power > 1) fprintf(fp, "^%lu (size %lu)", power, field_size);
-    }
+    fprintf(fp, "Field: ");
+    print_field_label(fp, prime, power);
     fprintf(fp, "\n");
     fprintf(fp, "Polynomials: %s\n", polys_str);
     fprintf(fp, "Eliminate:   %s\n", vars_str);
@@ -417,7 +441,7 @@ static void save_comp_result_to_file(
 static void run_complexity_analysis(
         const char      *polys_str,
         const char      *vars_str,
-        mp_limb_t        prime,
+        const fmpz_t     prime,
         ulong            power,
         const fq_nmod_ctx_t ctx,
         const char      *output_filename,
@@ -433,7 +457,7 @@ static void run_complexity_analysis(
     char  **elim_arr = split_string(vars_str, &num_elim);
 
     /* ---- get generator name ---- */
-    char *gen_name = (prime == 0) ? NULL : get_generator_name(ctx);  /* may return NULL for prime fields */
+    char *gen_name = (ctx == NULL) ? NULL : get_generator_name(ctx);
 
     /* ---- collect all variables ---- */
     char  **all_vars;
@@ -1003,7 +1027,7 @@ static int read_ideal_file(FILE *fp, char **field_str, char **polys_str,
  * ========================================================================= */
 static void save_solver_result_to_file(const char *filename,
                                        const char *polys_str,
-                                       mp_limb_t prime, ulong power,
+                                       const fmpz_t prime, ulong power,
                                        const polynomial_solutions_t *sols,
                                        double computation_time)
 {
@@ -1012,19 +1036,13 @@ static void save_solver_result_to_file(const char *filename,
         fprintf(stderr, "Warning: Could not create output file '%s'\n", filename);
         return;
     }
-    mp_limb_t field_size = 1;
-    for (ulong i = 0; i < power; i++) field_size *= prime;
 
     fprintf(out_fp, "Polynomial System Solver\n");
     fprintf(out_fp, "========================\n");
-    if (prime == 0) {
-        fprintf(out_fp, "Field: Q");
-    } else {
-        fprintf(out_fp, "Field: F_%lu", prime);
-        if (power > 1) {
-            fprintf(out_fp, "^%lu (size %lu)", power, field_size);
-            fprintf(out_fp, "\nField extension generator: t");
-        }
+    fprintf(out_fp, "Field: ");
+    print_field_label(out_fp, prime, power);
+    if (!fmpz_is_zero(prime) && power > 1) {
+        fprintf(out_fp, "\nField extension generator: t");
     }
     fprintf(out_fp, "\n");
     fprintf(out_fp, "Polynomials: %s\n", polys_str);
@@ -1102,7 +1120,7 @@ static void save_result_to_file(const char *filename,
                                 const char *vars_str,
                                 const char *ideal_str,
                                 const char *allvars_str,
-                                mp_limb_t prime, ulong power,
+                                const fmpz_t prime, ulong power,
                                 const char *result,
                                 double computation_time)
 {
@@ -1111,19 +1129,13 @@ static void save_result_to_file(const char *filename,
         fprintf(stderr, "Warning: Could not create output file '%s'\n", filename);
         return;
     }
-    mp_limb_t field_size = 1;
-    for (ulong i = 0; i < power; i++) field_size *= prime;
 
     fprintf(out_fp, "Dixon Resultant Computation\n");
     fprintf(out_fp, "==========================\n");
-    if (prime == 0) {
-        fprintf(out_fp, "Field: Q");
-    } else {
-        fprintf(out_fp, "Field: F_%lu", prime);
-        if (power > 1) {
-            fprintf(out_fp, "^%lu (size %lu)", power, field_size);
-            fprintf(out_fp, "\nField extension generator: t");
-        }
+    fprintf(out_fp, "Field: ");
+    print_field_label(out_fp, prime, power);
+    if (!fmpz_is_zero(prime) && power > 1) {
+        fprintf(out_fp, "\nField extension generator: t");
     }
     fprintf(out_fp, "\n");
 
@@ -1682,24 +1694,19 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    prime = fmpz_get_ui(p_fmpz);
-    int rational_mode = (prime == 0);
+    int rational_mode = fmpz_is_zero(p_fmpz);
+    int large_prime_mode = (!rational_mode && power == 1 && !fmpz_abs_fits_ui(p_fmpz));
+    int ctx_initialized = 0;
 
-    mp_limb_t field_size = 1;
-    for (ulong i = 0; i < power; i++) field_size *= prime;
+    if (!rational_mode && !large_prime_mode) {
+        prime = fmpz_get_ui(p_fmpz);
+    }
 
     if (!silent_mode) {
         if (!comp_mode && !solve_mode) {
             printf("=== Dixon Resultant Computation ===\n");
             printf("Field: ");
-            if (rational_mode) {
-                printf("Q");
-            } else {
-                printf("F_%lu", prime);
-                if (power > 1) {
-                    printf("^%lu (size %lu)", power, field_size);
-                }
-            }
+            print_field_label(stdout, p_fmpz, power);
             printf("\n");
             if (!rational_mode && power > 1) {
                 printf("Field extension generator: t\n");
@@ -1708,14 +1715,7 @@ int main(int argc, char *argv[])
             printf("Mode: %s  |  Field: ",
                    comp_mode  ? "Complexity analysis" :
                                 "Polynomial system solver");
-            if (rational_mode) {
-                printf("Q");
-            } else {
-                printf("F_%lu", prime);
-                if (power > 1) {
-                    printf("^%lu (size %lu)", power, field_size);
-                }
-            }
+            print_field_label(stdout, p_fmpz, power);
             printf("\n");
         }
     }
@@ -1734,11 +1734,40 @@ int main(int argc, char *argv[])
             goto cleanup_fail;
         }
     }
+    if (large_prime_mode) {
+        if (solve_mode) {
+            fprintf(stderr, "Error: large prime fields beyond the nmod limit currently support Dixon resultant only; --solve is not implemented.\n");
+            goto cleanup_fail;
+        }
+        if (ideal_str) {
+            fprintf(stderr, "Error: large prime fallback currently does not support --ideal.\n");
+            goto cleanup_fail;
+        }
+        if (field_eq_mode) {
+            fprintf(stderr, "Error: large prime fallback currently does not support --field-equation.\n");
+            goto cleanup_fail;
+        }
+        if (rand_mode) {
+            fprintf(stderr, "Error: large prime fallback currently does not support --random.\n");
+            goto cleanup_fail;
+        }
+        if (comp_mode) {
+            fprintf(stderr, "Error: large prime fallback currently does not support --comp.\n");
+            goto cleanup_fail;
+        }
+        if (!silent_mode) {
+            printf("Prime exceeds nmod limit; using Q reconstruction fallback before reducing modulo the target prime.\n");
+        }
+    }
+    if (!rational_mode && power > 1 && !fmpz_abs_fits_ui(p_fmpz)) {
+        fprintf(stderr, "Error: extension fields with characteristic beyond the nmod limit are not supported.\n");
+        goto cleanup_fail;
+    }
 
     /* ---- initialize finite field ---- */
     fq_nmod_ctx_t ctx;
 
-    if (!rational_mode && power > 1 && field_poly_str) {
+    if (!rational_mode && !large_prime_mode && power > 1 && field_poly_str) {
         const char *var_name = gen_var_name ? gen_var_name : "t";
         if (!silent_mode) {
             printf("Using custom field polynomial: %s\n", field_poly_str);
@@ -1762,10 +1791,12 @@ int main(int argc, char *argv[])
             return 1;
         }
         fq_nmod_ctx_init_modulus(ctx, modulus, var_name);
+        ctx_initialized = 1;
         nmod_poly_clear(modulus);
 
-    } else if (!rational_mode) {
+    } else if (!rational_mode && !large_prime_mode) {
         fq_nmod_ctx_init(ctx, p_fmpz, power, "t");
+        ctx_initialized = 1;
 
         if (!silent_mode && power > 1) {
             printf("Using FLINT's default irreducible polynomial:\n  ");
@@ -1878,7 +1909,7 @@ int main(int argc, char *argv[])
         double comp_time  = (double)(end_time - start_time) / CLOCKS_PER_SEC;
 
         run_complexity_analysis(polys_str, vars_str,
-                                prime, power, rational_mode ? NULL : ctx,
+                                p_fmpz, power, ctx_initialized ? ctx : NULL,
                                 output_filename, silent_mode,
                                 comp_time, omega);
 
@@ -1950,8 +1981,13 @@ int main(int argc, char *argv[])
             }
         }
 
-        result = rational_mode ? dixon_str_rational(polys_str, vars_str)
-                               : dixon_str(polys_str, vars_str, ctx);
+        if (rational_mode) {
+            result = dixon_str_rational(polys_str, vars_str);
+        } else if (large_prime_mode) {
+            result = dixon_str_large_prime(polys_str, vars_str, p_fmpz);
+        } else {
+            result = dixon_str(polys_str, vars_str, ctx);
+        }
 
         if (silent_mode && orig_stdout != -1) {
             fflush(stdout); fflush(stderr);
@@ -1977,7 +2013,7 @@ int main(int argc, char *argv[])
 
             if (output_filename) {
                 save_solver_result_to_file(output_filename, polys_str,
-                                           prime, power, solutions,
+                                           p_fmpz, power, solutions,
                                            computation_time);
                 if (!silent_mode)
                     printf("\nResult saved to: %s\n", output_filename);
@@ -1992,7 +2028,7 @@ int main(int argc, char *argv[])
         if (result) {
             if (output_filename) {
                 save_result_to_file(output_filename, polys_str, vars_str,
-                                    ideal_str, allvars_str, prime, power,
+                                    ideal_str, allvars_str, p_fmpz, power,
                                     result, computation_time);
                 if (!silent_mode)
                     printf("\nResult saved to: %s\n", output_filename);
@@ -2007,7 +2043,7 @@ int main(int argc, char *argv[])
     printf("Total computation time: %.3f seconds\n", computation_time);
 
     /* ---- cleanup ---- */
-    if (!rational_mode) fq_nmod_ctx_clear(ctx);
+    if (ctx_initialized) fq_nmod_ctx_clear(ctx);
     if (field_poly_str) free(field_poly_str);
     if (gen_var_name)   free(gen_var_name);
     fmpz_clear(p_fmpz);
