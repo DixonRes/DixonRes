@@ -1,10 +1,6 @@
 # DixonRes: Dixon Resultant & Polynomial System Solver
 A C implementation for computing Dixon resultants and solving polynomial systems over finite fields and the rationals ℚ, based on the FLINT and PML libraries.
 
-**Note:** This repository is under active development. The version submitted to Crypto 2026 is archived and available at:  
- - Release page: <https://github.com/DixonRes/DixonRes/releases/tag/0.0.1>
- - Code tree: <https://github.com/DixonRes/DixonRes/tree/0.0.1>
-
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver for n×n systems
