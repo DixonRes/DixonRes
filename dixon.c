@@ -1438,7 +1438,7 @@ int main(int argc, char *argv[])
     /* ---- version banner ---- */
     if (!silent_mode) {
         printf("=================================================\n");
-        printf("Dixon Resultant & Polynomial Solver v%s\n", PROGRAM_VERSION);
+        printf("DixonRes v%s\n", PROGRAM_VERSION);
         printf("FLINT version: %s\n", FLINT_VERSION);
 #ifdef HAVE_PML
         printf("PML support: ENABLED\n");
