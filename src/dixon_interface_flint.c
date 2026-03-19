@@ -1932,7 +1932,7 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     clock_t total_start = clock();
     // Get generator name
     char *gen_name = get_generator_name(ctx);
-        
+    printf("Use FLINT's built-in resultant to compute two polynomials\n");
     char **remaining_vars = NULL;
     slong num_remaining = 0;
     
@@ -2177,7 +2177,6 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
             // Handle fq_nmod case
             fq_nmod_mpoly_struct *fq_res = GET_FQ_POLY(R);
             fq_nmod_mpoly_ctx_struct *fq_ctx = &(unified_ctx->ctx.fq_ctx);
-            printf("fq_mvpoly_add_term_fast\n");
             for (slong i = 0; i < fq_nmod_mpoly_length(fq_res, fq_ctx); i++) {
                 fq_nmod_t coeff;
                 fq_nmod_init(coeff, ctx);
