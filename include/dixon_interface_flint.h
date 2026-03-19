@@ -50,6 +50,7 @@ typedef struct {
     char *str;
     fq_nmod_t value;
     slong int_value;
+    int int_value_valid;
     const fq_nmod_ctx_struct *ctx;
 } token_t;
 
