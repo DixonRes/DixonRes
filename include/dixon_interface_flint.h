@@ -12,7 +12,7 @@
 #include <flint/fq_nmod_poly.h>
 #include <flint/fq_nmod_mat.h>
 #include <flint/fmpz.h>
-#include <flint/fq_nmod_poly_factor.h>  // Ensure factorization header is included
+#include <flint/fq_nmod_poly_factor.h>
 #include "unified_mpoly_resultant.h"
 #include "fq_nmod_roots.h"
 #include "fq_mvpoly.h"
@@ -108,5 +108,9 @@ char* dixon_str(const char *poly_string,    // comma-separated polynomials
 
 char* dixon_str_rational(const char *poly_string,
                          const char *vars_string);
+
+char* dixon_str_large_prime(const char *poly_string,
+                            const char *vars_string,
+                            const fmpz_t prime);
 
 #endif // DIXON_INTERFACE_FLINT_H
