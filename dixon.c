@@ -24,6 +24,12 @@
 
 #define PROGRAM_VERSION "0.1.0"
 
+#ifdef _WIN32
+#define DIXON_NULL_DEVICE "NUL"
+#else
+#define DIXON_NULL_DEVICE "/dev/null"
+#endif
+
 /* =========================================================================
  * Print usage
  * ========================================================================= */
@@ -492,7 +498,7 @@ static void run_complexity_analysis(
     {
         fflush(stdout);
         int orig_stdout = dup(STDOUT_FILENO);
-        int devnull     = open("/dev/null", O_WRONLY);
+        int devnull     = open(DIXON_NULL_DEVICE, O_WRONLY);
         if (devnull != -1) { dup2(devnull, STDOUT_FILENO); close(devnull); }
         dixon_size(matrix_size, degrees, (int)num_polys, 0);
         fflush(stdout);
@@ -727,7 +733,7 @@ static int generate_random_poly_strings(
 
     fflush(stdout);
     int orig_stdout = dup(STDOUT_FILENO);
-    int devnull = open("/dev/null", O_WRONLY);
+    int devnull = open(DIXON_NULL_DEVICE, O_WRONLY);
     if (devnull != -1) { dup2(devnull, STDOUT_FILENO); close(devnull); }
 
     fq_mvpoly_t *polys = NULL;
@@ -1137,7 +1143,7 @@ static int redirect_fd_to_devnull(int target_fd, int *orig_fd)
         return 0;
     }
 
-    devnull = open("/dev/null", O_WRONLY);
+    devnull = open(DIXON_NULL_DEVICE, O_WRONLY);
     if (devnull == -1) {
         close(*orig_fd);
         *orig_fd = -1;
@@ -2161,7 +2167,7 @@ int main(int argc, char *argv[])
             fflush(stdout); fflush(stderr);
             orig_stdout = dup(STDOUT_FILENO);
             orig_stderr = dup(STDERR_FILENO);
-            devnull = open("/dev/null", O_WRONLY);
+            devnull = open(DIXON_NULL_DEVICE, O_WRONLY);
             if (devnull != -1) {
                 dup2(devnull, STDOUT_FILENO);
                 dup2(devnull, STDERR_FILENO);
