@@ -39,6 +39,7 @@ make check                         # optional
 make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
+We also provide a Windows GUI at [DixonRes/DixonRes-Windows](https://github.com/DixonRes/DixonRes-Windows).
 
 ---
 
