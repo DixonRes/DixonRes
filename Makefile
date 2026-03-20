@@ -54,7 +54,9 @@ ALL_CFLAGS = $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS)
 # ============================================================
 EXTERNAL_LIBS = $(FLINT_LIBS) $(PML_LIBS) $(SYSTEM_LIBS)
 EXTERNAL_STATIC_PML_LIBS = $(FLINT_LIBS) $(PML_STATIC_LIBS) $(SYSTEM_LIBS)
-EXTERNAL_STATIC_ALL_LIBS = $(PML_STATIC_LIBS) $(FLINT_STATIC_LIBS) $(SYSTEM_LIBS) -Wl,--allow-multiple-definition
+EXTERNAL_STATIC_ALL_LIBS = $(PML_LIB_PATH:%=-L%) $(FLINT_LIB_PATH:%=-L%) \
+                           -Wl,-Bstatic -lpml -lflint \
+                           -Wl,-Bdynamic $(SYSTEM_LIBS) -Wl,--allow-multiple-definition
 
 # ============================================================
 # Source files for the math library (in src directory)
@@ -208,7 +210,8 @@ static-all: static-lib $(DIXON_TARGET)-static-all
 
 $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	@echo "Building $(DIXON_TARGET) with all static libraries..."
-	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) $(EXTERNAL_STATIC_ALL_LIBS) $(LDFLAGS)
+	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) \
+		$(EXTERNAL_STATIC_ALL_LIBS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
 
 # ============================================================
