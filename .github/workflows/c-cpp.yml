@@ -12,29 +12,30 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-    
+
     runs-on: ${{ matrix.os }}
-    
+
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install FLINT (Ubuntu)
-      if: runner.os == 'Linux'
+
+    - name: Setup Environment
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        environment-name: build-env
+        create-args: >-
+          flint
+          gmp
+          mpfr
+          pkg-config
+          make
+          gcc
+          gxx
+        cache-environment: true
+        cache-downloads: true
+
+    - name: Build and Test
+      shell: micromamba-shell {0}
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libflint-dev
-    
-    - name: Install FLINT (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew update
-        brew install flint
-    
-    - name: configure
-      run: ./configure
-    
-    - name: make
-      run: make
-    
-    - name: make check
-      run: make check
+        ./configure
+        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+        make check
