@@ -43,5 +43,5 @@ jobs:
     - name: make
       run: make -j"$(sysctl -n hw.logicalcpu)"
 
-      - name: make check
-        run: make check
+    - name: make check
+      run: make check
