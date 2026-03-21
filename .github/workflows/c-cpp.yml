@@ -22,14 +22,17 @@ jobs:
       uses: mamba-org/setup-micromamba@v1
       with:
         environment-name: build-env
+        condarc: |
+          channels:
+            - conda-forge
         create-args: >-
-          flint
+          libflint
           gmp
           mpfr
           pkg-config
           make
-          gcc
-          gxx
+          c-compiler
+          cxx-compiler
         cache-environment: true
         cache-downloads: true
 
