@@ -18,13 +18,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Environment
+    - name: Setup Conda (Ubuntu)
+      if: runner.os == 'Linux'
       uses: mamba-org/setup-micromamba@v1
       with:
         environment-name: build-env
-        condarc: |
-          channels:
-            - conda-forge
         create-args: >-
           libflint
           gmp
@@ -34,11 +32,24 @@ jobs:
           c-compiler
           cxx-compiler
         cache-environment: true
-        cache-downloads: true
 
-    - name: Build and Test
+    - name: Install Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew update
+        brew install flint
+
+    - name: Build and Test (Ubuntu)
+      if: runner.os == 'Linux'
       shell: micromamba-shell {0}
       run: |
         ./configure
-        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+        make -j$(nproc)
+        make check
+
+    - name: Build and Test (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        ./configure
+        make -j$(sysctl -n hw.ncpu)
         make check
