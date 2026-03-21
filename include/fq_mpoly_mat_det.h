@@ -7,7 +7,11 @@
 #ifndef FQ_MPOLY_MAT_DET_H
 #define FQ_MPOLY_MAT_DET_H
 
+#ifdef _OPENMP
 #include <omp.h>
+#else
+#define omp_get_max_threads() 1
+#endif
 #include <flint/fq_nmod_mpoly.h>
 #include <flint/fq_nmod.h>
 #include <flint/fq_nmod_mat.h>

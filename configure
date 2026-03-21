@@ -123,66 +123,13 @@ build_include_search_paths() {
     do
         [ -n "$p" ] && [ -d "$p" ] && _paths=$(append_space_list_unique "$_paths" "$p")
     done
-    _compiler_paths=$($CC -E -v - </dev/null 2>&1 | awk '
-        /#include <\.\.\.> search starts here:/ { p=1; next }
-        /End of search list/ { p=0 }
-        p {
-            sub(/^[[:space:]]+/, "", $0)
-            sub(/[[:space:]]+\(framework directory\)$/, "", $0)
-            sub(/[[:space:]]+\(system header\)$/, "", $0)
-            sub(/[[:space:]]+$/, "", $0)
-            if ($0 != "" && $0 !~ /^\(/) print $0
-        }
-    ')
-    _old_ifs="$IFS"
-    IFS='
-'
+    _compiler_paths=$($CC -E -v - </dev/null 2>&1         | awk '/#include <\.\.\.> search starts here:/{p=1;next} /End of search list/{p=0} p{sub(/^[[:space:]]+/, "", $0); print $0}')
     for p in $_compiler_paths; do
         [ -n "$p" ] && _paths=$(append_space_list_unique "$_paths" "$p")
     done
-    IFS="$_old_ifs"
     printf '%s' "$_paths"
 }
 
-detect_flint_version() {
-    _header_dir="$1"
-    _header="$_header_dir/flint/flint.h"
-
-    if [ -f "$_header" ]; then
-        _version=$(sed -n 's/^#define[[:space:]]\+FLINT_VERSION[[:space:]]\+"\([^"]*\)".*/\1/p' "$_header" | head -n 1)
-        if [ -n "$_version" ]; then
-            printf '%s' "$_version"
-            return 0
-        fi
-
-        _major=$(sed -n 's/^#define[[:space:]]\+__FLINT_VERSION[[:space:]]\+\([0-9][0-9]*\).*/\1/p' "$_header" | head -n 1)
-        _minor=$(sed -n 's/^#define[[:space:]]\+__FLINT_VERSION_MINOR[[:space:]]\+\([0-9][0-9]*\).*/\1/p' "$_header" | head -n 1)
-        _patch=$(sed -n 's/^#define[[:space:]]\+__FLINT_VERSION_PATCHLEVEL[[:space:]]\+\([0-9][0-9]*\).*/\1/p' "$_header" | head -n 1)
-        if [ -n "$_major" ] && [ -n "$_minor" ] && [ -n "$_patch" ]; then
-            printf '%s.%s.%s' "$_major" "$_minor" "$_patch"
-            return 0
-        fi
-    fi
-
-    if [ -n "$_header_dir" ]; then
-        $CC -E -dM -I"$_header_dir" -include flint/flint.h - < /dev/null 2>/dev/null | awk '
-            $2 == "FLINT_VERSION" {
-                gsub(/"/, "", $3)
-                print $3
-                found=1
-                exit
-            }
-            $2 == "__FLINT_VERSION" { major=$3 }
-            $2 == "__FLINT_VERSION_MINOR" { minor=$3 }
-            $2 == "__FLINT_VERSION_PATCHLEVEL" { patch=$3 }
-            END {
-                if (!found && major != "" && minor != "" && patch != "") {
-                    print major "." minor "." patch
-                }
-            }
-        '
-    fi
-}
 # ============================================================
 # Helper: test if a header file physically exists under any
 # include search path.  Does NOT invoke the preprocessor, so
@@ -329,15 +276,6 @@ if [ "$FLINT_HEADER_CHECK" != "yes" ]; then
 fi
 
 FLINT_HEADER_DIR=$(find_header_dir "flint/flint.h")
-
-printf "checking FLINT version... "
-FLINT_VERSION=$(detect_flint_version "$FLINT_HEADER_DIR")
-if [ -n "$FLINT_VERSION" ]; then
-    echo "$FLINT_VERSION"
-else
-    FLINT_VERSION="unknown"
-    echo "$FLINT_VERSION"
-fi
 
 # --- FLINT include directory ---
 printf "checking for FLINT include directory... "
@@ -571,7 +509,6 @@ PML_LIB_PATH = $PML_LIB_PATH
 # Detection results
 FLINT_HEADER_CHECK = $FLINT_HEADER_CHECK
 FLINT_HEADER_DIR = $FLINT_HEADER_DIR
-FLINT_VERSION = $FLINT_VERSION
 FLINT_DYNAMIC_LIB_CHECK = $FLINT_DYNAMIC_LIB_CHECK
 FLINT_STATIC_LIB_CHECK = $FLINT_STATIC_LIB_CHECK
 FLINT_SO_PATH = $FLINT_SO_PATH
