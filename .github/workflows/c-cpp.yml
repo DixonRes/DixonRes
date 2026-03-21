@@ -1,40 +1,47 @@
 name: C/C++ CI
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  on:
+    push:
+      branches: [ "main" ]
+    pull_request:
+      branches: [ "main" ]
 
-jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    
-    runs-on: ${{ matrix.os }}
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install FLINT (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libflint-dev
-    
-    - name: Install FLINT (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew update
-        brew install flint
-    
-    - name: configure
-      run: ./configure
-    
-    - name: make
-      run: make
-    
-    - name: make check
-      run: make check
+  jobs:
+    build-macos:
+      strategy:
+        fail-fast: false
+        matrix:
+          os: [macos-13, macos-latest]
+
+      runs-on: ${{ matrix.os }}
+
+      steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FLINT
+        run: |
+          brew update
+          brew install flint pkgconf
+          echo "FLINT_PREFIX=$(brew --prefix flint)" >> "$GITHUB_ENV"
+
+      - name: Debug FLINT path
+        run: |
+          echo "runner: $RUNNER_OS"
+          echo "arch: $(uname -m)"
+          echo "flint prefix: $FLINT_PREFIX"
+          ls "$FLINT_PREFIX/include/flint/flint.h"
+          pkg-config --cflags flint
+          pkg-config --libs flint
+
+      - name: configure
+        run: |
+          CPPFLAGS="-I$FLINT_PREFIX/include" \
+          LDFLAGS="-L$FLINT_PREFIX/lib" \
+          PKG_CONFIG_PATH="$FLINT_PREFIX/lib/pkgconfig" \
+          ./configure
+
+      - name: make
+        run: make -j"$(sysctl -n hw.logicalcpu)"
+
+      - name: make check
+        run: make check
