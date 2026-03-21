@@ -11,12 +11,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-latest]
+        os: [ubuntu-latest, macos-latest]
     
     runs-on: ${{ matrix.os }}
     
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Install FLINT (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libflint-dev
+    
+    - name: Install FLINT (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew update
+        brew install flint
     
     - name: configure
       run: ./configure
