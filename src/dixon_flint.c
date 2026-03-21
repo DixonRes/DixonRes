@@ -1800,6 +1800,36 @@ static slong dixon_binomial(slong n, slong k) {
     return result;
 }
 
+
+static void dixon_add_generic_monomials(fq_mvpoly_t *poly,
+                                        slong nvars,
+                                        slong *exp,
+                                        slong pos,
+                                        slong remaining,
+                                        flint_rand_t state,
+                                        const fq_nmod_ctx_t ctx) {
+    if (pos == nvars) {
+        fq_nmod_t coeff;
+        fq_nmod_init(coeff, ctx);
+        do {
+            fq_nmod_randtest(coeff, state, ctx);
+        } while (fq_nmod_is_zero(coeff, ctx));
+
+        slong *var_exp = (slong*) malloc(nvars * sizeof(slong));
+        memcpy(var_exp, exp, nvars * sizeof(slong));
+        fq_mvpoly_add_term(poly, var_exp, NULL, coeff);
+
+        fq_nmod_clear(coeff, ctx);
+        free(var_exp);
+        return;
+    }
+
+    for (slong d = 0; d <= remaining; d++) {
+        exp[pos] = d;
+        dixon_add_generic_monomials(poly, nvars, exp, pos + 1, remaining - d, state, ctx);
+    }
+}
+
 // Calculate actual Dixon matrix size by building the system and extracting matrix
 slong dixon_matrix_size(slong nvars, slong degree, ulong prime, slong field_degree) {
     printf("\nCalculating Dixon matrix size for n=%ld, d=%ld\n", nvars, degree);
@@ -1828,33 +1858,9 @@ slong dixon_matrix_size(slong nvars, slong degree, ulong prime, slong field_degr
         slong total_monomials = dixon_binomial(nvars + degree, degree);
         
         // Enumerate all monomials recursively
-        void add_monomials(slong *exp, slong pos, slong remaining) {
-            if (pos == nvars) {
-                // Add this monomial with random coefficient
-                fq_nmod_t coeff;
-                fq_nmod_init(coeff, ctx);
-                do {
-                    fq_nmod_randtest(coeff, state, ctx);
-                } while (fq_nmod_is_zero(coeff, ctx));
-                
-                slong *var_exp = (slong*) malloc(nvars * sizeof(slong));
-                memcpy(var_exp, exp, nvars * sizeof(slong));
-                fq_mvpoly_add_term(&polys[i], var_exp, NULL, coeff);
-                
-                fq_nmod_clear(coeff, ctx);
-                free(var_exp);
-                return;
-            }
-            
-            for (slong d = 0; d <= remaining; d++) {
-                exp[pos] = d;
-                add_monomials(exp, pos + 1, remaining - d);
-            }
-        }
-        
         slong *temp_exp = (slong*) calloc(nvars, sizeof(slong));
         for (slong d = 0; d <= degree; d++) {
-            add_monomials(temp_exp, 0, d);
+            dixon_add_generic_monomials(&polys[i], nvars, temp_exp, 0, d, state, ctx);
         }
         free(temp_exp);
     }
