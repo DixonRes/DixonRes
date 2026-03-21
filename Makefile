@@ -94,7 +94,7 @@ ALL_SOURCES = $(DIXON_SRC) $(MATH_SOURCES)
 
 # Library names (in current directory)
 DIXON_STATIC_LIB = libdixon.a
-DIXON_SHARED_LIB = libdixon.so
+DIXON_SHARED_LIB = libdixon.$(SHARED_LIB_EXT)
 
 # Output executable (in current directory)
 DIXON_TARGET = dixon
@@ -173,7 +173,7 @@ dynamic-lib: $(DIXON_SHARED_LIB)
 
 $(DIXON_SHARED_LIB): $(MATH_OBJECTS)
 	@echo "Building dynamic dixon library..."
-	$(CC) -shared -o $@ $^ $(EXTERNAL_LIBS) $(LDFLAGS)
+	$(CC) $(SHARED_LDFLAGS) -o $@ $^ $(EXTERNAL_LIBS) $(LDFLAGS)
 	@echo "Dynamic library built: $(DIXON_SHARED_LIB)"
 
 # Build static dixon library
