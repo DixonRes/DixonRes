@@ -8,10 +8,12 @@
 
 /* Check CPU features */
 int has_pclmulqdq(void) {
+#if DIXON_X86_SIMD
     unsigned int eax, ebx, ecx, edx;
     if (__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
         return (ecx & bit_PCLMUL) != 0;
     }
+#endif
     return 0;
 }
 
@@ -402,6 +404,7 @@ gf232_t gf232_mul_software(const gf232_t *a, const gf232_t *b) {
 
 /* Optimized PCLMUL-based multiplication for GF(2^32) with new polynomial */
 gf232_t gf232_mul_pclmul(const gf232_t *a, const gf232_t *b) {
+#if DIXON_X86_SIMD
     __m128i x = _mm_set_epi64x(0, a->value);
     __m128i y = _mm_set_epi64x(0, b->value);
     
@@ -421,20 +424,17 @@ gf232_t gf232_mul_pclmul(const gf232_t *a, const gf232_t *b) {
     uint32_t h = (uint32_t)hi;
     
     /* Compute h * 0x8299 using shifts and XORs */
-    fold = h;                    // h * 1
-    fold ^= (uint64_t)h << 3;    // h * x^3
-    fold ^= (uint64_t)h << 4;    // h * x^4
-    fold ^= (uint64_t)h << 7;    // h * x^7
-    fold ^= (uint64_t)h << 9;    // h * x^9
-    fold ^= (uint64_t)h << 15;   // h * x^15
+    fold = h;
+    fold ^= (uint64_t)h << 3;
+    fold ^= (uint64_t)h << 4;
+    fold ^= (uint64_t)h << 7;
+    fold ^= (uint64_t)h << 9;
+    fold ^= (uint64_t)h << 15;
     
-    /* XOR with lower part */
     result = lo ^ (fold & 0xFFFFFFFF);
     
-    /* Handle any overflow from the fold operation */
     uint32_t fold_hi = fold >> 32;
     if (fold_hi) {
-        /* Need another reduction step */
         uint32_t extra = fold_hi;
         extra ^= fold_hi << 3;
         extra ^= fold_hi << 4;
@@ -445,6 +445,9 @@ gf232_t gf232_mul_pclmul(const gf232_t *a, const gf232_t *b) {
     }
     
     return gf232_create((uint32_t)result);
+#else
+    return gf232_mul_software(a, b);
+#endif
 }
 
 /* Fast squaring in GF(2^32) with new polynomial */
@@ -629,6 +632,7 @@ gf264_t gf264_mul_software(const gf264_t *a, const gf264_t *b) {
 
 /* PCLMUL-based multiplication for GF(2^64) */
 gf264_t gf264_mul_pclmul(const gf264_t *a, const gf264_t *b) {
+#if DIXON_X86_SIMD
     __m128i x = _mm_set_epi64x(0, a->value);
     __m128i y = _mm_set_epi64x(0, b->value);
     
@@ -642,6 +646,9 @@ gf264_t gf264_mul_pclmul(const gf264_t *a, const gf264_t *b) {
     gf264_reduce_128(&lo, &hi);
     
     return gf264_create(lo);
+#else
+    return gf264_mul_software(a, b);
+#endif
 }
 
 /* Fast squaring in GF(2^64) */
@@ -864,6 +871,7 @@ gf2128_t gf2128_mul_software(const gf2128_t *a, const gf2128_t *b) {
 
 /* CLMUL-based multiplication for GF(2^128) */
 inline gf2128_t gf2128_mul_clmul(const gf2128_t *a, const gf2128_t *b) {
+#if DIXON_X86_SIMD
     __m128i x = _mm_set_epi64x(a->high, a->low);
     __m128i y = _mm_set_epi64x(b->high, b->low);
     
@@ -880,24 +888,23 @@ inline gf2128_t gf2128_mul_clmul(const gf2128_t *a, const gf2128_t *b) {
     __m128i lo = _mm_xor_si128(t0, _mm_slli_si128(t2, 8));
     __m128i hi = _mm_xor_si128(t1, _mm_srli_si128(t2, 8));
     
-    /* Step 2: Optimized reduction using bit-reflected algorithm */
-    const uint64_t g = 0x87;  // Bit representation of x^7 + x^2 + x + 1
+    const uint64_t g = 0x87;
     
-    /* First phase: eliminate bits 255-192 */
     __m128i tmp = _mm_clmulepi64_si128(hi, _mm_set_epi64x(0, g), 0x01);
     hi = _mm_xor_si128(hi, _mm_srli_si128(tmp, 8));
     lo = _mm_xor_si128(lo, _mm_slli_si128(tmp, 8));
     
-    /* Second phase: eliminate bits 191-128 */
     tmp = _mm_clmulepi64_si128(hi, _mm_set_epi64x(0, g), 0x00);
     lo = _mm_xor_si128(lo, tmp);
     
-    /* Extract result */
     gf2128_t res;
     res.low = _mm_extract_epi64(lo, 0);
     res.high = _mm_extract_epi64(lo, 1);
     
     return res;
+#else
+    return gf2128_mul_software(a, b);
+#endif
 }
 
 /* Initialize multiplication function */

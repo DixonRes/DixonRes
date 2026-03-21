@@ -3,7 +3,9 @@
  */
 
 #include "gf2n_mpoly.h"
+#if DIXON_X86_SIMD
 #include <emmintrin.h>  /* SSE2 */
+#endif
 
 /* ============================================================================
    HELPER: multi-word packed exponent field access (N <= 2)
@@ -1439,11 +1441,13 @@ int gf28_mpolyd_set_degbounds(gf28_mpolyd_t A, const slong *bounds) {
 
 void batch_xor_sse2(uint8_t *dst, const uint8_t *src, slong len) {
     slong i = 0;
+#if DIXON_X86_SIMD
     for (; i + 16 <= len; i += 16) {
         __m128i a = _mm_loadu_si128((__m128i *)(dst + i));
         __m128i b = _mm_loadu_si128((__m128i *)(src + i));
         _mm_storeu_si128((__m128i *)(dst + i), _mm_xor_si128(a, b));
     }
+#endif
     for (; i < len; i++) dst[i] ^= src[i];
 }
 

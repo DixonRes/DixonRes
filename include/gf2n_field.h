@@ -6,12 +6,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#if defined(__x86_64__) || defined(__i386__)
+#define DIXON_X86_SIMD 1
 #include <immintrin.h>
+#include <cpuid.h>
+#else
+#define DIXON_X86_SIMD 0
+#endif
 #include <flint/flint.h>
 #include <flint/fq_nmod.h>
 #include <flint/nmod_poly.h>
 #include <gmp.h>
-#include <cpuid.h>
 #include <time.h>
 #include <assert.h>
 #include <math.h>

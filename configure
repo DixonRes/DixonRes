@@ -16,12 +16,17 @@ set -e
 # Defaults
 # ============================================================
 CC="${CC:-cc}"
-FLINT_INCLUDE_PATH="${FLINT_INCLUDE_PATH:-/usr/local/include}"
-FLINT_LIB_PATH="${FLINT_LIB_PATH:-/usr/local/lib}"
-PML_INCLUDE_PATH="${PML_INCLUDE_PATH:-/usr/local/include}"
-PML_LIB_PATH="${PML_LIB_PATH:-/usr/local/lib}"
 ENABLE_ASAN="no"
 HOST_OS=$(uname -s 2>/dev/null || echo unknown)
+HOST_ARCH=$(uname -m 2>/dev/null || echo unknown)
+DEFAULT_PREFIX="/usr/local"
+if [ "$HOST_OS" = "Darwin" ] && { [ "$HOST_ARCH" = "arm64" ] || [ "$HOST_ARCH" = "aarch64" ]; } && [ -d /opt/homebrew/include ]; then
+    DEFAULT_PREFIX="/opt/homebrew"
+fi
+FLINT_INCLUDE_PATH="${FLINT_INCLUDE_PATH:-$DEFAULT_PREFIX/include}"
+FLINT_LIB_PATH="${FLINT_LIB_PATH:-$DEFAULT_PREFIX/lib}"
+PML_INCLUDE_PATH="${PML_INCLUDE_PATH:-$DEFAULT_PREFIX/include}"
+PML_LIB_PATH="${PML_LIB_PATH:-$DEFAULT_PREFIX/lib}"
 
 case "$HOST_OS" in
     Darwin)
