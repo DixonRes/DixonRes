@@ -1,7 +1,7 @@
 #!/bin/sh
 # configure script - detects libraries and generates config.mk
 # Usage: ./configure [options]
-#   --cc=COMPILER          Set C compiler (default: gcc)
+#   --cc=COMPILER          Set C compiler (default: cc)
 #   --flint-include=PATH   Set FLINT include path
 #   --flint-lib=PATH       Set FLINT library path
 #   --pml-include=PATH     Set PML include path
@@ -15,12 +15,26 @@ set -e
 # ============================================================
 # Defaults
 # ============================================================
-CC="${CC:-gcc}"
+CC="${CC:-cc}"
 FLINT_INCLUDE_PATH="${FLINT_INCLUDE_PATH:-/usr/local/include}"
 FLINT_LIB_PATH="${FLINT_LIB_PATH:-/usr/local/lib}"
 PML_INCLUDE_PATH="${PML_INCLUDE_PATH:-/usr/local/include}"
 PML_LIB_PATH="${PML_LIB_PATH:-/usr/local/lib}"
 ENABLE_ASAN="no"
+HOST_OS=$(uname -s 2>/dev/null || echo unknown)
+
+case "$HOST_OS" in
+    Darwin)
+        SHARED_LIB_EXT="dylib"
+        SHARED_LDFLAGS="-dynamiclib"
+        DEFAULT_SYSTEM_LIBS="-lmpfr -lgmp -lm"
+        ;;
+    *)
+        SHARED_LIB_EXT="so"
+        SHARED_LDFLAGS="-shared"
+        DEFAULT_SYSTEM_LIBS="-lmpfr -lgmp -lm -lpthread -lstdc++"
+        ;;
+esac
 
 # ============================================================
 # Parse command-line arguments
@@ -46,18 +60,75 @@ for arg in "$@"; do
     esac
 done
 
-# ============================================================
-# Build header test flags from C_INCLUDE_PATH + local include/
-# ============================================================
-HEADER_TEST_FLAGS="-I./include"
-if [ -n "$C_INCLUDE_PATH" ]; then
-    OLD_IFS="$IFS"
-    IFS=":"
-    for p in $C_INCLUDE_PATH; do
-        [ -n "$p" ] && HEADER_TEST_FLAGS="$HEADER_TEST_FLAGS -I$p"
+append_space_list_unique() {
+    _list="$1"
+    _item="$2"
+    case " $_list " in
+        *" $_item "*) printf '%s' "$_list" ;;
+        *)
+            if [ -n "$_list" ]; then
+                printf '%s %s' "$_list" "$_item"
+            else
+                printf '%s' "$_item"
+            fi
+            ;;
+    esac
+}
+
+append_colon_paths() {
+    _list="$1"
+    _paths="$2"
+    if [ -n "$_paths" ]; then
+        OLD_IFS="$IFS"
+        IFS=":"
+        for p in $_paths; do
+            [ -n "$p" ] && _list=$(append_space_list_unique "$_list" "$p")
+        done
+        IFS="$OLD_IFS"
+    fi
+    printf '%s' "$_list"
+}
+
+extract_flag_dirs() {
+    _flags="$1"
+    _kind="$2"
+    _want_next="no"
+    for tok in $_flags; do
+        if [ "$_want_next" = "yes" ]; then
+            [ -n "$tok" ] && printf '%s\n' "$tok"
+            _want_next="no"
+            continue
+        fi
+        case "$_kind:$tok" in
+            I:-I|L:-L)
+                _want_next="yes"
+                ;;
+            I:-I*)
+                printf '%s\n' "${tok#-I}"
+                ;;
+            L:-L*)
+                printf '%s\n' "${tok#-L}"
+                ;;
+        esac
     done
-    IFS="$OLD_IFS"
-fi
+}
+
+build_include_search_paths() {
+    _paths="./include"
+    _paths=$(append_colon_paths "$_paths" "$C_INCLUDE_PATH")
+    for p in $(extract_flag_dirs "$CPPFLAGS $CFLAGS" I); do
+        [ -n "$p" ] && _paths=$(append_space_list_unique "$_paths" "$p")
+    done
+    for p in         "$FLINT_INCLUDE_PATH"         "$PML_INCLUDE_PATH"         "/usr/local/include"         "/opt/homebrew/include"         "/opt/local/include"         "/usr/include"
+    do
+        [ -n "$p" ] && [ -d "$p" ] && _paths=$(append_space_list_unique "$_paths" "$p")
+    done
+    _compiler_paths=$($CC -E -v - </dev/null 2>&1         | awk '/#include <\.\.\.> search starts here:/{p=1;next} /End of search list/{p=0} p{sub(/^[[:space:]]+/, "", $0); print $0}')
+    for p in $_compiler_paths; do
+        [ -n "$p" ] && _paths=$(append_space_list_unique "$_paths" "$p")
+    done
+    printf '%s' "$_paths"
+}
 
 # ============================================================
 # Helper: test if a header file physically exists under any
@@ -66,19 +137,7 @@ fi
 # ============================================================
 test_header() {
     _header="$1"
-    # Paths to search: explicit flags + gcc's own built-in paths
-    _search_paths="./include"
-    if [ -n "$C_INCLUDE_PATH" ]; then
-        OLD_IFS="$IFS"; IFS=":"
-        for p in $C_INCLUDE_PATH; do
-            [ -n "$p" ] && _search_paths="$_search_paths $p"
-        done
-        IFS="$OLD_IFS"
-    fi
-    # Pull gcc's built-in system include paths
-    _gcc_paths=$($CC -E -v - </dev/null 2>&1 \
-        | awk '/#include <\.\.\.> search starts here:/{p=1;next} /End of search list/{p=0} p{print $1}')
-    _search_paths="$_search_paths $_gcc_paths"
+    _search_paths=$(build_include_search_paths)
 
     for _dir in $_search_paths; do
         [ -n "$_dir" ] && [ -f "$_dir/$_header" ] && echo "yes" && return 0
@@ -92,17 +151,7 @@ test_header() {
 # ============================================================
 find_header_dir() {
     _header="$1"
-    _search_paths="./include"
-    if [ -n "$C_INCLUDE_PATH" ]; then
-        OLD_IFS="$IFS"; IFS=":"
-        for p in $C_INCLUDE_PATH; do
-            [ -n "$p" ] && _search_paths="$_search_paths $p"
-        done
-        IFS="$OLD_IFS"
-    fi
-    _gcc_paths=$($CC -E -v - </dev/null 2>&1 \
-        | awk '/#include <\.\.\.> search starts here:/{p=1;next} /End of search list/{p=0} p{print $1}')
-    _search_paths="$_search_paths $_gcc_paths"
+    _search_paths=$(build_include_search_paths)
 
     for _dir in $_search_paths; do
         if [ -n "$_dir" ] && [ -f "$_dir/$_header" ]; then
@@ -115,46 +164,70 @@ find_header_dir() {
 # ============================================================
 # Build system library search paths
 # ============================================================
-SYSTEM_LIB_PATHS=$(echo "$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib:/usr/lib64:/usr/local/lib64:/lib:/lib64:/usr/lib/x86_64-linux-gnu" | tr ':' ' ' | tr -s ' ')
+SYSTEM_LIB_PATHS=""
+SYSTEM_LIB_PATHS=$(append_colon_paths "$SYSTEM_LIB_PATHS" "$LIBRARY_PATH")
+SYSTEM_LIB_PATHS=$(append_colon_paths "$SYSTEM_LIB_PATHS" "$LD_LIBRARY_PATH")
+SYSTEM_LIB_PATHS=$(append_colon_paths "$SYSTEM_LIB_PATHS" "$DYLD_LIBRARY_PATH")
+for p in $(extract_flag_dirs "$LDFLAGS $LIBS" L); do
+    [ -n "$p" ] && SYSTEM_LIB_PATHS=$(append_space_list_unique "$SYSTEM_LIB_PATHS" "$p")
+done
+for p in     "$FLINT_LIB_PATH"     "$PML_LIB_PATH"     "/usr/lib"     "/usr/local/lib"     "/usr/lib64"     "/usr/local/lib64"     "/lib"     "/lib64"     "/usr/lib/x86_64-linux-gnu"     "/opt/homebrew/lib"     "/opt/local/lib"
+do
+    [ -n "$p" ] && [ -d "$p" ] && SYSTEM_LIB_PATHS=$(append_space_list_unique "$SYSTEM_LIB_PATHS" "$p")
+done
 
 # ============================================================
 # Library search helpers
 # ============================================================
-find_pml_so() {
+find_shared_lib() {
+    _name="$1"
     for path in $SYSTEM_LIB_PATHS; do
         if [ -n "$path" ] && [ -d "$path" ]; then
-            if [ -f "$path/libpml.so" ]; then echo "$path/libpml.so"; return 0; fi
-            for f in "$path"/libpml.so.*; do
+            if [ -f "$path/lib$_name.$SHARED_LIB_EXT" ]; then echo "$path/lib$_name.$SHARED_LIB_EXT"; return 0; fi
+            for f in "$path"/lib"$_name".$SHARED_LIB_EXT.*; do
                 if [ -f "$f" ]; then echo "$f"; return 0; fi
             done
+            if [ "$SHARED_LIB_EXT" = "dylib" ]; then
+                for f in "$path"/lib"$_name".*.dylib; do
+                    if [ -f "$f" ]; then echo "$f"; return 0; fi
+                done
+            fi
         fi
     done
 }
 
-find_pml_a() {
+find_static_lib() {
+    _name="$1"
     for path in $SYSTEM_LIB_PATHS; do
-        if [ -n "$path" ] && [ -f "$path/libpml.a" ]; then
-            echo "$path/libpml.a"
+        if [ -n "$path" ] && [ -f "$path/lib$_name.a" ]; then
+            echo "$path/lib$_name.a"
             return 0
         fi
     done
 }
 
-check_pml_so() {
+check_shared_lib() {
+    _name="$1"
     for path in $SYSTEM_LIB_PATHS; do
         if [ -n "$path" ] && [ -d "$path" ]; then
-            if [ -f "$path/libpml.so" ]; then echo "yes"; return 0; fi
-            for f in "$path"/libpml.so.*; do
+            if [ -f "$path/lib$_name.$SHARED_LIB_EXT" ]; then echo "yes"; return 0; fi
+            for f in "$path"/lib"$_name".$SHARED_LIB_EXT.*; do
                 if [ -f "$f" ]; then echo "yes"; return 0; fi
             done
+            if [ "$SHARED_LIB_EXT" = "dylib" ]; then
+                for f in "$path"/lib"$_name".*.dylib; do
+                    if [ -f "$f" ]; then echo "yes"; return 0; fi
+                done
+            fi
         fi
     done
     echo "no"
 }
 
-check_pml_a() {
+check_static_lib() {
+    _name="$1"
     for path in $SYSTEM_LIB_PATHS; do
-        if [ -n "$path" ] && [ -f "$path/libpml.a" ]; then
+        if [ -n "$path" ] && [ -f "$path/lib$_name.a" ]; then
             echo "yes"
             return 0
         fi
@@ -197,10 +270,12 @@ echo "$FLINT_HEADER_CHECK"
 if [ "$FLINT_HEADER_CHECK" != "yes" ]; then
     echo "configure: error: FLINT headers not found!"
     echo "  Compiler cannot find flint/flint.h."
-    echo "  Check C_INCLUDE_PATH or install FLINT development packages."
+    echo "  Check C_INCLUDE_PATH/CPPFLAGS or install FLINT development packages."
     rm -f "$TEMP_TEST_FILE"
     exit 1
 fi
+
+FLINT_HEADER_DIR=$(find_header_dir "flint/flint.h")
 
 # --- FLINT include directory ---
 printf "checking for FLINT include directory... "
@@ -208,8 +283,49 @@ FLINT_DIR_EXISTS="no"
 if [ -d "$FLINT_INCLUDE_PATH" ]; then
     FLINT_DIR_EXISTS="yes"
     echo "$FLINT_INCLUDE_PATH"
+elif [ -n "$FLINT_HEADER_DIR" ]; then
+    FLINT_INCLUDE_PATH="$FLINT_HEADER_DIR"
+    FLINT_DIR_EXISTS="yes"
+    echo "$FLINT_INCLUDE_PATH (from compiler/include search path)"
 else
     echo "not found at $FLINT_INCLUDE_PATH (using compiler search paths)"
+fi
+
+# --- FLINT libraries (required) ---
+printf "checking for FLINT shared library... "
+FLINT_DYNAMIC_LIB_CHECK=$(check_shared_lib "flint")
+FLINT_SO_PATH=$(find_shared_lib "flint")
+if [ "$FLINT_DYNAMIC_LIB_CHECK" = "yes" ]; then
+    echo "$FLINT_SO_PATH"
+else
+    echo "no"
+fi
+
+printf "checking for FLINT static library... "
+FLINT_STATIC_LIB_CHECK=$(check_static_lib "flint")
+FLINT_A_PATH=$(find_static_lib "flint")
+if [ "$FLINT_STATIC_LIB_CHECK" = "yes" ]; then
+    echo "$FLINT_A_PATH"
+else
+    echo "no"
+fi
+
+if [ "$FLINT_DYNAMIC_LIB_CHECK" = "yes" ] && [ -n "$FLINT_SO_PATH" ]; then
+    FLINT_LIB_PATH=$(dirname "$FLINT_SO_PATH")
+elif [ "$FLINT_STATIC_LIB_CHECK" = "yes" ] && [ -n "$FLINT_A_PATH" ]; then
+    FLINT_LIB_PATH=$(dirname "$FLINT_A_PATH")
+elif [ -n "$FLINT_HEADER_DIR" ]; then
+    _flint_prefix=${FLINT_HEADER_DIR%/include}
+    if [ "$_flint_prefix" != "$FLINT_HEADER_DIR" ] && [ -d "$_flint_prefix/lib" ]; then
+        FLINT_LIB_PATH="$_flint_prefix/lib"
+    fi
+fi
+
+if [ ! -d "$FLINT_LIB_PATH" ]; then
+    echo "configure: error: FLINT libraries not found!"
+    echo "  Linker cannot find libflint.$SHARED_LIB_EXT or libflint.a."
+    echo "  Check LDFLAGS/LIBRARY_PATH or install FLINT development packages."
+    exit 1
 fi
 
 # --- PML headers ---
@@ -251,9 +367,9 @@ NMOD_POLY_MAT_EXTRA_CHECK=$(test_header "${PML_HEADER_PREFIX}nmod_poly_mat_extra
 echo "$NMOD_POLY_MAT_EXTRA_CHECK"
 
 # --- PML libraries ---
-printf "checking for libpml.so... "
-PML_DYNAMIC_LIB_CHECK=$(check_pml_so)
-PML_SO_PATH=$(find_pml_so)
+printf "checking for shared PML library... "
+PML_DYNAMIC_LIB_CHECK=$(check_shared_lib "pml")
+PML_SO_PATH=$(find_shared_lib "pml")
 if [ "$PML_DYNAMIC_LIB_CHECK" = "yes" ]; then
     echo "$PML_SO_PATH"
 else
@@ -261,8 +377,8 @@ else
 fi
 
 printf "checking for libpml.a... "
-PML_STATIC_LIB_CHECK=$(check_pml_a)
-PML_A_PATH=$(find_pml_a)
+PML_STATIC_LIB_CHECK=$(check_static_lib "pml")
+PML_A_PATH=$(find_static_lib "pml")
 if [ "$PML_STATIC_LIB_CHECK" = "yes" ]; then
     echo "$PML_A_PATH"
 else
@@ -336,24 +452,11 @@ fi
 # ============================================================
 # Include flags
 INCLUDE_FLAGS="-I./include"
-if [ -n "$C_INCLUDE_PATH" ]; then
-    OLD_IFS="$IFS"
-    IFS=":"
-    for p in $C_INCLUDE_PATH; do
-        [ -n "$p" ] && INCLUDE_FLAGS="$INCLUDE_FLAGS -I$p"
-    done
-    IFS="$OLD_IFS"
-fi
-
-# If PML headers live inside a pml/ subdirectory, the headers themselves
-# use bare #include <nmod_poly_mat_utils.h> etc., so we must add the pml/
-# directory itself (not just its parent) to the compiler search path.
-# Example: headers at /usr/local/include/pml/pml.h
-#   -> we add -I/usr/local/include/pml so bare includes resolve correctly.
-if [ "$PML_AVAILABLE" = "yes" ] && [ -n "$PML_HEADER_PREFIX" ] && [ -n "$PML_HEADER_DIR" ]; then
-    # Only add if not already covered by C_INCLUDE_PATH or gcc paths
-    INCLUDE_FLAGS="$INCLUDE_FLAGS -I$PML_HEADER_DIR"
-fi
+for p in $(build_include_search_paths); do
+    if [ -n "$p" ] && [ "$p" != "./include" ]; then
+        INCLUDE_FLAGS="$INCLUDE_FLAGS -I$p"
+    fi
+done
 
 # Preprocessor defines
 FLINT_FLAGS="-DHAVE_FLINT"
@@ -405,6 +508,11 @@ PML_LIB_PATH = $PML_LIB_PATH
 
 # Detection results
 FLINT_HEADER_CHECK = $FLINT_HEADER_CHECK
+FLINT_HEADER_DIR = $FLINT_HEADER_DIR
+FLINT_DYNAMIC_LIB_CHECK = $FLINT_DYNAMIC_LIB_CHECK
+FLINT_STATIC_LIB_CHECK = $FLINT_STATIC_LIB_CHECK
+FLINT_SO_PATH = $FLINT_SO_PATH
+FLINT_A_PATH = $FLINT_A_PATH
 PML_HEADER_CHECK = $PML_HEADER_CHECK
 PML_HEADER_PREFIX = $PML_HEADER_PREFIX
 PML_HEADER_DIR = $PML_HEADER_DIR
@@ -431,10 +539,14 @@ FLINT_LIBS = -L$FLINT_LIB_PATH -lflint
 FLINT_STATIC_LIBS = $FLINT_LIB_PATH/libflint.a
 PML_LIBS = $PML_LIBS
 PML_STATIC_LIBS = $PML_STATIC_LIBS
-SYSTEM_LIBS = -lmpfr -lgmp -lm -lpthread -lstdc++
+SYSTEM_LIBS = $DEFAULT_SYSTEM_LIBS
 
 # RPATH
 RPATH_FLAGS = $RPATH_FLAGS
+
+# Shared library build
+SHARED_LIB_EXT = $SHARED_LIB_EXT
+SHARED_LDFLAGS = $SHARED_LDFLAGS
 
 # AddressSanitizer
 ENABLE_ASAN = $ENABLE_ASAN
