@@ -52,6 +52,93 @@ static void fq_nmod_poly_reduce_field_equation_interp(fq_nmod_poly_t poly, const
     fq_nmod_poly_clear(reduced, ctx);
 }
 
+
+typedef struct {
+    field_elem_u *coeffs;
+    slong degree;
+} interp_unified_poly_t;
+
+static void interp_build_unified_product_tree(interp_unified_poly_t *result,
+                                              const field_elem_u *nodes_arr,
+                                              slong start,
+                                              slong end,
+                                              field_id_t field_id,
+                                              void *ctx_ptr) {
+    if (start == end) {
+        result->degree = 1;
+        result->coeffs = (field_elem_u*)malloc(2 * sizeof(field_elem_u));
+
+        field_init_elem(&result->coeffs[0], field_id, ctx_ptr);
+        field_init_elem(&result->coeffs[1], field_id, ctx_ptr);
+
+        field_set_one(&result->coeffs[1], field_id, ctx_ptr);
+        field_neg(&result->coeffs[0], &nodes_arr[start], field_id, ctx_ptr);
+        return;
+    }
+
+    slong mid = (start + end) / 2;
+
+    interp_unified_poly_t left, right;
+    interp_build_unified_product_tree(&left, nodes_arr, start, mid, field_id, ctx_ptr);
+    interp_build_unified_product_tree(&right, nodes_arr, mid + 1, end, field_id, ctx_ptr);
+
+    result->degree = left.degree + right.degree;
+    result->coeffs = (field_elem_u*)malloc((result->degree + 1) * sizeof(field_elem_u));
+
+    for (slong i = 0; i <= result->degree; i++) {
+        field_init_elem(&result->coeffs[i], field_id, ctx_ptr);
+        field_set_zero(&result->coeffs[i], field_id, ctx_ptr);
+    }
+
+    field_elem_u temp;
+    field_init_elem(&temp, field_id, ctx_ptr);
+
+    for (slong i = 0; i <= left.degree; i++) {
+        for (slong j = 0; j <= right.degree; j++) {
+            field_mul(&temp, &left.coeffs[i], &right.coeffs[j], field_id, ctx_ptr);
+            field_add(&result->coeffs[i + j], &result->coeffs[i + j], &temp, field_id, ctx_ptr);
+        }
+    }
+
+    field_clear_elem(&temp, field_id, ctx_ptr);
+
+    for (slong i = 0; i <= left.degree; i++) {
+        field_clear_elem(&left.coeffs[i], field_id, ctx_ptr);
+    }
+    for (slong i = 0; i <= right.degree; i++) {
+        field_clear_elem(&right.coeffs[i], field_id, ctx_ptr);
+    }
+    free(left.coeffs);
+    free(right.coeffs);
+}
+
+static void interp_divide_by_linear(interp_unified_poly_t *quotient,
+                                    const interp_unified_poly_t *dividend,
+                                    const field_elem_u *node,
+                                    field_id_t field_id,
+                                    void *ctx_ptr) {
+    quotient->degree = dividend->degree - 1;
+    quotient->coeffs = (field_elem_u*)malloc((quotient->degree + 1) * sizeof(field_elem_u));
+
+    field_elem_u temp;
+    field_init_elem(&temp, field_id, ctx_ptr);
+
+    for (slong i = 0; i <= quotient->degree; i++) {
+        field_init_elem(&quotient->coeffs[i], field_id, ctx_ptr);
+    }
+
+    field_set_elem(&quotient->coeffs[quotient->degree],
+                   &dividend->coeffs[dividend->degree],
+                   field_id, ctx_ptr);
+
+    for (slong i = quotient->degree - 1; i >= 0; i--) {
+        field_mul(&temp, &quotient->coeffs[i + 1], node, field_id, ctx_ptr);
+        field_add(&quotient->coeffs[i], &dividend->coeffs[i + 1], &temp, field_id, ctx_ptr);
+    }
+
+    field_clear_elem(&temp, field_id, ctx_ptr);
+}
+
 void fq_interpolation_set_parallel(int use_parallel) {
     USE_PARALLEL = use_parallel;
     //printf("Parallelization %s\n", use_parallel ? "enabled" : "disabled");
@@ -380,73 +467,9 @@ void fq_lagrange_interpolation_optimized(fq_nmod_poly_t result,
     double tree_start = get_time();
     
     // Use unified operations for building product tree
-    typedef struct {
-        field_elem_u *coeffs;
-        slong degree;
-    } unified_poly_t;
-    
-    // Function to build product tree using unified operations
-    void build_unified_product_tree(unified_poly_t *result, 
-                                   const field_elem_u *nodes_arr, 
-                                   slong start, slong end) {
-        if (start == end) {
-            // Base case: (x - nodes[start])
-            result->degree = 1;
-            result->coeffs = (field_elem_u*)malloc(2 * sizeof(field_elem_u));
-            
-            field_init_elem(&result->coeffs[0], unified_ctx.field_id, ctx_ptr);
-            field_init_elem(&result->coeffs[1], unified_ctx.field_id, ctx_ptr);
-            
-            field_set_one(&result->coeffs[1], unified_ctx.field_id, ctx_ptr);
-            field_neg(&result->coeffs[0], &nodes_arr[start], unified_ctx.field_id, ctx_ptr);
-            return;
-        }
-        
-        // Divide
-        slong mid = (start + end) / 2;
-        
-        unified_poly_t left, right;
-        build_unified_product_tree(&left, nodes_arr, start, mid);
-        build_unified_product_tree(&right, nodes_arr, mid + 1, end);
-        
-        // Conquer: multiply polynomials using unified operations
-        result->degree = left.degree + right.degree;
-        result->coeffs = (field_elem_u*)malloc((result->degree + 1) * sizeof(field_elem_u));
-        
-        // Initialize result coefficients to zero
-        for (slong i = 0; i <= result->degree; i++) {
-            field_init_elem(&result->coeffs[i], unified_ctx.field_id, ctx_ptr);
-            field_set_zero(&result->coeffs[i], unified_ctx.field_id, ctx_ptr);
-        }
-        
-        // Multiply polynomials: result = left * right
-        field_elem_u temp;
-        field_init_elem(&temp, unified_ctx.field_id, ctx_ptr);
-        
-        for (slong i = 0; i <= left.degree; i++) {
-            for (slong j = 0; j <= right.degree; j++) {
-                field_mul(&temp, &left.coeffs[i], &right.coeffs[j], 
-                         unified_ctx.field_id, ctx_ptr);
-                field_add(&result->coeffs[i + j], &result->coeffs[i + j], &temp, 
-                         unified_ctx.field_id, ctx_ptr);
-            }
-        }
-        
-        field_clear_elem(&temp, unified_ctx.field_id, ctx_ptr);
-        
-        // Clean up left and right
-        for (slong i = 0; i <= left.degree; i++) {
-            field_clear_elem(&left.coeffs[i], unified_ctx.field_id, ctx_ptr);
-        }
-        for (slong i = 0; i <= right.degree; i++) {
-            field_clear_elem(&right.coeffs[i], unified_ctx.field_id, ctx_ptr);
-        }
-        free(left.coeffs);
-        free(right.coeffs);
-    }
-    
-    unified_poly_t full_product;
-    build_unified_product_tree(&full_product, unified_nodes, 0, k-1);
+    interp_unified_poly_t full_product;
+    interp_build_unified_product_tree(&full_product, unified_nodes, 0, k - 1,
+                                      unified_ctx.field_id, ctx_ptr);
     
     double tree_time = get_time() - tree_start;
     
@@ -520,39 +543,8 @@ void fq_lagrange_interpolation_optimized(fq_nmod_poly_t result,
     // Step 3: Use polynomial division to get numerators efficiently
     double interp_start = get_time();
     
-    // Function to divide polynomial by (x - node) using unified operations
-    void divide_by_linear(unified_poly_t *quotient, const unified_poly_t *dividend, 
-                         const field_elem_u *node) {
-        quotient->degree = dividend->degree - 1;
-        quotient->coeffs = (field_elem_u*)malloc((quotient->degree + 1) * sizeof(field_elem_u));
-        
-        // Synthetic division
-        field_elem_u temp;
-        field_init_elem(&temp, unified_ctx.field_id, ctx_ptr);
-        
-        // Initialize quotient coefficients
-        for (slong i = 0; i <= quotient->degree; i++) {
-            field_init_elem(&quotient->coeffs[i], unified_ctx.field_id, ctx_ptr);
-        }
-        
-        // quotient[degree-1] = dividend[degree]
-        field_set_elem(&quotient->coeffs[quotient->degree], 
-                      &dividend->coeffs[dividend->degree], 
-                      unified_ctx.field_id, ctx_ptr);
-        
-        // Synthetic division loop
-        for (slong i = quotient->degree - 1; i >= 0; i--) {
-            field_mul(&temp, &quotient->coeffs[i + 1], node, 
-                     unified_ctx.field_id, ctx_ptr);
-            field_add(&quotient->coeffs[i], &dividend->coeffs[i + 1], &temp, 
-                     unified_ctx.field_id, ctx_ptr);
-        }
-        
-        field_clear_elem(&temp, unified_ctx.field_id, ctx_ptr);
-    }
-    
     // Build result polynomial
-    unified_poly_t result_poly;
+    interp_unified_poly_t result_poly;
     result_poly.degree = k - 1;
     result_poly.coeffs = (field_elem_u*)malloc(k * sizeof(field_elem_u));
     
@@ -569,8 +561,9 @@ void fq_lagrange_interpolation_optimized(fq_nmod_poly_t result,
         if (field_is_zero(&unified_values[j], unified_ctx.field_id, ctx_ptr)) continue;
         
         // Divide full_product by (x - nodes[j]) to get numerator
-        unified_poly_t quotient;
-        divide_by_linear(&quotient, &full_product, &unified_nodes[j]);
+        interp_unified_poly_t quotient;
+        interp_divide_by_linear(&quotient, &full_product, &unified_nodes[j],
+                                unified_ctx.field_id, ctx_ptr);
         
         // Compute coefficient: values[j] * den_inverses[j]
         field_mul(&coeff, &unified_values[j], &den_inverses[j], 
