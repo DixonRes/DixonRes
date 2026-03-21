@@ -340,6 +340,35 @@ slong count_possible_monomials(slong nvars, slong npars, slong max_degree) {
     return binomial_coefficient(total_indeterminates + max_degree, max_degree);
 }
 
+
+static void enumerate_all_monomials_recursive(monomial_t *monomials,
+                                              slong *count,
+                                              slong total_indeterminates,
+                                              slong *current_exp,
+                                              slong pos,
+                                              slong remaining_degree) {
+    if (pos == total_indeterminates) {
+        if (remaining_degree == 0) {
+            monomials[*count].exponents = (slong*) malloc(total_indeterminates * sizeof(slong));
+            memcpy(monomials[*count].exponents, current_exp, total_indeterminates * sizeof(slong));
+
+            slong total_deg = 0;
+            for (slong i = 0; i < total_indeterminates; i++) {
+                total_deg += current_exp[i];
+            }
+            monomials[*count].total_degree = total_deg;
+            (*count)++;
+        }
+        return;
+    }
+
+    for (slong deg = 0; deg <= remaining_degree; deg++) {
+        current_exp[pos] = deg;
+        enumerate_all_monomials_recursive(monomials, count, total_indeterminates,
+                                          current_exp, pos + 1, remaining_degree - deg);
+    }
+}
+
 // ============= Polynomial Generation =============
 // Generate all possible monomials with degree <= max_degree
 void enumerate_all_monomials(monomial_t **monomials, slong *count, 
@@ -353,36 +382,11 @@ void enumerate_all_monomials(monomial_t **monomials, slong *count,
     *monomials = (monomial_t*) malloc(max_possible * sizeof(monomial_t));
     *count = 0;
     
-    // Recursive function to generate monomials
-    void generate_recursive(slong *current_exp, slong pos, slong remaining_degree) {
-        if (pos == total_indeterminates) {
-            if (remaining_degree == 0) {
-                // Valid monomial found
-                (*monomials)[*count].exponents = (slong*) malloc(total_indeterminates * sizeof(slong));
-                memcpy((*monomials)[*count].exponents, current_exp, total_indeterminates * sizeof(slong));
-                
-                // Calculate total degree
-                slong total_deg = 0;
-                for (slong i = 0; i < total_indeterminates; i++) {
-                    total_deg += current_exp[i];
-                }
-                (*monomials)[*count].total_degree = total_deg;
-                (*count)++;
-            }
-            return;
-        }
-        
-        // Try all possible degrees for current position
-        for (slong deg = 0; deg <= remaining_degree; deg++) {
-            current_exp[pos] = deg;
-            generate_recursive(current_exp, pos + 1, remaining_degree - deg);
-        }
-    }
-    
     // Generate monomials for each total degree
     slong *temp_exp = (slong*) calloc(total_indeterminates, sizeof(slong));
     for (slong degree = 0; degree <= max_degree; degree++) {
-        generate_recursive(temp_exp, 0, degree);
+        enumerate_all_monomials_recursive(*monomials, count, total_indeterminates,
+                                          temp_exp, 0, degree);
     }
     free(temp_exp);
 }
