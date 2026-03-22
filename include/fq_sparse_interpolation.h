@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <gmp.h>
+#include "gf2n_field.h"
 
 // Debug flag
 #define DEBUG 0
