@@ -55,7 +55,7 @@ jobs:
         export CFLAGS="-I$CONDA_PREFIX/include"
         export CXXFLAGS="-I$CONDA_PREFIX/include"
         
-        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
+        export CFLAGS="$CFLAGS -march=x86-64 -mtune=generic"
         
         ./bootstrap.sh
         ./configure --with-flint=$CONDA_PREFIX --with-gmp=$CONDA_PREFIX --with-mpfr=$CONDA_PREFIX
@@ -80,7 +80,7 @@ jobs:
         export CFLAGS="-I$BREW_PREFIX/include"
         export CXXFLAGS="-I$BREW_PREFIX/include"
         
-        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
+        export CFLAGS="$CFLAGS -march=x86-64 -mtune=generic"
         
         ./bootstrap.sh
         ./configure --with-flint=$BREW_PREFIX --with-gmp=$BREW_PREFIX --with-mpfr=$BREW_PREFIX
