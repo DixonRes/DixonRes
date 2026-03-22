@@ -12,44 +12,29 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-
+    
     runs-on: ${{ matrix.os }}
-
+    
     steps:
     - uses: actions/checkout@v4
-
-    - name: Setup Conda (Ubuntu)
+    
+    - name: Install FLINT (Ubuntu)
       if: runner.os == 'Linux'
-      uses: mamba-org/setup-micromamba@v1
-      with:
-        environment-name: build-env
-        create-args: >-
-          libflint
-          gmp
-          mpfr
-          pkg-config
-          make
-          c-compiler
-          cxx-compiler
-        cache-environment: true
-
-    - name: Install Dependencies (macOS)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libflint-dev
+    
+    - name: Install FLINT (macOS)
       if: runner.os == 'macOS'
       run: |
         brew update
         brew install flint
-
-    - name: Build and Test (Ubuntu)
-      if: runner.os == 'Linux'
-      shell: micromamba-shell {0}
-      run: |
-        ./configure
-        make -j$(nproc)
-        make check
-
-    - name: Build and Test (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        ./configure
-        make -j$(sysctl -n hw.ncpu)
-        make check
+    
+    - name: configure
+      run: ./configure
+    
+    - name: make
+      run: make
+    
+    - name: make check
+      run: make check
