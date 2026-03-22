@@ -25,6 +25,21 @@
 extern "C" {
 #endif
 
+#if __FLINT_VERSION < 3 || (__FLINT_VERSION == 3 && __FLINT_VERSION_MINOR < 1)
+  #ifdef fq_nmod_ctx_prime
+  #  undef fq_nmod_ctx_prime
+     static inline ulong fq_nmod_ctx_prime(const fq_nmod_ctx_t ctx) {
+         return fmpz_get_ui(&((ctx)->p));
+     }
+  #endif
+#endif
+
+#if __FLINT_VERSION < 3 || (__FLINT_VERSION == 3 && __FLINT_VERSION_MINOR < 2)
+  #define flint_rand_init     flint_randinit
+  #define flint_rand_set_seed flint_randseed
+  #define flint_rand_clear    flint_randclear
+#endif
+
 /* ============================================================================
    FORWARD DECLARATIONS AND TYPE DEFINITIONS
    ============================================================================ */
