@@ -18,23 +18,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Conda (Ubuntu)
+    - name: Install Dependencies (Ubuntu)
       if: runner.os == 'Linux'
-      uses: mamba-org/setup-micromamba@v1
-      with:
-        environment-name: build-env
-        create-args: >-
-          libflint
-          gmp
-          mpfr
-          pkg-config
-          make
-          c-compiler
-          cxx-compiler
-          autoconf
-          automake
-          libtool
-        cache-environment: true
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libflint-dev \
+          libgmp-dev \
+          libmpfr-dev \
+          autoconf \
+          automake \
+          libtool \
+          pkg-config \
+          make \
+          gcc \
+          g++
 
     - name: Install Dependencies (macOS)
       if: runner.os == 'macOS'
@@ -42,93 +40,18 @@ jobs:
         brew update
         brew install flint gmp mpfr autoconf automake libtool pkg-config
 
-    - name: Fix FLINT machine_vectors.h (Ubuntu)
-      if: runner.os == 'Linux'
-      shell: micromamba-shell {0}
-      run: |
-        FLINT_INCLUDE=$CONDA_PREFIX/include/flint
-        if [ -f "$FLINT_INCLUDE/machine_vectors.h" ]; then
-          cp "$FLINT_INCLUDE/machine_vectors.h" "$FLINT_INCLUDE/machine_vectors.h.bak"
-          sed -i 's/^#error machine_vector.h not implemented/\/\/ #error machine_vector.h not implemented/' "$FLINT_INCLUDE/machine_vectors.h"
-          echo "#define HAVE_ADVECTOR 0" >> "$FLINT_INCLUDE/machine_vectors.h"
-        fi
-
-    - name: Fix FLINT machine_vectors.h (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        if [ -d "/opt/homebrew" ]; then
-          BREW_PREFIX="/opt/homebrew"
-        else
-          BREW_PREFIX="/usr/local"
-        fi
-        
-        FLINT_INCLUDE=$BREW_PREFIX/include/flint
-        if [ -f "$FLINT_INCLUDE/machine_vectors.h" ]; then
-          sudo cp "$FLINT_INCLUDE/machine_vectors.h" "$FLINT_INCLUDE/machine_vectors.h.bak"
-          sudo sed -i 's/^#error machine_vector.h not implemented/\/\/ #error machine_vector.h not implemented/' "$FLINT_INCLUDE/machine_vectors.h"
-          echo "#define HAVE_ADVECTOR 0" | sudo tee -a "$FLINT_INCLUDE/machine_vectors.h"
-        fi
-
-    - name: Clone and Install PML (Ubuntu)
-      if: runner.os == 'Linux'
-      shell: micromamba-shell {0}
+    - name: Clone and Install PML
       run: |
         git clone https://github.com/vneiger/pml.git
         cd pml/flint-extras
-        
-        export PKG_CONFIG_PATH=$CONDA_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
-        export CPPFLAGS="-I$CONDA_PREFIX/include"
-        export LDFLAGS="-L$CONDA_PREFIX/lib"
-        export CFLAGS="-I$CONDA_PREFIX/include"
-        export CXXFLAGS="-I$CONDA_PREFIX/include"
-        
-        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
-        
         ./bootstrap.sh
-        ./configure --with-flint=$CONDA_PREFIX --with-gmp=$CONDA_PREFIX --with-mpfr=$CONDA_PREFIX
-        make -j$(nproc)
-        make install
-        
-        cd ..
-        cp nmod_poly_mat_utils.h nmod_poly_mat_extra.h $CONDA_PREFIX/include/ 2>/dev/null || true
-
-    - name: Clone and Install PML (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        git clone https://github.com/vneiger/pml.git
-        cd pml/flint-extras
-        
-        if [ -d "/opt/homebrew" ]; then
-          BREW_PREFIX="/opt/homebrew"
-        else
-          BREW_PREFIX="/usr/local"
-        fi
-        
-        export PKG_CONFIG_PATH=$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
-        export CPPFLAGS="-I$BREW_PREFIX/include"
-        export LDFLAGS="-L$BREW_PREFIX/lib"
-        export CFLAGS="-I$BREW_PREFIX/include"
-        export CXXFLAGS="-I$BREW_PREFIX/include"
-        
-        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
-        
-        ./bootstrap.sh
-        ./configure --with-flint=$BREW_PREFIX --with-gmp=$BREW_PREFIX --with-mpfr=$BREW_PREFIX
-        make -j$(sysctl -n hw.ncpu)
+        ./configure
+        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
         sudo make install
-        
-        cd ..
-        sudo cp nmod_poly_mat_utils.h nmod_poly_mat_extra.h $BREW_PREFIX/include/ 2>/dev/null || true
 
     - name: Build and Test (Ubuntu)
       if: runner.os == 'Linux'
-      shell: micromamba-shell {0}
       run: |
-        export PKG_CONFIG_PATH=$CONDA_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
-        export CPPFLAGS="-I$CONDA_PREFIX/include"
-        export LDFLAGS="-L$CONDA_PREFIX/lib"
-        export CFLAGS="-I$CONDA_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
-        export CXXFLAGS="-I$CONDA_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
         ./configure
         make -j$(nproc)
         make check
@@ -136,17 +59,6 @@ jobs:
     - name: Build and Test (macOS)
       if: runner.os == 'macOS'
       run: |
-        if [ -d "/opt/homebrew" ]; then
-          BREW_PREFIX="/opt/homebrew"
-        else
-          BREW_PREFIX="/usr/local"
-        fi
-        
-        export PKG_CONFIG_PATH=$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
-        export CPPFLAGS="-I$BREW_PREFIX/include"
-        export LDFLAGS="-L$BREW_PREFIX/lib"
-        export CFLAGS="-I$BREW_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
-        export CXXFLAGS="-I$BREW_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
         ./configure
         make -j$(sysctl -n hw.ncpu)
         make check
