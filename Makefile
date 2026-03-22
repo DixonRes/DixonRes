@@ -118,17 +118,36 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # ============================================================
+# OS-specific flags for static linking with duplicate symbols
+# (FLINT and PML share some symbol names intentionally)
+# Linux: --allow-multiple-definition lets the first definition win
+# macOS: ld has no equivalent flag; duplicates must be removed from
+#        libflint.a before linking (done in CI via `ar -d`).
+# ============================================================
+ifeq ($(HOST_OS),Darwin)
+  STATIC_ALLOW_MULTI =
+else
+  STATIC_ALLOW_MULTI = -Wl,--allow-multiple-definition
+endif
+
+# ============================================================
 # Default target
 # Link mode is set by ./configure (--enable-static / --disable-static).
 # You can also override directly: make static-all
 # ============================================================
 ifeq ($(DEFAULT_LINK_MODE),static-all)
-default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
+# Static-all mode: only the static libdixon is needed as prereq;
+# do NOT depend on $(DIXON_SHARED_LIB) — building the dylib against
+# two static archives that share symbols causes duplicate-symbol errors
+# on macOS (Apple ld has no --allow-multiple-definition).
+default: $(DIXON_STATIC_LIB)
 	@echo "Building $(DIXON_TARGET) fully static (configured by --enable-static)..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) \
-		$(PML_LIB_PATH:%=-L%) $(FLINT_LIB_PATH:%=-L%) \
-		-Wl,-Bstatic -lpml -lflint \
-		-Wl,-Bdynamic $(SYSTEM_LIBS) -Wl,--allow-multiple-definition \
+		$(DIXON_STATIC_LIB) \
+		$(PML_STATIC_LIBS) \
+		$(FLINT_STATIC_LIBS) \
+		$(SYSTEM_LIBS) \
+		$(STATIC_ALLOW_MULTI) \
 		$(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
 else
@@ -230,7 +249,11 @@ static-all: static-lib $(DIXON_TARGET)-static-all
 $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	@echo "Building $(DIXON_TARGET) with all static libraries..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) \
-		$(EXTERNAL_STATIC_ALL_LIBS) $(LDFLAGS)
+		$(PML_STATIC_LIBS) \
+		$(FLINT_STATIC_LIBS) \
+		$(SYSTEM_LIBS) \
+		$(STATIC_ALLOW_MULTI) \
+		$(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (fully static)"
 
 # ============================================================
