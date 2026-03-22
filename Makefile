@@ -130,7 +130,7 @@ ifeq ($(HOST_OS),Darwin)
   # PML listed before FLINT so PML's versions of shared symbols win.
   STATIC_LIBS_ORDERED = $(PML_STATIC_LIBS) $(FLINT_STATIC_LIBS)
 else
-  STATIC_ALLOW_MULTI = -Wl,--allow-multiple-definition
+  STATIC_ALLOW_MULTI = -Wl,--allow-multiple-definition -no-pie
   STATIC_LIBS_ORDERED = $(PML_STATIC_LIBS) $(FLINT_STATIC_LIBS)
 endif
 
