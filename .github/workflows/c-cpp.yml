@@ -66,7 +66,6 @@ jobs:
         git clone https://github.com/vneiger/pml.git
         cd pml/flint-extras
         
-        # 设置环境变量让pml能找到brew安装的依赖
         export CPATH=/opt/homebrew/include:/usr/local/include:$CPATH
         export LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:$LIBRARY_PATH
         export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
@@ -86,7 +85,6 @@ jobs:
     - name: Build and Test (macOS)
       if: runner.os == 'macOS'
       run: |
-        # 设置环境变量用于项目编译
         export CPATH=/opt/homebrew/include:/usr/local/include:$CPATH
         export LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:$LIBRARY_PATH
         export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
