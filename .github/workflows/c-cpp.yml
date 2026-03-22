@@ -55,6 +55,8 @@ jobs:
         export CFLAGS="-I$CONDA_PREFIX/include"
         export CXXFLAGS="-I$CONDA_PREFIX/include"
         
+        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
+        
         ./bootstrap.sh
         ./configure --with-flint=$CONDA_PREFIX --with-gmp=$CONDA_PREFIX --with-mpfr=$CONDA_PREFIX
         make -j$(nproc)
@@ -78,6 +80,8 @@ jobs:
         export CFLAGS="-I$BREW_PREFIX/include"
         export CXXFLAGS="-I$BREW_PREFIX/include"
         
+        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
+        
         ./bootstrap.sh
         ./configure --with-flint=$BREW_PREFIX --with-gmp=$BREW_PREFIX --with-mpfr=$BREW_PREFIX
         make -j$(sysctl -n hw.ncpu)
@@ -90,6 +94,8 @@ jobs:
         export PKG_CONFIG_PATH=$CONDA_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
         export CPPFLAGS="-I$CONDA_PREFIX/include"
         export LDFLAGS="-L$CONDA_PREFIX/lib"
+        export CFLAGS="-I$CONDA_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
+        export CXXFLAGS="-I$CONDA_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
         ./configure
         make -j$(nproc)
         make check
@@ -106,6 +112,8 @@ jobs:
         export PKG_CONFIG_PATH=$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH
         export CPPFLAGS="-I$BREW_PREFIX/include"
         export LDFLAGS="-L$BREW_PREFIX/lib"
+        export CFLAGS="-I$BREW_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
+        export CXXFLAGS="-I$BREW_PREFIX/include -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
         ./configure
         make -j$(sysctl -n hw.ncpu)
         make check
