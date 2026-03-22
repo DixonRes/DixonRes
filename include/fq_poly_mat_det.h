@@ -15,12 +15,8 @@
 
 /* Conditionally include PML headers if available */
 #ifdef HAVE_PML
-#if __has_include(<pml/nmod_poly_mat_utils.h>)
-    #include <pml/nmod_poly_mat_utils.h>
-    #include <pml/nmod_poly_mat_extra.h>
-#else
-    #include <nmod_poly_mat_utils.h>
-    #include <nmod_poly_mat_extra.h>
+#include <nmod_poly_mat_utils.h>
+#include <nmod_poly_mat_extra.h>
 #endif
 #endif
 
