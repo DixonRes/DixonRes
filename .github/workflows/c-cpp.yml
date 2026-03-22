@@ -42,6 +42,33 @@ jobs:
         brew update
         brew install flint gmp mpfr autoconf automake libtool pkg-config
 
+    - name: Fix FLINT machine_vectors.h (Ubuntu)
+      if: runner.os == 'Linux'
+      shell: micromamba-shell {0}
+      run: |
+        FLINT_INCLUDE=$CONDA_PREFIX/include/flint
+        if [ -f "$FLINT_INCLUDE/machine_vectors.h" ]; then
+          cp "$FLINT_INCLUDE/machine_vectors.h" "$FLINT_INCLUDE/machine_vectors.h.bak"
+          sed -i 's/^#error machine_vector.h not implemented/\/\/ #error machine_vector.h not implemented/' "$FLINT_INCLUDE/machine_vectors.h"
+          echo "#define HAVE_ADVECTOR 0" >> "$FLINT_INCLUDE/machine_vectors.h"
+        fi
+
+    - name: Fix FLINT machine_vectors.h (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        if [ -d "/opt/homebrew" ]; then
+          BREW_PREFIX="/opt/homebrew"
+        else
+          BREW_PREFIX="/usr/local"
+        fi
+        
+        FLINT_INCLUDE=$BREW_PREFIX/include/flint
+        if [ -f "$FLINT_INCLUDE/machine_vectors.h" ]; then
+          sudo cp "$FLINT_INCLUDE/machine_vectors.h" "$FLINT_INCLUDE/machine_vectors.h.bak"
+          sudo sed -i 's/^#error machine_vector.h not implemented/\/\/ #error machine_vector.h not implemented/' "$FLINT_INCLUDE/machine_vectors.h"
+          echo "#define HAVE_ADVECTOR 0" | sudo tee -a "$FLINT_INCLUDE/machine_vectors.h"
+        fi
+
     - name: Clone and Install PML (Ubuntu)
       if: runner.os == 'Linux'
       shell: micromamba-shell {0}
@@ -55,12 +82,15 @@ jobs:
         export CFLAGS="-I$CONDA_PREFIX/include"
         export CXXFLAGS="-I$CONDA_PREFIX/include"
         
-        export CFLAGS="$CFLAGS -march=x86-64 -mtune=generic"
+        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
         
         ./bootstrap.sh
         ./configure --with-flint=$CONDA_PREFIX --with-gmp=$CONDA_PREFIX --with-mpfr=$CONDA_PREFIX
         make -j$(nproc)
         make install
+        
+        cd ..
+        cp nmod_poly_mat_utils.h nmod_poly_mat_extra.h $CONDA_PREFIX/include/ 2>/dev/null || true
 
     - name: Clone and Install PML (macOS)
       if: runner.os == 'macOS'
@@ -80,12 +110,15 @@ jobs:
         export CFLAGS="-I$BREW_PREFIX/include"
         export CXXFLAGS="-I$BREW_PREFIX/include"
         
-        export CFLAGS="$CFLAGS -march=x86-64 -mtune=generic"
+        export CFLAGS="$CFLAGS -DFLINT_DISABLE_VEC_MACROS -DFLINT_NO_VEC"
         
         ./bootstrap.sh
         ./configure --with-flint=$BREW_PREFIX --with-gmp=$BREW_PREFIX --with-mpfr=$BREW_PREFIX
         make -j$(sysctl -n hw.ncpu)
         sudo make install
+        
+        cd ..
+        sudo cp nmod_poly_mat_utils.h nmod_poly_mat_extra.h $BREW_PREFIX/include/ 2>/dev/null || true
 
     - name: Build and Test (Ubuntu)
       if: runner.os == 'Linux'
