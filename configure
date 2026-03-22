@@ -1,13 +1,28 @@
 #!/bin/sh
 # configure script - detects libraries and generates config.mk
 # Usage: ./configure [options]
+#
+# Installation directories:
+#   --prefix=PATH          Installation prefix (default: /usr/local, or /opt/homebrew on macOS arm64)
+#   --exec-prefix=PATH     Executable-related prefix (default: PREFIX)
+#   --bindir=PATH          User executables (default: EXEC_PREFIX/bin)
+#   --libdir=PATH          Libraries (default: EXEC_PREFIX/lib)
+#   --includedir=PATH      Header files (default: PREFIX/include/dixon)
+#   --mandir=PATH          Man pages (default: PREFIX/share/man/man1)
+#
+# Library locations:
 #   --cc=COMPILER          Set C compiler (default: cc)
 #   --flint-include=PATH   Set FLINT include path
 #   --flint-lib=PATH       Set FLINT library path
 #   --pml-include=PATH     Set PML include path
 #   --pml-lib=PATH         Set PML library path
+#
+# Build options:
+#   --enable-static        Default build links all libraries statically
+#   --disable-static       Default build uses dynamic linking (default)
 #   --enable-asan          Enable AddressSanitizer (ASan) memory checking
 #   --disable-asan         Disable AddressSanitizer (default)
+#
 #   --help                 Show this help
 
 set -e
@@ -17,12 +32,22 @@ set -e
 # ============================================================
 CC="${CC:-cc}"
 ENABLE_ASAN="no"
+ENABLE_STATIC="no"
 HOST_OS=$(uname -s 2>/dev/null || echo unknown)
 HOST_ARCH=$(uname -m 2>/dev/null || echo unknown)
 DEFAULT_PREFIX="/usr/local"
 if [ "$HOST_OS" = "Darwin" ] && { [ "$HOST_ARCH" = "arm64" ] || [ "$HOST_ARCH" = "aarch64" ]; } && [ -d /opt/homebrew/include ]; then
     DEFAULT_PREFIX="/opt/homebrew"
 fi
+
+# Install path sentinels: empty means "derive from PREFIX after arg parsing"
+PREFIX=""
+EXEC_PREFIX=""
+BINDIR=""
+LIBDIR=""
+INCLUDEDIR=""
+MANDIR=""
+
 FLINT_INCLUDE_PATH="${FLINT_INCLUDE_PATH:-$DEFAULT_PREFIX/include}"
 FLINT_LIB_PATH="${FLINT_LIB_PATH:-$DEFAULT_PREFIX/lib}"
 PML_INCLUDE_PATH="${PML_INCLUDE_PATH:-$DEFAULT_PREFIX/include}"
@@ -46,15 +71,23 @@ esac
 # ============================================================
 for arg in "$@"; do
     case "$arg" in
+        --prefix=*)        PREFIX="${arg#--prefix=}" ;;
+        --exec-prefix=*)   EXEC_PREFIX="${arg#--exec-prefix=}" ;;
+        --bindir=*)        BINDIR="${arg#--bindir=}" ;;
+        --libdir=*)        LIBDIR="${arg#--libdir=}" ;;
+        --includedir=*)    INCLUDEDIR="${arg#--includedir=}" ;;
+        --mandir=*)        MANDIR="${arg#--mandir=}" ;;
         --cc=*)            CC="${arg#--cc=}" ;;
         --flint-include=*) FLINT_INCLUDE_PATH="${arg#--flint-include=}" ;;
         --flint-lib=*)     FLINT_LIB_PATH="${arg#--flint-lib=}" ;;
         --pml-include=*)   PML_INCLUDE_PATH="${arg#--pml-include=}" ;;
         --pml-lib=*)       PML_LIB_PATH="${arg#--pml-lib=}" ;;
+        --enable-static)   ENABLE_STATIC="yes" ;;
+        --disable-static)  ENABLE_STATIC="no" ;;
         --enable-asan)     ENABLE_ASAN="yes" ;;
         --disable-asan)    ENABLE_ASAN="no" ;;
         --help|-h)
-            sed -n '2,8p' "$0"
+            sed -n '2,26p' "$0"
             exit 0
             ;;
         *)
@@ -64,6 +97,24 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# ============================================================
+# Resolve install path defaults (depend on PREFIX, so done
+# after argument parsing)
+# ============================================================
+[ -z "$PREFIX" ]      && PREFIX="$DEFAULT_PREFIX"
+[ -z "$EXEC_PREFIX" ] && EXEC_PREFIX="$PREFIX"
+[ -z "$BINDIR" ]      && BINDIR="$EXEC_PREFIX/bin"
+[ -z "$LIBDIR" ]      && LIBDIR="$EXEC_PREFIX/lib"
+[ -z "$INCLUDEDIR" ]  && INCLUDEDIR="$PREFIX/include/dixon"
+[ -z "$MANDIR" ]      && MANDIR="$PREFIX/share/man/man1"
+
+# Derive default link mode from --enable-static
+if [ "$ENABLE_STATIC" = "yes" ]; then
+    DEFAULT_LINK_MODE="static-all"
+else
+    DEFAULT_LINK_MODE="dynamic"
+fi
 
 append_space_list_unique() {
     _list="$1"
@@ -667,7 +718,18 @@ cat > "$CONFIG_FILE" << ENDOFCONFIG
 CC = $CC
 HOST_OS = $HOST_OS
 
-# Paths
+# Installation directories
+PREFIX      = $PREFIX
+EXEC_PREFIX = $EXEC_PREFIX
+BINDIR      = $BINDIR
+LIBDIR      = $LIBDIR
+INCLUDEDIR  = $INCLUDEDIR
+MANDIR      = $MANDIR
+
+# Default link mode: dynamic | static-all
+DEFAULT_LINK_MODE = $DEFAULT_LINK_MODE
+
+# Library search paths
 FLINT_INCLUDE_PATH = $FLINT_INCLUDE_PATH
 FLINT_LIB_PATH = $FLINT_LIB_PATH
 PML_INCLUDE_PATH = $PML_INCLUDE_PATH
