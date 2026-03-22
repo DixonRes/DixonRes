@@ -120,14 +120,18 @@ $(BUILD_DIR):
 # ============================================================
 # OS-specific flags for static linking with duplicate symbols
 # (FLINT and PML share some symbol names intentionally)
-# Linux: --allow-multiple-definition lets the first definition win
-# macOS: ld has no equivalent flag; duplicates must be removed from
-#        libflint.a before linking (done in CI via `ar -d`).
+# Linux GNU ld : --allow-multiple-definition, first definition wins
+# macOS Apple ld: no equivalent flag; duplicates are resolved before
+#   linking by making the FLINT copies local via nmedit (done in CI).
 # ============================================================
 ifeq ($(HOST_OS),Darwin)
   STATIC_ALLOW_MULTI =
+  # Direct-path linking: avoids -Wl,-Bstatic which is GNU ld only.
+  # PML listed before FLINT so PML's versions of shared symbols win.
+  STATIC_LIBS_ORDERED = $(PML_STATIC_LIBS) $(FLINT_STATIC_LIBS)
 else
   STATIC_ALLOW_MULTI = -Wl,--allow-multiple-definition
+  STATIC_LIBS_ORDERED = $(PML_STATIC_LIBS) $(FLINT_STATIC_LIBS)
 endif
 
 # ============================================================
@@ -136,16 +140,15 @@ endif
 # You can also override directly: make static-all
 # ============================================================
 ifeq ($(DEFAULT_LINK_MODE),static-all)
-# Static-all mode: only the static libdixon is needed as prereq;
-# do NOT depend on $(DIXON_SHARED_LIB) — building the dylib against
-# two static archives that share symbols causes duplicate-symbol errors
-# on macOS (Apple ld has no --allow-multiple-definition).
+# Static-all: only libdixon.a needed as prereq.
+# Do NOT depend on $(DIXON_SHARED_LIB) — building a dylib against two
+# static archives that share symbols fails on macOS (Apple ld has no
+# --allow-multiple-definition).
 default: $(DIXON_STATIC_LIB)
 	@echo "Building $(DIXON_TARGET) fully static (configured by --enable-static)..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) \
 		$(DIXON_STATIC_LIB) \
-		$(PML_STATIC_LIBS) \
-		$(FLINT_STATIC_LIBS) \
+		$(STATIC_LIBS_ORDERED) \
 		$(SYSTEM_LIBS) \
 		$(STATIC_ALLOW_MULTI) \
 		$(LDFLAGS)
@@ -249,8 +252,7 @@ static-all: static-lib $(DIXON_TARGET)-static-all
 $(DIXON_TARGET)-static-all: $(DIXON_SRC) $(DIXON_STATIC_LIB)
 	@echo "Building $(DIXON_TARGET) with all static libraries..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $< $(DIXON_STATIC_LIB) \
-		$(PML_STATIC_LIBS) \
-		$(FLINT_STATIC_LIBS) \
+		$(STATIC_LIBS_ORDERED) \
 		$(SYSTEM_LIBS) \
 		$(STATIC_ALLOW_MULTI) \
 		$(LDFLAGS)
