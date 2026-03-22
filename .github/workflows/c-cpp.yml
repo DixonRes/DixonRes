@@ -7,88 +7,176 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+  # ──────────────────────────────────────────────────────────────
+  # Linux: standard dynamic build + test
+  # ──────────────────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    runs-on: ${{ matrix.os }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgmp-dev libmpfr-dev \
+            autoconf automake libtool pkg-config \
+            make gcc g++
+
+      - name: Build and install FLINT from source
+        run: |
+          git clone --depth=1 https://github.com/flintlib/flint.git
+          cd flint
+          ./bootstrap.sh
+          ./configure
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: Clone and install PML
+        run: |
+          git clone https://github.com/vneiger/pml.git
+          cd pml/flint-extras
+          ./bootstrap.sh
+          ./configure
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build and test
+        run: |
+          ./configure
+          make -j$(nproc)
+          make check
+
+
+  # ──────────────────────────────────────────────────────────────
+  # macOS: static FLINT + PML, upload binary as artifact
+  # ──────────────────────────────────────────────────────────────
+  build-macos-static:
+    runs-on: macos-latest
+    env:
+      # All third-party libs go here so nothing leaks into /usr/local
+      INSTALL_PREFIX: ${{ github.workspace }}/deps-static
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Dependencies (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libgmp-dev \
-          libmpfr-dev \
-          autoconf \
-          automake \
-          libtool \
-          pkg-config \
-          make \
-          gcc \
-          g++
+      # ── system tools (no flint/pml from brew) ──────────────────
+      - name: Install build tools
+        run: |
+          brew update
+          brew install gmp mpfr autoconf automake libtool pkg-config
 
-    - name: Install Dependencies (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew update
-        brew install flint gmp mpfr autoconf automake libtool pkg-config
+      # ── build paths ────────────────────────────────────────────
+      - name: Set build environment
+        run: |
+          echo "INSTALL_PREFIX=$INSTALL_PREFIX"          >> $GITHUB_ENV
+          echo "CPATH=$INSTALL_PREFIX/include:$(brew --prefix)/include" \
+                                                         >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$INSTALL_PREFIX/lib:$(brew --prefix)/lib" \
+                                                         >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig" \
+                                                         >> $GITHUB_ENV
+          mkdir -p "$INSTALL_PREFIX"
 
-    - name: Build and Install FLINT from source (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        git clone --depth=1 https://github.com/flintlib/flint.git
-        cd flint
-        ./bootstrap.sh
-        ./configure
-        make -j$(nproc)
-        sudo make install
-        sudo ldconfig
+      # ── FLINT: static only ─────────────────────────────────────
+      - name: Build FLINT (static)
+        run: |
+          git clone --depth=1 https://github.com/flintlib/flint.git
+          cd flint
+          ./bootstrap.sh
+          ./configure \
+            --prefix="$INSTALL_PREFIX" \
+            --enable-static \
+            --disable-shared \
+            --with-gmp="$(brew --prefix)/opt/gmp" \
+            --with-mpfr="$(brew --prefix)/opt/mpfr"
+          make -j$(sysctl -n hw.ncpu)
+          make install
 
-    - name: Clone and Install PML (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        git clone https://github.com/vneiger/pml.git
-        cd pml/flint-extras
-        ./bootstrap.sh
-        ./configure
-        make -j$(nproc)
-        sudo make install
+      # ── PML: static only ───────────────────────────────────────
+      - name: Build PML (static)
+        run: |
+          git clone https://github.com/vneiger/pml.git
+          cd pml/flint-extras
+          ./bootstrap.sh
+          ./configure \
+            --prefix="$INSTALL_PREFIX" \
+            --enable-static \
+            --disable-shared
+          make -j$(sysctl -n hw.ncpu)
+          make install
 
-    - name: Clone and Install PML (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        git clone https://github.com/vneiger/pml.git
-        cd pml/flint-extras
-        
-        export CPATH=/opt/homebrew/include:/usr/local/include:$CPATH
-        export LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:$LIBRARY_PATH
-        export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-        
-        ./bootstrap.sh
-        ./configure
-        make -j$(sysctl -n hw.ncpu)
-        sudo make install
+      # ── project: configure with --enable-static ────────────────
+      - name: Configure project (static link mode)
+        run: |
+          ./configure \
+            --enable-static \
+            --flint-include="$INSTALL_PREFIX/include" \
+            --flint-lib="$INSTALL_PREFIX/lib" \
+            --pml-include="$INSTALL_PREFIX/include" \
+            --pml-lib="$INSTALL_PREFIX/lib"
 
-    - name: Build and Test (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        ./configure
-        make -j$(nproc)
-        make check
+      # ── build ──────────────────────────────────────────────────
+      - name: Build
+        run: make -j$(sysctl -n hw.ncpu)
 
-    - name: Build and Test (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        export CPATH=/opt/homebrew/include:/usr/local/include:$CPATH
-        export LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:$LIBRARY_PATH
-        export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-        
-        ./configure
-        make -j$(sysctl -n hw.ncpu)
-        make check
+      # ── smoke test ─────────────────────────────────────────────
+      - name: Run tests
+        run: make check
+
+      # ── verify linkage (only FLINT/PML should be absent from dylibs) ──
+      - name: Verify static linkage
+        run: |
+          echo "=== otool -L dixon ==="
+          otool -L ./dixon
+          echo ""
+          # Fail if libflint or libpml appear as dynamic deps
+          if otool -L ./dixon | grep -E 'libflint|libpml'; then
+            echo "ERROR: binary is dynamically linked against FLINT or PML"
+            exit 1
+          fi
+          echo "OK: FLINT and PML are statically linked"
+
+      # ── collect binary + version info ─────────────────────────
+      - name: Prepare release artifact
+        run: |
+          MACOS_VER=$(sw_vers -productVersion | cut -d. -f1-2)
+          ARCH=$(uname -m)
+          TAG="${{ github.ref_name }}"
+          # strip debug symbols to keep binary small
+          strip ./dixon
+          ARTIFACT_NAME="dixon-${TAG}-macos${MACOS_VER}-${ARCH}"
+          mkdir -p dist
+          cp ./dixon "dist/${ARTIFACT_NAME}"
+          # write a small build-info file
+          cat > dist/build-info.txt <<EOF
+          Binary   : ${ARTIFACT_NAME}
+          Built on : $(date -u +"%Y-%m-%d %H:%M UTC")
+          macOS    : $(sw_vers -productVersion)
+          Arch     : ${ARCH}
+          Ref      : ${{ github.ref }}
+          SHA      : ${{ github.sha }}
+          FLINT    : $(ls $INSTALL_PREFIX/lib/libflint.a 2>/dev/null && echo "static" || echo "not found")
+          PML      : $(ls $INSTALL_PREFIX/lib/libpml.a   2>/dev/null && echo "static" || echo "not found")
+          EOF
+          cat dist/build-info.txt
+          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
+
+      # ── upload artifact (available from Actions UI) ────────────
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: dist/
+          retention-days: 90
+
+      # ── attach to GitHub Release (only on version tags v*) ─────
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.ARTIFACT_NAME }}
+          body_path: dist/build-info.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
