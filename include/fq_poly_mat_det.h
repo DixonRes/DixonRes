@@ -18,7 +18,6 @@
 #include <nmod_poly_mat_utils.h>
 #include <nmod_poly_mat_extra.h>
 #endif
-#endif
 
 /* Include specialized implementations */
 #include "gf2n_field.h"
