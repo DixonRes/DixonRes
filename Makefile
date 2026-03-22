@@ -36,14 +36,10 @@ INCLUDE_DIR = include
 BUILD_DIR = build
 
 # ============================================================
-# Install directories (overridable via make install PREFIX=/custom)
+# Install directories
+# Set by ./configure (--prefix, --bindir, etc.).
+# You can still override at install time: make install PREFIX=/custom
 # ============================================================
-PREFIX      ?= /usr/local
-EXEC_PREFIX ?= $(PREFIX)
-BINDIR      ?= $(EXEC_PREFIX)/bin
-LIBDIR      ?= $(EXEC_PREFIX)/lib
-INCLUDEDIR  ?= $(PREFIX)/include/dixon
-MANDIR      ?= $(PREFIX)/share/man/man1
 
 # Install tool
 INSTALL         ?= install
@@ -123,21 +119,36 @@ $(BUILD_DIR):
 
 # ============================================================
 # Default target
+# Link mode is set by ./configure (--enable-static / --disable-static).
+# You can also override directly: make static-all
 # ============================================================
+ifeq ($(DEFAULT_LINK_MODE),static-all)
+default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
+	@echo "Building $(DIXON_TARGET) fully static (configured by --enable-static)..."
+	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) \
+		$(PML_LIB_PATH:%=-L%) $(FLINT_LIB_PATH:%=-L%) \
+		-Wl,-Bstatic -lpml -lflint \
+		-Wl,-Bdynamic $(SYSTEM_LIBS) -Wl,--allow-multiple-definition \
+		$(LDFLAGS)
+	@echo "Build complete: $(DIXON_TARGET) (fully static)"
+else
 default: $(DIXON_STATIC_LIB) $(DIXON_SHARED_LIB)
 	@echo "Building $(DIXON_TARGET) with LTO (Link Time Optimization)..."
 	@echo "Libraries built, now compiling all sources together for maximum inlining..."
 	$(CC) $(ALL_CFLAGS) -o $(DIXON_TARGET) $(ALL_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
 	@echo "Build complete: $(DIXON_TARGET) (LTO optimized with libraries available)"
+endif
 	@echo ""
 	@echo "=== Build Configuration ==="
+	@echo "  Prefix  : $(PREFIX)"
+	@echo "  Link mode: $(DEFAULT_LINK_MODE)"
 ifeq ($(PML_AVAILABLE),yes)
-	@echo "PML support: ENABLED"
+	@echo "  PML support: ENABLED"
 else
-	@echo "PML support: DISABLED"
+	@echo "  PML support: DISABLED"
 endif
 ifeq ($(ENABLE_ASAN),yes)
-	@echo "AddressSanitizer: ENABLED"
+	@echo "  AddressSanitizer: ENABLED"
 endif
 	@echo "==========================="
 ifneq ($(ATTACK_C_FILES),)
@@ -148,14 +159,15 @@ endif
 
 # Also build libraries with LTO for better performance
 all: default
-	@echo "Built dixon executable, libraries, and attack programs with LTO optimization"
+	@echo "Built dixon executable, libraries, and attack programs"
+	@echo "  Link mode: $(DEFAULT_LINK_MODE)"
 ifeq ($(PML_AVAILABLE),yes)
-	@echo "PML support: ENABLED"
+	@echo "  PML support: ENABLED"
 else
-	@echo "PML support: DISABLED"
+	@echo "  PML support: DISABLED"
 endif
 ifeq ($(ENABLE_ASAN),yes)
-	@echo "AddressSanitizer: ENABLED"
+	@echo "  AddressSanitizer: ENABLED"
 endif
 
 # LTO target - compile all sources together for maximum optimization (same as default now)
