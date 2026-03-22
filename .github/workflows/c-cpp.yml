@@ -181,48 +181,84 @@ jobs:
       # FLINT).  Fix: find every libflint.a object whose exported symbols
       # collide with libpml.a, and remove those objects from libflint.a
       # so PML's definitions are the sole definitions at link time.
-      - name: Deduplicate FLINT/PML static libraries (macOS)
+      # macOS Apple ld has no --allow-multiple-definition.
+      # Strategy: use `nmedit -s` to make conflicting symbols PRIVATE
+      # (local) inside the FLINT objects that define them.  The objects
+      # are NOT removed, so all other symbols (nmod_mat_set, nmod_mat_zero,
+      # etc.) remain globally accessible.  PML's definitions become the
+      # sole external definitions at link time.
+      - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS)
         run: |
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           PML_A="$INSTALL_PREFIX/lib/libpml.a"
+          TMPDIR_WORK=$(mktemp -d)
 
-          TMPDIR_FLINT=$(mktemp -d)
-          TMPDIR_PML=$(mktemp -d)
-
-          echo "Extracting archives..."
-          (cd "$TMPDIR_FLINT" && ar -x "$FLINT_A")
-          (cd "$TMPDIR_PML"   && ar -x "$PML_A")
-
-          echo "Collecting symbols exported by PML..."
-          PML_SYMS=$(nm -g "$TMPDIR_PML"/*.o 2>/dev/null \
-            | awk '/ T / || / D / || / B / {print $3}' \
+          # ── collect PML's exported symbols (strip leading underscore) ──
+          echo "Collecting PML exported symbols..."
+          PML_SYMS=$(nm -g "$PML_A" 2>/dev/null \
+            | awk '/ T / || / D / || / B / {sym=$3; sub(/^_/,"",sym); print sym}' \
             | sort -u)
 
-          echo "Finding conflicting FLINT objects..."
-          TO_DELETE=""
-          for obj in "$TMPDIR_FLINT"/*.o; do
+          # ── extract FLINT archive ─────────────────────────────────────
+          echo "Extracting libflint.a..."
+          (cd "$TMPDIR_WORK" && ar -x "$FLINT_A")
+
+          MODIFIED_OBJS=""
+
+          for obj in "$TMPDIR_WORK"/*.o; do
             obj_name=$(basename "$obj")
-            while IFS= read -r sym; do
-              [ -z "$sym" ] && continue
-              if echo "$PML_SYMS" | grep -qxF "$sym"; then
-                echo "  conflict: $sym  in  $obj_name"
-                TO_DELETE="$TO_DELETE $obj_name"
-                break
-              fi
-            done < <(nm -g "$obj" 2>/dev/null \
-              | awk '/ T / || / D / || / B / {print $3}')
+
+            # All globally defined symbols in this object (without _)
+            ALL_GLOBALS=$(nm -g "$obj" 2>/dev/null \
+              | awk '/ T / || / D / || / B / {sym=$3; sub(/^_/,"",sym); print sym}' \
+              | sort -u)
+
+            # Which of those also appear in PML?
+            CONFLICTS=$(comm -12 \
+              <(echo "$ALL_GLOBALS") \
+              <(echo "$PML_SYMS"))
+
+            [ -z "$CONFLICTS" ] && continue
+
+            echo "In $obj_name — making local:"
+            echo "$CONFLICTS" | sed 's/^/    /'
+
+            # Keep-global list = all globals MINUS the conflicting ones
+            KEEP_FILE=$(mktemp)
+            comm -23 \
+              <(echo "$ALL_GLOBALS") \
+              <(echo "$CONFLICTS" | sort -u) \
+              > "$KEEP_FILE"
+
+            KEEP_COUNT=$(wc -l < "$KEEP_FILE" | tr -d ' ')
+
+            if [ "$KEEP_COUNT" -gt 0 ]; then
+              # nmedit -s: only listed symbols stay global; rest become
+              # private extern (invisible to the linker across TUs).
+              # nmedit accepts names with OR without leading underscore.
+              nmedit -s "$KEEP_FILE" "$obj"
+            else
+              # Entire object is conflicting — make everything local
+              nmedit -p "$obj"
+            fi
+
+            rm -f "$KEEP_FILE"
+            MODIFIED_OBJS="$MODIFIED_OBJS $obj_name"
           done
 
-          rm -rf "$TMPDIR_FLINT" "$TMPDIR_PML"
-
-          if [ -n "$TO_DELETE" ]; then
-            echo "Removing from libflint.a: $TO_DELETE"
-            # shellcheck disable=SC2086
-            ar -d "$FLINT_A" $TO_DELETE
-            echo "Deduplication complete."
+          if [ -n "$MODIFIED_OBJS" ]; then
+            echo "Updating libflint.a with localized objects..."
+            (cd "$TMPDIR_WORK" && ar -r "$FLINT_A" $MODIFIED_OBJS)
+            echo "Localization complete."
+            # Sanity check: essential symbols must still be globally defined
+            echo "Sanity check — nmod_mat_set still in libflint.a:"
+            nm -g "$FLINT_A" 2>/dev/null | grep ' T _nmod_mat_set$' \
+              || { echo "ERROR: _nmod_mat_set missing after nmedit!"; exit 1; }
           else
-            echo "No conflicting objects found."
+            echo "No conflicting symbols found — nothing to localize."
           fi
+
+          rm -rf "$TMPDIR_WORK"
 
       - name: Configure project (static)
         run: |
