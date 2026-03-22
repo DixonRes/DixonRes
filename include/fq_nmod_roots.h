@@ -14,6 +14,7 @@
 #include <flint/fmpz.h>
 #include <gmp.h>
 #include <flint/ulong_extras.h>
+#include "gf2n_field.h"
 
 // Prime constants for testing
 #define PRIME 9223372036854775783ULL
