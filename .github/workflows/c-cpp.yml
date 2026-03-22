@@ -228,9 +228,11 @@ jobs:
             comm -23 \
               <(echo "$ALL_GLOBALS") \
               <(echo "$CONFLICTS" | sort -u) \
+              | grep -v '^[[:space:]]*$' \
+              | sed 's/^/_/' \
               > "$KEEP_FILE"
-
-            KEEP_COUNT=$(wc -l < "$KEEP_FILE" | tr -d ' ')
+            
+            KEEP_COUNT=$(grep -c '' "$KEEP_FILE" || echo 0)
 
             if [ "$KEEP_COUNT" -gt 0 ]; then
               # nmedit -s: only listed symbols stay global; rest become
