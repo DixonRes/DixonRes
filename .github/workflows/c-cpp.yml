@@ -34,9 +34,9 @@ jobs:
           echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           mkdir -p "$INSTALL_PREFIX"
 
-      - name: Build FLINT (static)
+      - name: Build FLINT (static) - version 3.4.0
         run: |
-          git clone --depth=1 https://github.com/flintlib/flint.git
+          git clone --depth=1 --branch 3.4.0 https://github.com/flintlib/flint.git
           cd flint
           ./bootstrap.sh
           ./configure \
@@ -101,7 +101,7 @@ jobs:
           Arch     : ${ARCH}
           Ref      : ${{ github.ref }}
           SHA      : ${{ github.sha }}
-          FLINT    : static
+          FLINT    : static (3.4.0)
           PML      : static
           EOF
           cat dist/build-info-linux.txt
@@ -149,10 +149,10 @@ jobs:
           echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig:$BREW/lib/pkgconfig"   >> $GITHUB_ENV
           mkdir -p "$INSTALL_PREFIX"
 
-      - name: Build FLINT (static)
+      - name: Build FLINT (static) - version 3.4.0
         run: |
           BREW=$(brew --prefix)
-          git clone --depth=1 https://github.com/flintlib/flint.git
+          git clone --depth=1 --branch 3.4.0 https://github.com/flintlib/flint.git
           cd flint
           ./bootstrap.sh
           ./configure \
@@ -176,17 +176,8 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           make install
 
-      # macOS Apple ld has no --allow-multiple-definition.
-      # FLINT and PML intentionally share some symbol names (PML extends
-      # FLINT).  Fix: find every libflint.a object whose exported symbols
-      # collide with libpml.a, and remove those objects from libflint.a
-      # so PML's definitions are the sole definitions at link time.
-      # macOS Apple ld has no --allow-multiple-definition.
-      # Strategy: use `nmedit -s` to make conflicting symbols PRIVATE
-      # (local) inside the FLINT objects that define them.  The objects
-      # are NOT removed, so all other symbols (nmod_mat_set, nmod_mat_zero,
-      # etc.) remain globally accessible.  PML's definitions become the
-      # sole external definitions at link time.
+      # macOS: localize conflicting FLINT symbols with nmedit
+      # (Apple ld lacks --allow-multiple-definition)
       - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS)
         run: |
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
@@ -303,7 +294,7 @@ jobs:
           Arch     : ${ARCH}
           Ref      : ${{ github.ref }}
           SHA      : ${{ github.sha }}
-          FLINT    : static
+          FLINT    : static (3.4.0)
           PML      : static
           EOF
           cat dist/build-info-macos.txt
