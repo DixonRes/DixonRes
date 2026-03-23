@@ -16,12 +16,15 @@ print(res, "\n", sols, "\n", info, "\n")
 
 # Iterative elimination
 load("dixon_sage_interface.sage")
-R.<x, y, z, a> = GF(257)[]
-F = [x + y + z + a, x*y + y*z + z*x + 1, x*y*z*a - 1]
-res1  = DixonResultant(F, [x, y], dixon_path="./dixon")
-res2 = DixonResultant([res1, "z - 1"], ["z"], field_size=257, dixon_path="./dixon")
-res3 = DixonResultant([res2, "a - 1"], ["a"], field_size=257, dixon_path="./dixon")
-print("res1 =", res1, "\nres2 =", res2, "\nres3 =", res3, )
+R.<x, y, z> = GF(17)[]
+f1 = x + y + z
+f2 = x*y + y*z + z*x + 1
+f3 = y*z - 1
+f4 = z - 2
+res1 = DixonResultant([f1, f2], [x], dixon_path="./dixon")
+res2 = DixonResultant([res1, f3], [y], dixon_path="./dixon")
+res3 = DixonResultant([res2, f4], [z], dixon_path="./dixon")
+print("res1 =", res1, "\nres2 =", res2, "\nres3 =", res3)
 
 # Pass debug=True to any function for verbose diagnostics.
 
