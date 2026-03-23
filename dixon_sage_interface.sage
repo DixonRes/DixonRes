@@ -5,7 +5,7 @@ SageMath interface for DixonRes
 Usage
 -----
 
-# Set the path once, then never again:
+# Basic
 load("dixon_sage_interface.sage")
 set_dixon_path("./dixon")
 
