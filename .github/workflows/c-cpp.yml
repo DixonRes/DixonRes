@@ -36,7 +36,7 @@ jobs:
 
       - name: Build FLINT (static) - version 3.4.0
         run: |
-          git clone --depth=1 --branch 3.4.0 https://github.com/flintlib/flint.git
+          git clone --depth=1 --branch flint-3.4 https://github.com/flintlib/flint.git
           cd flint
           ./bootstrap.sh
           ./configure \
@@ -152,7 +152,7 @@ jobs:
       - name: Build FLINT (static) - version 3.4.0
         run: |
           BREW=$(brew --prefix)
-          git clone --depth=1 --branch 3.4.0 https://github.com/flintlib/flint.git
+          git clone --depth=1 --branch flint-3.4 https://github.com/flintlib/flint.git
           cd flint
           ./bootstrap.sh
           ./configure \
