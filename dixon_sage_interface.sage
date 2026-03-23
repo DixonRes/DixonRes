@@ -5,25 +5,28 @@ SageMath interface for DixonRes
 Usage
 -----
 
-# Basic usage
+# Set the path once, then never again:
 load("dixon_sage_interface.sage")
+set_dixon_path("./dixon")
+
 R.<x, y, z> = GF(257)[]
 F = [x + y + z - 3, x*y + y*z + z*x - 3, x*y*z - 1]
-res  = DixonResultant(F, [x, y], dixon_path="./dixon")
-sols = DixonSolve(F, dixon_path="./dixon")
-info = DixonComplexity(F, [x, y], dixon_path="./dixon")
+res  = DixonResultant(F, [x, y])
+sols = DixonSolve(F)
+info = DixonComplexity(F, [x, y])
 print(res, "\n", sols, "\n", info, "\n")
 
 # Iterative elimination
 load("dixon_sage_interface.sage")
+set_dixon_path("./dixon")
 R.<x, y, z> = GF(17)[]
 f1 = x + y + z
 f2 = x*y + y*z + z*x + 1
 f3 = y*z - 1
 f4 = z - 2
-res1 = DixonResultant([f1, f2], [x], dixon_path="./dixon")
-res2 = DixonResultant([res1, f3], [y], dixon_path="./dixon")
-res3 = DixonResultant([res2, f4], [z], dixon_path="./dixon")
+res1 = DixonResultant([f1, f2], [x])
+res2 = DixonResultant([res1, f3], [y])
+res3 = DixonResultant([res2, f4], [z])
 print("res1 =", res1, "\nres2 =", res2, "\nres3 =", res3)
 
 # Pass debug=True to any function for verbose diagnostics.
@@ -35,6 +38,38 @@ import re
 import glob
 import subprocess
 from itertools import product as _iproduct
+
+
+# ---------------------------------------------------------------------------
+# Global default path — set once with set_dixon_path()
+# ---------------------------------------------------------------------------
+
+_default_dixon_path = "dixon"
+
+def set_dixon_path(path):
+    """
+    Set the default path to the DixonRes binary for all subsequent calls.
+
+    Example
+    -------
+        set_dixon_path("./dixon")
+        set_dixon_path("/usr/local/bin/dixon")
+    """
+    global _default_dixon_path
+    _default_dixon_path = path
+
+def get_dixon_path():
+    """Return the currently configured default DixonRes binary path."""
+    return _default_dixon_path
+
+def _resolve_dixon_path(dixon_path):
+    """
+    Return *dixon_path* if explicitly supplied (not None), otherwise fall back
+    to the module-level default set by set_dixon_path().
+    """
+    if dixon_path is not None:
+        return dixon_path
+    return _default_dixon_path
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +153,7 @@ def _run(cmd, timeout, debug):
     except FileNotFoundError:
         raise RuntimeError(
             "DixonRes binary not found: '%s'.\n"
-            "Pass the correct path via dixon_path=..." % cmd[0]
+            "Set the correct path with set_dixon_path(...) or pass dixon_path=..." % cmd[0]
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("DixonRes timed out after %d s." % timeout)
@@ -200,8 +235,6 @@ def _check_ring_consistency(F):
         try:
             r = f.parent()
         except AttributeError:
-            # Not a polynomial object at all – will fail later with a clearer
-            # message from DixonRes, so just skip here.
             continue
         if ring is None:
             ring = r
@@ -288,7 +321,6 @@ def _parse_resultant_file(foutput, debug):
         print(content.rstrip())
         print("[debug] --- end ---")
 
-    # DixonRes writes:  "\nResultant:\n<polynomial>\n"
     m = re.search(r"Resultant:\n(.*)", content, re.DOTALL)
     if not m:
         if debug:
@@ -413,7 +445,7 @@ def DixonResultant(
     F,
     elim_vars,
     field_size=None,
-    dixon_path="./dixon",
+    dixon_path=None,
     finput="/tmp/dixon_in.dat",
     debug=False,
     timeout=600,
@@ -431,7 +463,9 @@ def DixonResultant(
     field_size : prime, prime power, (p,k), GF(...), or 0 for Q.
                  If None (default), inferred from the first Sage polynomial
                  in F; must be supplied explicitly when F is all strings.
-    dixon_path : path to the dixon executable
+    dixon_path : path to the dixon executable.
+                 If None (default), uses the global default set by
+                 set_dixon_path() (initially "./dixon").
     finput     : temporary input file path
     debug      : print detailed diagnostics
     timeout    : seconds before aborting
@@ -443,15 +477,14 @@ def DixonResultant(
 
     Example – iterative elimination
     --------------------------------
+        set_dixon_path("./dixon")
         R.<x, y, z> = GF(257)[]
         F = [x + y + z, x*y + y*z + z*x, x*y*z + 1]
 
-        res  = DixonResultant(F, [x, y], dixon_path="./dixon")
-        # res is now a string like "256*z^3 + 1"
-        res2 = DixonResultant([res, str(z)], ["z"],
-                              field_size=257, dixon_path="./dixon")
+        res  = DixonResultant(F, [x, y])
+        res2 = DixonResultant([res, str(z)], ["z"], field_size=257)
     """
-    # Infer field_size from the polynomial ring when not given explicitly
+    dixon_path = _resolve_dixon_path(dixon_path)
     field_size = _infer_field_size(F, field_size)
 
     ToDixon(F, elim_vars, field_size, finput, debug=debug)
@@ -484,7 +517,7 @@ def DixonResultant(
 def DixonSolve(
     F,
     field_size=None,
-    dixon_path="./dixon",
+    dixon_path=None,
     finput="/tmp/dixon_solve_in.dat",
     debug=False,
     timeout=600,
@@ -496,7 +529,9 @@ def DixonSolve(
     ----------
     F          : list of Sage polynomials and/or plain strings
     field_size : prime or prime power; inferred from F[0].base_ring() if None
-    dixon_path : path to the dixon executable
+    dixon_path : path to the dixon executable.
+                 If None (default), uses the global default set by
+                 set_dixon_path() (initially "./dixon").
     finput     : temporary input file
     debug      : print detailed diagnostics
     timeout    : seconds before aborting
@@ -508,6 +543,7 @@ def DixonSolve(
     "infinite"                           positive-dimensional system
     None                                 failure
     """
+    dixon_path = _resolve_dixon_path(dixon_path)
     field_size = _infer_field_size(F, field_size)
 
     ToDixonSolver(F, field_size, finput, debug=debug)
@@ -542,7 +578,7 @@ def DixonComplexity(
     elim_vars,
     field_size=None,
     omega=None,
-    dixon_path="./dixon",
+    dixon_path=None,
     finput="/tmp/dixon_comp_in.dat",
     debug=False,
     timeout=120,
@@ -556,7 +592,9 @@ def DixonComplexity(
     elim_vars  : variables to eliminate
     field_size : prime or prime power; inferred from F if None
     omega      : matrix-multiplication exponent (default: DixonRes built-in)
-    dixon_path : path to the dixon executable
+    dixon_path : path to the dixon executable.
+                 If None (default), uses the global default set by
+                 set_dixon_path() (initially "./dixon").
     finput     : temporary input file
     debug      : print detailed diagnostics
     timeout    : seconds before aborting
@@ -566,6 +604,7 @@ def DixonComplexity(
     dict with keys: complexity_log2, omega, bezout_bound, matrix_size, degrees
     None on failure
     """
+    dixon_path = _resolve_dixon_path(dixon_path)
     field_size = _infer_field_size(F, field_size)
     if field_size == 0 or field_size is None:
         field_size = 257   # complexity mode needs a finite field
@@ -604,7 +643,7 @@ def DixonIdeal(
     ideal_gens,
     elim_vars,
     field_size=None,
-    dixon_path="./dixon",
+    dixon_path=None,
     debug=False,
     timeout=600,
 ):
@@ -617,7 +656,9 @@ def DixonIdeal(
     ideal_gens : list of strings like "a^3=2*b+1", or Sage expressions
     elim_vars  : variables to eliminate
     field_size : prime or prime power; inferred from F if None
-    dixon_path : path to the dixon executable
+    dixon_path : path to the dixon executable.
+                 If None (default), uses the global default set by
+                 set_dixon_path() (initially "./dixon").
     debug      : print detailed diagnostics
     timeout    : seconds
 
@@ -625,6 +666,7 @@ def DixonIdeal(
     -------
     str resultant string, or None on failure
     """
+    dixon_path = _resolve_dixon_path(dixon_path)
     field_size = _infer_field_size(F, field_size)
     if field_size == 0 or field_size is None:
         field_size = 257
@@ -647,7 +689,6 @@ def DixonIdeal(
         print("[DixonIdeal] DixonRes exited with code %d" % proc.returncode)
         return None
 
-    # CLI mode: timestamped solution_*.dat written to CWD
     candidates = sorted(glob.glob("solution_*.dat"), key=os.path.getmtime)
     if debug:
         print("[debug] solution_*.dat in CWD: %s" % candidates)
