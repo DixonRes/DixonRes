@@ -4,16 +4,27 @@ SageMath interface for DixonRes
 
 Usage
 -----
-    load("dixon_sage_interface.sage")
 
-    R.<x, y, z> = GF(257)[]
-    F = [x + y + z, x*y + y*z + z*x, x*y*z + 1]
+# Basic usage
+load("dixon_sage_interface.sage")
+R.<x, y, z> = GF(257)[]
+F = [x + y + z - 3, x*y + y*z + z*x - 3, x*y*z - 1]
+res  = DixonResultant(F, [x, y], dixon_path="./dixon")
+sols = DixonSolve(F, dixon_path="./dixon")
+info = DixonComplexity(F, [x, y], dixon_path="./dixon")
+print(res, "\n", sols, "\n", info, "\n")
 
-    res  = DixonResultant(F, [x, y], dixon_path="./dixon")
-    sols = DixonSolve(F, dixon_path="./dixon")
-    info = DixonComplexity(F, [x, y], dixon_path="./dixon")
+# Iterative elimination
+load("dixon_sage_interface.sage")
+R.<x, y, z, a> = GF(257)[]
+F = [x + y + z + a, x*y + y*z + z*x + 1, x*y*z*a - 1]
+res1  = DixonResultant(F, [x, y], dixon_path="./dixon")
+res2 = DixonResultant([res1, "z - 1"], ["z"], field_size=257, dixon_path="./dixon")
+res3 = DixonResultant([res2, "a - 1"], ["a"], field_size=257, dixon_path="./dixon")
+print("res1 =", res1, "\nres2 =", res2, "\nres3 =", res3, )
 
-Pass debug=True to any function for verbose diagnostics.
+# Pass debug=True to any function for verbose diagnostics.
+
 """
 
 import os
@@ -58,12 +69,30 @@ def _field_size_str(field_size):
 
 
 def _poly_to_str(f):
-    """Sage polynomial -> string DixonRes can parse."""
+    """Sage polynomial or plain string -> string DixonRes can parse."""
     return str(f)
 
 
 def _elim_vars_to_str(elim_vars):
     return ", ".join(str(v) for v in elim_vars)
+
+
+def _infer_field_size(F, field_size):
+    """
+    If field_size is None or 0 and F contains at least one Sage polynomial,
+    extract the base ring from it and use that.  Otherwise return field_size
+    unchanged so the caller can pass an explicit value.
+    """
+    if field_size is not None and field_size != 0:
+        return field_size
+    for f in F:
+        if not isinstance(f, str):
+            try:
+                return f.base_ring()
+            except AttributeError:
+                pass
+    # Fallback: 0 means rational / Q mode
+    return 0
 
 
 def _run(cmd, timeout, debug):
@@ -153,21 +182,45 @@ def _locate_output_file(finput, tag, debug):
 
 
 # ---------------------------------------------------------------------------
-# File writers
+# File writers  (now accept mixed Sage-polynomial / string lists)
 # ---------------------------------------------------------------------------
+
+def _check_ring_consistency(F):
+    """
+    Verify that all *Sage polynomial* elements in F share the same parent.
+    Plain strings are skipped.  Raises AssertionError on mismatch.
+    """
+    ring = None
+    for f in F:
+        if isinstance(f, str):
+            continue
+        try:
+            r = f.parent()
+        except AttributeError:
+            # Not a polynomial object at all – will fail later with a clearer
+            # message from DixonRes, so just skip here.
+            continue
+        if ring is None:
+            ring = r
+        else:
+            assert r == ring, (
+                "Polynomial ring mismatch: %s vs %s" % (ring, r)
+            )
+
 
 def ToDixon(F, elim_vars, field_size=257, finput="/tmp/dixon_in.dat", debug=False):
     """
     Write a DixonRes input file (resultant / complexity mode).
+
+    Each element of F may be a Sage polynomial **or** a plain string
+    (e.g. the output of a previous DixonResultant call).
 
     Format:
       Line 1      : field size
       Lines 2..n-1: one polynomial per line
       Line n      : comma-separated variables to ELIMINATE
     """
-    A = F[0].parent()
-    assert all(f.parent() == A for f in F), \
-        "All polynomials must belong to the same ring."
+    _check_ring_consistency(F)
 
     with open(finput, "w") as fd:
         fd.write(_field_size_str(field_size) + "\n")
@@ -188,13 +241,13 @@ def ToDixonSolver(F, field_size=257, finput="/tmp/dixon_solve_in.dat", debug=Fal
     """
     Write a DixonRes solver input file (no elimination-variable line).
 
+    Each element of F may be a Sage polynomial **or** a plain string.
+
     Format:
       Line 1     : field size
       Lines 2..n : one polynomial per line
     """
-    A = F[0].parent()
-    assert all(f.parent() == A for f in F), \
-        "All polynomials must belong to the same ring."
+    _check_ring_consistency(F)
 
     with open(finput, "w") as fd:
         fd.write(_field_size_str(field_size) + "\n")
@@ -356,7 +409,7 @@ def _parse_complexity_file(foutput, debug):
 def DixonResultant(
     F,
     elim_vars,
-    field_size=0,
+    field_size=None,
     dixon_path="./dixon",
     finput="/tmp/dixon_in.dat",
     debug=False,
@@ -367,9 +420,14 @@ def DixonResultant(
 
     Parameters
     ----------
-    F          : list of Sage polynomials
+    F          : list of Sage polynomials **and/or plain strings**.
+                 Strings are accepted so that the output of a previous
+                 DixonResultant call can be fed in directly, enabling
+                 iterative / cascaded elimination.
     elim_vars  : variables to eliminate (Sage vars or strings)
-    field_size : prime, prime power, (p,k), GF(...), or 0 for Q
+    field_size : prime, prime power, (p,k), GF(...), or 0 for Q.
+                 If None (default), inferred from the first Sage polynomial
+                 in F; must be supplied explicitly when F is all strings.
     dixon_path : path to the dixon executable
     finput     : temporary input file path
     debug      : print detailed diagnostics
@@ -379,11 +437,22 @@ def DixonResultant(
     -------
     str   raw resultant polynomial string
     None  on failure
+
+    Example – iterative elimination
+    --------------------------------
+        R.<x, y, z> = GF(257)[]
+        F = [x + y + z, x*y + y*z + z*x, x*y*z + 1]
+
+        res  = DixonResultant(F, [x, y], dixon_path="./dixon")
+        # res is now a string like "256*z^3 + 1"
+        res2 = DixonResultant([res, str(z)], ["z"],
+                              field_size=257, dixon_path="./dixon")
     """
+    # Infer field_size from the polynomial ring when not given explicitly
+    field_size = _infer_field_size(F, field_size)
+
     ToDixon(F, elim_vars, field_size, finput, debug=debug)
 
-    # Use file-input mode (not --silent) so stdout is captured but
-    # the output file is still written next to the input file.
     cmd  = [dixon_path, finput]
     proc = _run(cmd, timeout, debug)
 
@@ -422,7 +491,7 @@ def DixonSolve(
 
     Parameters
     ----------
-    F          : list of Sage polynomials
+    F          : list of Sage polynomials and/or plain strings
     field_size : prime or prime power; inferred from F[0].base_ring() if None
     dixon_path : path to the dixon executable
     finput     : temporary input file
@@ -436,8 +505,7 @@ def DixonSolve(
     "infinite"                           positive-dimensional system
     None                                 failure
     """
-    if field_size is None:
-        field_size = F[0].base_ring()
+    field_size = _infer_field_size(F, field_size)
 
     ToDixonSolver(F, field_size, finput, debug=debug)
 
@@ -469,7 +537,7 @@ def DixonSolve(
 def DixonComplexity(
     F,
     elim_vars,
-    field_size=257,
+    field_size=None,
     omega=None,
     dixon_path="./dixon",
     finput="/tmp/dixon_comp_in.dat",
@@ -481,9 +549,9 @@ def DixonComplexity(
 
     Parameters
     ----------
-    F          : list of Sage polynomials
+    F          : list of Sage polynomials and/or plain strings
     elim_vars  : variables to eliminate
-    field_size : prime or prime power
+    field_size : prime or prime power; inferred from F if None
     omega      : matrix-multiplication exponent (default: DixonRes built-in)
     dixon_path : path to the dixon executable
     finput     : temporary input file
@@ -495,6 +563,10 @@ def DixonComplexity(
     dict with keys: complexity_log2, omega, bezout_bound, matrix_size, degrees
     None on failure
     """
+    field_size = _infer_field_size(F, field_size)
+    if field_size == 0 or field_size is None:
+        field_size = 257   # complexity mode needs a finite field
+
     ToDixon(F, elim_vars, field_size, finput, debug=debug)
 
     cmd = [dixon_path, "--comp"]
@@ -528,7 +600,7 @@ def DixonIdeal(
     F,
     ideal_gens,
     elim_vars,
-    field_size=257,
+    field_size=None,
     dixon_path="./dixon",
     debug=False,
     timeout=600,
@@ -538,10 +610,10 @@ def DixonIdeal(
 
     Parameters
     ----------
-    F          : list of Sage polynomials
+    F          : list of Sage polynomials and/or plain strings
     ideal_gens : list of strings like "a^3=2*b+1", or Sage expressions
     elim_vars  : variables to eliminate
-    field_size : prime or prime power
+    field_size : prime or prime power; inferred from F if None
     dixon_path : path to the dixon executable
     debug      : print detailed diagnostics
     timeout    : seconds
@@ -550,6 +622,10 @@ def DixonIdeal(
     -------
     str resultant string, or None on failure
     """
+    field_size = _infer_field_size(F, field_size)
+    if field_size == 0 or field_size is None:
+        field_size = 257
+
     ideal_str = ", ".join(str(g) for g in ideal_gens)
     polys_str = ", ".join(_poly_to_str(f) for f in F)
     elim_str  = _elim_vars_to_str(elim_vars)
