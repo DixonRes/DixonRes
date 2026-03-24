@@ -118,7 +118,7 @@ static void print_usage(const char *prog_name)
 }
 
 /* =========================================================================
- * Utility helpers (unchanged from original)
+ * Utility helpers
  * ========================================================================= */
 static char *trim(char *str)
 {
@@ -129,6 +129,13 @@ static char *trim(char *str)
     while (end > str && isspace((unsigned char)*end)) end--;
     end[1] = '\0';
     return str;
+}
+
+static const char *display_prog_name(const char *argv0)
+{
+    const char *env_name = getenv("DIXON_DISPLAY_NAME");
+    if (env_name && env_name[0] != '\0') return env_name;
+    return argv0;
 }
 
 static int check_prime_power(const fmpz_t n, fmpz_t prime, ulong *power)
@@ -1582,8 +1589,9 @@ static int generate_random_poly_strings_rational(
 int main(int argc, char *argv[])
 {
     clock_t start_time = clock();
+    const char *prog_name = display_prog_name(argv[0]);
 
-    if (argc == 1) { print_usage(argv[0]); return 0; }
+    if (argc == 1) { print_usage(prog_name); return 0; }
 
     /* ---- parse leading flags ---- */
     int    silent_mode = 0;
@@ -1640,7 +1648,7 @@ int main(int argc, char *argv[])
     if (effective_argc >= 2 &&
         (strcmp(effective_argv[1], "--help") == 0 ||
          strcmp(effective_argv[1], "-h")     == 0)) {
-        if (!silent_mode) print_usage(argv[0]);
+        if (!silent_mode) print_usage(prog_name);
         return 0;
     }
 
@@ -1693,7 +1701,7 @@ int main(int argc, char *argv[])
             if (!silent_mode) {
                 fprintf(stderr, "Error: Random mode requires exactly:\n");
                 fprintf(stderr, "  %s [--solve|--comp] --random \"d1,d2,...,dn\" field_size\n",
-                        argv[0]);
+                        prog_name);
             }
             return 1;
         }
@@ -1743,8 +1751,8 @@ int main(int argc, char *argv[])
             if (!silent_mode) {
                 fprintf(stderr, "Error: --ideal mode requires either:\n");
                 fprintf(stderr, "  %s --ideal \"ideal_generators\" \"polynomials\" \"eliminate_vars\" field_size\n",
-                        argv[0]);
-                fprintf(stderr, "  %s --ideal input_file\n", argv[0]);
+                        prog_name);
+                fprintf(stderr, "  %s --ideal input_file\n", prog_name);
             }
             return 1;
         }
@@ -1784,8 +1792,8 @@ int main(int argc, char *argv[])
             if (!silent_mode) {
                 fprintf(stderr, "Error: Complexity mode requires:\n");
                 fprintf(stderr, "  %s --comp \"polynomials\" \"eliminate_vars\" field_size\n",
-                        argv[0]);
-                fprintf(stderr, "  %s --comp input_file\n", argv[0]);
+                        prog_name);
+                fprintf(stderr, "  %s --comp input_file\n", prog_name);
             }
             return 1;
         }
@@ -1820,8 +1828,8 @@ int main(int argc, char *argv[])
         } else {
             if (!silent_mode) {
                 fprintf(stderr, "Error: Solver mode requires either:\n");
-                fprintf(stderr, "  %s --solve \"polynomials\" field_size\n", argv[0]);
-                fprintf(stderr, "  %s --solve input_file\n", argv[0]);
+                fprintf(stderr, "  %s --solve \"polynomials\" field_size\n", prog_name);
+                fprintf(stderr, "  %s --solve input_file\n", prog_name);
             }
             return 1;
         }
@@ -1861,7 +1869,7 @@ int main(int argc, char *argv[])
             output_filename = generate_timestamped_filename("solution");
 
         } else {
-            if (!silent_mode) print_usage(argv[0]);
+            if (!silent_mode) print_usage(prog_name);
             return 1;
         }
     }
