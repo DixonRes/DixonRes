@@ -39,7 +39,7 @@ make check                         # optional
 make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
-We also provide a Windows GUI at [DixonRes/DixonRes-Windows](https://github.com/DixonRes/DixonRes-Windows).
+We also provide a Windows GUI at [DixonRes-Windows](https://github.com/DixonRes/DixonRes-Windows) or [DixonRes-Cross](https://github.com/DixonRes/DixonRes-Cross).
 
 ---
 
@@ -172,17 +172,11 @@ Generate random polynomial systems with specified degrees for testing and benchm
 # 3 polynomials (deg 3,3,2) in GF(257)
 ./dixon --random "[3,3,2]" 257
 
-# 3 polynomials (deg 3,3,2) over Q
-./dixon --random "[3,3,2]" 0
-
 # Solve 3 quadratic system in GF(257)
 ./dixon -r --solve "[2]*3" 257
 
 # Complexity analysis of 4 quartic polynomials
 ./dixon -r --comp --omega 2.373 "[4]*4" 257
-
-# GF(2^8) with degrees 3 and 2
-./dixon -r "[3,2]" 2^8
 ```
 
 ## File Input Format
