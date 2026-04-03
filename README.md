@@ -236,10 +236,10 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 ## Output
 
-| Mode | Command-line input | File input `example.dat` |
+| Mode | Command-line input | File input `example.dr` |
 |---|---|---|
-| Dixon / Solver | `solution_YYYYMMDD_HHMMSS.dat` | `example_solution.dat` |
-| Complexity | `comp_YYYYMMDD_HHMMSS.dat` | `example_comp.dat` |
+| Dixon / Solver | `solution_YYYYMMDD_HHMMSS.dr` | `example_solution.dr` |
+| Complexity | `comp_YYYYMMDD_HHMMSS.dr` | `example_comp.dr` |
 
 Each output file contains field information, input polynomials, computation time,
 and the resultant, solutions, or complexity report.
@@ -259,7 +259,7 @@ and the resultant, solutions, or complexity report.
 - Extension fields are slower than prime fields due to polynomial arithmetic
 - The optional PML library only accelerates well-determined systems over prime fields
 - Complexity analysis does not run any polynomial arithmetic; it parses only
-- Over Q (`field_size=0`), `--solve`, `--ideal`, and `--field-equation` are not yet supported
+- Over Q (`field_size=0`, `--ideal`, and `--field-equation` are not supported
 
 ---
 
