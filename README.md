@@ -206,8 +206,8 @@ Last   : variables to ELIMINATE (comma-separated)
 ```
 Example:
 ```bash
-./dixon       example.dat
-./dixon --comp example.dat
+./dixon       example.dr
+./dixon --comp example.dr
 ```
 
 ### Polynomial Solver Mode (multiline)
