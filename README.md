@@ -23,11 +23,24 @@ Website: <https://dixonres.github.io>
 ## Dependencies
 - **FLINT** (recommended version: 3.4.0)  
   <https://github.com/flintlib/flint>
-
+  
+    git clone https://github.com/flintlib/flint.git && cd flint
+    ./bootstrap.sh
+    ./configure 
+    make
+    make install
+  
+# install PML (Optional)
 Optional:
 - **PML** (used automatically if available)  
   <https://github.com/vneiger/pml>
-
+  
+    git clone https://github.com/vneiger/pml.git && cd pml/flint-extras
+    ./bootstrap.sh
+    ./configure
+    make
+    make install
+  
 ---
 
 ## Build
