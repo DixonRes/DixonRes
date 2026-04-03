@@ -32,7 +32,6 @@ make
 make install
 ```
   
-# install PML (Optional)
 Optional:
 - **PML** (used automatically if available)  
   <https://github.com/vneiger/pml>
