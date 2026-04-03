@@ -82,6 +82,35 @@ Example:
 ./dixon --solve "x^2 + y^2 + z^2 - 6, x + y + z - 4, x*y*z - x - 1" 257
 ```
 
+## File Input Format
+
+### Dixon Mode / Complexity Mode (multiline)
+```
+Line 1 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
+Line 2+: polynomials (comma-separated, may span multiple lines)
+Last   : variables to ELIMINATE (comma-separated)
+         (#eliminate = #equations - 1)
+```
+Example:
+```bash
+# example.dr
+0
+x0^2+x1^3+x2^4, x0*x1+x1*x2+x2*x1, x1*x2*x0+1
+x0,x1
+```
+
+```bash
+./dixon       example.dr
+./dixon --comp example.dr
+```
+
+### Polynomial Solver Mode (multiline)
+```
+Line 1 : field size
+Line 2+: polynomials
+         (n equations in n variables)
+```
+
 ---
 
 ### Complexity Analysis
@@ -193,28 +222,6 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 # Complexity analysis of 4 quartic polynomials
 ./dixon -r --comp --omega 2.373 "[4]*4" 257
-```
-
-## File Input Format
-
-### Dixon Mode / Complexity Mode (multiline)
-```
-Line 1 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
-Line 2+: polynomials (comma-separated, may span multiple lines)
-Last   : variables to ELIMINATE (comma-separated)
-         (#eliminate = #equations - 1)
-```
-Example:
-```bash
-./dixon       example.dr
-./dixon --comp example.dr
-```
-
-### Polynomial Solver Mode (multiline)
-```
-Line 1 : field size
-Line 2+: polynomials
-         (n equations in n variables)
 ```
 
 ---
