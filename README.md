@@ -84,7 +84,7 @@ Example:
 
 ## File Input Format
 
-### Dixon Mode / Complexity Mode (multiline)
+### Dixon Mode (multiline)
 ```
 Line 1 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
 Line 2+: polynomials (comma-separated, may span multiple lines)
