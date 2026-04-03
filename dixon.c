@@ -115,7 +115,7 @@ static void print_usage(const char *prog_name)
     printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"x\" 2^8\n", prog_name);
     printf("  %s --solve \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
     printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
-    printf("  %s example.dat\n", prog_name);
+    printf("  %s example.dr\n", prog_name);
 }
 
 /* =========================================================================
