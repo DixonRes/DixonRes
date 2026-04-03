@@ -98,10 +98,9 @@ Example:
 x0^2+x1^3+x2^4, x0*x1+x1*x2+x2*x1, x1*x2*x0+1
 x0,x1
 ```
-
+Run:
 ```bash
-./dixon       example.dr
-./dixon --comp example.dr
+./dixon example.dr
 ```
 
 ### Polynomial Solver Mode (multiline)
@@ -110,7 +109,16 @@ Line 1 : field size
 Line 2+: polynomials
          (n equations in n variables)
 ```
-
+Example:
+```bash
+# example_solve.dr
+257
+x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1
+```
+Run:
+```bash
+./dixon --solve example_solve.dr
+```
 ---
 
 ### Complexity Analysis
