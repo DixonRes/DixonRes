@@ -234,6 +234,43 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 ---
 
+## SageMath Interface
+
+`dixon_sage_interface.sage` is a thin wrapper that lets you call DixonRes directly from a SageMath session.
+
+### Quick start
+
+```python
+load("dixon_sage_interface.sage")
+set_dixon_path("./dixon")   # set once per session
+
+R.<x, y, z> = GF(257)[]
+F = [x + y + z - 3, x*y + y*z + z*x - 3, x*y*z - 1]
+
+res  = DixonResultant(F, [x, y])   # Dixon resultant, eliminating x and y
+sols = DixonSolve(F)               # enumerate all solutions
+info = DixonComplexity(F, [x, y])  # complexity estimate (no arithmetic)
+
+# iterative elimination: output is a plain string, feed into the next call
+res1 = DixonResultant([x+y+z, x*y+y*z+z*x+1], [x])
+res2 = DixonResultant([res1, y*z-1], [y])
+```
+
+### API reference
+
+| Function | Description | Returns |
+|---|---|---|
+| `DixonResultant(F, elim_vars, ...)` | Dixon resultant, eliminating the specified variables. | String or `None` |
+| `DixonSolve(F, ...)` | Solve an n×n system, enumerate all solutions. | List of `{var: val}` dicts; `[]`; or `"infinite"` |
+| `DixonComplexity(F, elim_vars, ...)` | Estimate complexity without any polynomial arithmetic. | Dict with `complexity_log2`, `bezout_bound`, `matrix_size`, … |
+| `DixonIdeal(F, ideal_gens, elim_vars, ...)` | Dixon resultant with triangular ideal reduction. `ideal_gens`: list of strings like `"a^3=2*b+1"`. | String or `None` |
+| `set_dixon_path(p)` / `get_dixon_path()` | Set / get the default path to the `dixon` binary. | — |
+| `ToDixon(...)` / `ToDixonSolver(...)` | Write an input file without running the binary. | — |
+
+`field_size` accepts an integer, `"p^k"` string, `GF(...)` object, or `0` for ℚ; inferred from the polynomial ring if omitted. All main functions also accept `debug=True` and `timeout` (seconds).
+
+---
+
 ## Output
 
 | Mode | Command-line input | File input `example.dr` |
