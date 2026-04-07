@@ -191,6 +191,12 @@ Example:
 ```
 No console output is produced; the solution/report file is still generated.
 
+### Method Selection
+```bash
+./dixon --method <method> --threads <num> <args>
+```
+Available methods: 1.Recursive; 2.Kronecker; 3.Interpolation
+
 ---
 
 ## Random Mode
