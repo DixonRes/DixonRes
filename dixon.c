@@ -102,7 +102,7 @@ static void print_usage(const char *prog_name)
     printf("    -> No console output; solution file is still generated\n");
 
     printf("  Method selection:\n");
-    printf("    %s --method <method> <args>\n", prog_name);
+    printf("    %s --method <num> <args>\n", prog_name);
     printf("    -> Available methods: 0.Recursive; 1.Kronecker; 2.Interpolation\n");
 
     printf("  Process count:\n");

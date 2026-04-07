@@ -193,7 +193,7 @@ No console output is produced; the solution/report file is still generated.
 
 ### Method Selection
 ```bash
-./dixon --method <method> --threads <num> <args>
+./dixon --method <num> --threads <num> <args>
 ```
 Available methods: 0. Recursive; 1. Kronecker; 2. Interpolation
 
