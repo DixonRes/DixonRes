@@ -195,7 +195,7 @@ No console output is produced; the solution/report file is still generated.
 ```bash
 ./dixon --method <method> --threads <num> <args>
 ```
-Available methods: 1.Recursive; 2.Kronecker; 3.Interpolation
+Available methods: 0. Recursive; 1. Kronecker; 2. Interpolation
 
 **Note:** Only the `Interpolation` method supports multi-threading. The default method (PML library or our custom Mulders-Storjohann implementation) does not support parallel acceleration.
 
