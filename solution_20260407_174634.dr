@@ -1,0 +1,14 @@
+Dixon Resultant Computation
+==========================
+Field: F_257
+Mode: Basic Dixon resultant
+Variables eliminated: x,y
+Polynomials: x+y+z, x*y+y*z+z*x, x*y*z+1
+CPU time: 0.214 seconds | Wall time: 0.011 seconds | Threads: 16
+
+Resultant:
+1 + 2*z^3 + z^6
+
+Roots in z (degree 6):
+Find 1 roots:
+  Root 1: 256 (Multiplicity: 1)

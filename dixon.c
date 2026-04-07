@@ -2386,10 +2386,17 @@ int main(int argc, char *argv[])
     double wall_time = (program_end.tv_sec - program_start.tv_sec) + 
                       (program_end.tv_usec - program_start.tv_usec) / 1000000.0;
 
-    /* ---- Get total threads first ---- */
+    /* ---- Get actual used threads ---- */
     int total_threads = 1;
     #ifdef _OPENMP
-    total_threads = omp_get_max_threads();
+    if (g_interpolation_threads > 0) {
+        total_threads = g_interpolation_threads;
+    } else {
+        total_threads = omp_get_max_threads();
+        // Default to half threads if not set
+        int half_threads = (total_threads + 1) / 2;
+        total_threads = half_threads;
+    }
     #endif
 
     /* ---- output results ---- */
