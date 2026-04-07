@@ -197,7 +197,7 @@ No console output is produced; the solution/report file is still generated.
 ```
 Available methods: 1.Recursive; 2.Kronecker; 3.Interpolation
 
----
+**Note:** Only the `Interpolation` method supports multi-threading. The default method (PML library or our custom Mulders-Storjohann implementation) does not support parallel acceleration.
 
 ## Random Mode
 
