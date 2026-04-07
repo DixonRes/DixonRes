@@ -1824,7 +1824,6 @@ static slong dixon_binomial(slong n, slong k) {
     return result;
 }
 
-
 static void dixon_add_generic_monomials(fq_mvpoly_t *poly,
                                         slong nvars,
                                         slong *exp,
