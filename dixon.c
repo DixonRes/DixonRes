@@ -103,7 +103,7 @@ static void print_usage(const char *prog_name)
 
     printf("  Method selection:\n");
     printf("    %s --method <method> <args>\n", prog_name);
-    printf("    -> Available methods: 1.Recursive; 2.Kronecker; 3.Interpolation\n");
+    printf("    -> Available methods: 0.Recursive; 1.Kronecker; 2.Interpolation\n");
 
     printf("  Process count:\n");
     printf("    %s --threads <num> <args>\n", prog_name);
