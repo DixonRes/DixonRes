@@ -46,18 +46,6 @@ jobs:
           make -j$(nproc)
           make install
 
-      - name: Build PML (static)
-        run: |
-          git clone https://github.com/vneiger/pml.git
-          cd pml/flint-extras
-          ./bootstrap.sh
-          ./configure \
-            --prefix="$INSTALL_PREFIX" \
-            --enable-static \
-            --disable-shared
-          make -j$(nproc)
-          make install
-
       # Linux GNU ld: --allow-multiple-definition handles FLINT/PML
       # duplicate symbols at link time; no archive pre-processing needed.
 
@@ -66,9 +54,7 @@ jobs:
           ./configure \
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib" \
-            --pml-include="$INSTALL_PREFIX/include" \
-            --pml-lib="$INSTALL_PREFIX/lib"
+            --flint-lib="$INSTALL_PREFIX/lib"
 
       - name: Build
         run: make -j$(nproc)
@@ -164,18 +150,6 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           make install
 
-      - name: Build PML (static)
-        run: |
-          git clone https://github.com/vneiger/pml.git
-          cd pml/flint-extras
-          ./bootstrap.sh
-          ./configure \
-            --prefix="$INSTALL_PREFIX" \
-            --enable-static \
-            --disable-shared
-          make -j$(sysctl -n hw.ncpu)
-          make install
-
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
       - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS)
@@ -258,9 +232,7 @@ jobs:
           ./configure \
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib" \
-            --pml-include="$INSTALL_PREFIX/include" \
-            --pml-lib="$INSTALL_PREFIX/lib"
+            --flint-lib="$INSTALL_PREFIX/lib"
 
       - name: Build
         run: make -j$(sysctl -n hw.ncpu)
