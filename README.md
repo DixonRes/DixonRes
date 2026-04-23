@@ -29,16 +29,8 @@ make install
 ```
   
 Optional:
-- **PML** (used automatically if available)  
+- **PML** (built in)  
   <https://github.com/vneiger/pml>
-  
-```bash
-git clone https://github.com/vneiger/pml.git && cd pml/flint-extras
-./bootstrap.sh
-./configure
-make
-make install
-```
 
 ---
 
