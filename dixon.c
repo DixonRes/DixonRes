@@ -2288,7 +2288,7 @@ int main(int argc, char *argv[])
     }
     if (num_threads != -1) {
         fq_interpolation_set_threads(num_threads);
-        fq_nmod_poly_mat_det_set_threads(num_threads);
+        // fq_nmod_poly_mat_det_set_threads(num_threads);
         if (!silent_mode) {
             printf("Using %d threads\n", num_threads);
         }
