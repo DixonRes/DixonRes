@@ -36,6 +36,56 @@
 #define DIXON_NULL_DEVICE "/dev/null"
 #endif
 
+static char *dixon_arb_to_string(const arb_t value, slong digits)
+{
+    char *buffer = NULL;
+    size_t size = 0;
+    FILE *mem = open_memstream(&buffer, &size);
+    if (!mem) return NULL;
+    arb_fprintd(mem, value, digits);
+    fclose(mem);
+    return buffer;
+}
+
+static int dixon_string_is_zeroish(const char *s)
+{
+    if (!s) return 0;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (*s == '+') s++;
+    while (*s && isspace((unsigned char)*s)) s++;
+    int saw_digit = 0;
+    while (*s) {
+        if (isdigit((unsigned char)*s)) {
+            saw_digit = 1;
+            if (*s != '0') return 0;
+        } else if (*s == '.' || isspace((unsigned char)*s)) {
+        } else {
+            return 0;
+        }
+        s++;
+    }
+    return saw_digit;
+}
+
+static void dixon_fprint_arb_pretty(FILE *fp, const arb_t value, slong digits)
+{
+    char *raw = dixon_arb_to_string(value, digits);
+    if (!raw) {
+        arb_fprintd(fp, value, digits);
+        return;
+    }
+
+    char *pm = strstr(raw, " +/- ");
+    if (pm && (arb_is_exact(value) || dixon_string_is_zeroish(pm + 5))) {
+        size_t len = (size_t)(pm - raw);
+        while (len > 0 && isspace((unsigned char)raw[len - 1])) len--;
+        fprintf(fp, "%.*s", (int)len, raw);
+    } else {
+        fputs(raw, fp);
+    }
+    free(raw);
+}
+
 /* =========================================================================
  * Print usage
  * ========================================================================= */
@@ -1197,43 +1247,99 @@ static void save_rational_solver_result_to_file(const char *filename,
         fclose(out_fp); return;
     }
     if (sols->has_no_solutions == 1) {
-        fprintf(out_fp, "System has no solutions over the rational numbers\n");
+        if (sols->real_root_summary && sols->num_solution_sets == 0 && sols->num_real_solution_sets == 0) {
+            fprintf(out_fp, "No exact rational solution sets were assembled\n");
+            fprintf(out_fp, "%s\n", sols->real_root_summary);
+        } else {
+            fprintf(out_fp, "System has no solutions over the rational numbers\n");
+        }
         fclose(out_fp); return;
     }
     if (sols->num_variables == 0) {
         fprintf(out_fp, "No variables\n"); fclose(out_fp); return;
     }
-    if (sols->num_solution_sets == 0) {
-        fprintf(out_fp, "No solutions found\n"); fclose(out_fp); return;
-    }
-
-    fprintf(out_fp, "Found %ld complete solution set(s):\n", sols->num_solution_sets);
-    for (slong set = 0; set < sols->num_solution_sets; set++) {
-        fprintf(out_fp, "\nSolution set %ld:\n", set + 1);
-        for (slong var = 0; var < sols->num_variables; var++) {
-            fprintf(out_fp, "  %s = ", sols->variable_names[var]);
-            slong num_sols = sols->solutions_per_var[set * sols->num_variables + var];
-            if (num_sols == 0) {
-                fprintf(out_fp, "no solution");
-            } else if (num_sols == 1) {
-                char *sol_str = fmpq_get_str(NULL, 10, sols->solution_sets[set][var][0]);
-                fprintf(out_fp, "%s", sol_str);
-                flint_free(sol_str);
-            } else {
-                fprintf(out_fp, "{");
-                for (slong sol = 0; sol < num_sols; sol++) {
-                    if (sol > 0) fprintf(out_fp, ", ");
-                    char *sol_str = fmpq_get_str(NULL, 10, sols->solution_sets[set][var][sol]);
+    if (sols->num_solution_sets > 0) {
+        fprintf(out_fp, "Found %ld exact rational solution set(s):\n", sols->num_solution_sets);
+        for (slong set = 0; set < sols->num_solution_sets; set++) {
+            fprintf(out_fp, "\nSolution set %ld:\n", set + 1);
+            for (slong var = 0; var < sols->num_variables; var++) {
+                fprintf(out_fp, "  %s = ", sols->variable_names[var]);
+                slong num_sols = sols->solutions_per_var[set * sols->num_variables + var];
+                if (num_sols == 0) {
+                    fprintf(out_fp, "no solution");
+                } else if (num_sols == 1) {
+                    char *sol_str = fmpq_get_str(NULL, 10, sols->solution_sets[set][var][0]);
                     fprintf(out_fp, "%s", sol_str);
                     flint_free(sol_str);
+                } else {
+                    fprintf(out_fp, "{");
+                    for (slong sol = 0; sol < num_sols; sol++) {
+                        if (sol > 0) fprintf(out_fp, ", ");
+                        char *sol_str = fmpq_get_str(NULL, 10, sols->solution_sets[set][var][sol]);
+                        fprintf(out_fp, "%s", sol_str);
+                        flint_free(sol_str);
+                    }
+                    fprintf(out_fp, "}");
                 }
-                fprintf(out_fp, "}");
+                fprintf(out_fp, "\n");
             }
-            fprintf(out_fp, "\n");
+            if (sols->solution_residuals && sols->solution_residuals[set]) {
+                fprintf(out_fp, "  residuals: [");
+                for (slong eq = 0; eq < sols->num_equations; eq++) {
+                    if (eq > 0) fprintf(out_fp, ", ");
+                    fprintf(out_fp, "eq%ld=", eq + 1);
+                    dixon_fprint_arb_pretty(out_fp, sols->solution_residuals[set][eq], 8);
+                }
+                fprintf(out_fp, "]\n");
+            }
         }
     }
 
-    fprintf(out_fp, "\n=== Compatibility View ===\n");
+    if (sols->num_real_solution_sets > 0) {
+        fprintf(out_fp, "Found %ld approximate real solution set(s):\n", sols->num_real_solution_sets);
+        for (slong set = 0; set < sols->num_real_solution_sets; set++) {
+            fprintf(out_fp, "\nSolution set %ld:\n", set + 1);
+            for (slong var = 0; var < sols->num_variables; var++) {
+                fprintf(out_fp, "  %s = ", sols->variable_names[var]);
+                slong num_sols = sols->real_solutions_per_var[set * sols->num_variables + var];
+                if (num_sols == 0) {
+                    fprintf(out_fp, "no solution");
+                } else if (num_sols == 1) {
+                    dixon_fprint_arb_pretty(out_fp, sols->real_solution_sets[set][var][0], 20);
+                } else {
+                    fprintf(out_fp, "{");
+                    for (slong sol = 0; sol < num_sols; sol++) {
+                        if (sol > 0) fprintf(out_fp, ", ");
+                        dixon_fprint_arb_pretty(out_fp, sols->real_solution_sets[set][var][sol], 20);
+                    }
+                    fprintf(out_fp, "}");
+                }
+                fprintf(out_fp, "\n");
+            }
+            if (sols->real_solution_residuals && sols->real_solution_residuals[set]) {
+                fprintf(out_fp, "  residuals: [");
+                for (slong eq = 0; eq < sols->num_equations; eq++) {
+                    if (eq > 0) fprintf(out_fp, ", ");
+                    fprintf(out_fp, "eq%ld=", eq + 1);
+                    dixon_fprint_arb_pretty(out_fp, sols->real_solution_residuals[set][eq], 8);
+                }
+                fprintf(out_fp, "]\n");
+            }
+        }
+        if (sols->real_root_summary) {
+            fprintf(out_fp, "\n%s\n", sols->real_root_summary);
+        }
+    }
+    if (sols->num_solution_sets == 0 && sols->num_real_solution_sets == 0) {
+        if (sols->real_root_summary) {
+            fprintf(out_fp, "%s\n", sols->real_root_summary);
+        } else {
+            fprintf(out_fp, "No solutions found\n");
+        }
+        fclose(out_fp); return;
+    }
+
+    fprintf(out_fp, "\n=== Projection View (all solution sets) ===\n");
     for (slong var = 0; var < sols->num_variables; var++) {
         fprintf(out_fp, "%s = {", sols->variable_names[var]);
         slong total_printed = 0;
@@ -1247,10 +1353,21 @@ static void save_rational_solver_result_to_file(const char *filename,
                 total_printed++;
             }
         }
+        for (slong set = 0; set < sols->num_real_solution_sets; set++) {
+            slong num_sols = sols->real_solutions_per_var[set * sols->num_variables + var];
+            for (slong sol = 0; sol < num_sols; sol++) {
+                if (total_printed > 0) fprintf(out_fp, ", ");
+                dixon_fprint_arb_pretty(out_fp, sols->real_solution_sets[set][var][sol], 20);
+                total_printed++;
+            }
+        }
         fprintf(out_fp, "}");
         if (total_printed > 1)      fprintf(out_fp, " (%ld solutions)", total_printed);
         else if (total_printed == 0) fprintf(out_fp, " (no solutions)");
         fprintf(out_fp, "\n");
+    }
+    if (sols->real_root_summary) {
+        fprintf(out_fp, "\n%s\n", sols->real_root_summary);
     }
     fprintf(out_fp, "=== Solution Complete ===\n\n");
     fclose(out_fp);
