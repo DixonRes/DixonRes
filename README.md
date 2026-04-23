@@ -1,4 +1,4 @@
-# DixonRes: Dixon Resultant & Polynomial System Solver
+# drsolve: Dixon Resultant & Polynomial System Solver
 A C implementation for computing Dixon resultants and solving polynomial systems over finite fields and the rationals ℚ, based on the FLINT and PML libraries.
 
 Website: <https://dixonres.github.io>
@@ -44,7 +44,7 @@ make install
 
 ## Build
 ```bash
-git clone https://github.com/DixonRes/DixonRes.git && cd DixonRes
+git clone https://github.com/DixonRes/DixonRes.git drsolve && cd drsolve
 ./configure
 make
 make check                         # optional
@@ -59,47 +59,53 @@ We also provide a Windows GUI at [DixonRes-Windows](https://github.com/DixonRes/
 
 ### Dixon Resultant (Basic)
 ```bash
-./dixon "polynomials" "eliminate_vars" field_size
+./drsolve "polynomials" "eliminate_vars" field_size
 ```
 Examples:
 ```bash
-./dixon "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257
-./dixon "x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z" "x,y" 0
+./drsolve "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257
+./drsolve "x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z" "x,y" 0
 ```
 
 ---
 
 ### Polynomial System Solver (n equations in n variables)
 ```bash
-./dixon --solve "polynomials" field_size
+./drsolve "polynomials" field_size
 ```
+`--solve` is optional here; `./drsolve --solve ...` still works.
 Example:
 ```bash
-./dixon --solve "x^2 + y^2 + z^2 - 6, x + y + z - 4, x*y*z - x - 1" 257
+./drsolve "x^2 + y^2 + z^2 - 6, x + y + z - 4, x*y*z - x - 1" 257
 ```
 
 ## File Input Format
 
-### Dixon Mode (multiline)
+### Auto-detected file input
+Without flags, drsolve inspects the first non-space character of line 1:
+- digit => solver mode
+- otherwise => elimination mode
+
+### Elimination / complexity / ideal mode (multiline)
 ```
-Line 1 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
-Line 2+: polynomials (comma-separated, may span multiple lines)
-Last   : variables to ELIMINATE (comma-separated)
+Line 1 : variables to ELIMINATE (comma-separated)
+Line 2 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
+Line 3+: polynomials (comma-separated, may span multiple lines)
          (#eliminate = #equations - 1)
 ```
 Example:
 ```bash
 # example.dr
+x0,x1
 0
 x0^3+x1^3+x2^3, x0*x1+x1*x2+x2*x1, x1*x2*x0+1
-x0,x1
 ```
 Run:
 ```bash
-./dixon example.dr
+./drsolve example.dr
 ```
 
-### Polynomial Solver Mode (multiline)
+### Polynomial solver mode (multiline)
 ```
 Line 1 : field size
 Line 2+: polynomials
@@ -113,7 +119,7 @@ x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1
 ```
 Run:
 ```bash
-./dixon --solve example_solve.dr
+./drsolve example_solve.dr
 ```
 ---
 
@@ -123,36 +129,36 @@ Reports equation count, variable count, degree sequence, Dixon matrix size
 (via Hessenberg recurrence), Bezout degree bound, and complexity in bits.
 
 ```bash
-./dixon --comp "polynomials" "eliminate_vars" field_size
-./dixon -c     "polynomials" "eliminate_vars" field_size
+./drsolve --comp "polynomials" "eliminate_vars" field_size
+./drsolve -c     "polynomials" "eliminate_vars" field_size
 ```
 
 Examples:
 ```bash
-./dixon --comp "x^3+y^3+z^3, x^2*y+y^2*z+z^2*x, x+y+z-1" "x,y" 257
+./drsolve --comp "x^3+y^3+z^3, x^2*y+y^2*z+z^2*x, x+y+z-1" "x,y" 257
 ```
 
 **Custom omega** — set the matrix-multiplication exponent used in the complexity formula
 (default: 2.3):
 ```bash
-./dixon --comp --omega 2.373 "polynomials" "eliminate_vars" field_size
-./dixon -c -w 2.0            "polynomials" "eliminate_vars" field_size
+./drsolve --comp --omega 2.373 "polynomials" "eliminate_vars" field_size
+./drsolve -c -w 2.0            "polynomials" "eliminate_vars" field_size
 ```
 
-File input uses the same format as Dixon mode:
+File input uses the same elimination-file format shown above:
 ```bash
-./dixon --comp example.dat          # output: example_comp.dat
+./drsolve --comp example.dat          # output: example_comp.dat
 ```
 
 ---
 
 ### Extension Fields
 ```bash
-./dixon "x + y^2 + t, x*y + t*y + 1" "x" 2^8
+./drsolve "x + y^2 + t, x*y + t*y + 1" "x" 2^8
 ```
 The default settings use `t` as the extension field generator and FLINT's built-in field polynomial.
 ```bash
-./dixon --solve "x^2 + t*y, x*y + t^2" "2^8: t^8 + t^4 + t^3 + t + 1"
+./drsolve --solve "x^2 + t*y, x*y + t^2" "2^8: t^8 + t^4 + t^3 + t + 1"
 ```
 (with AES custom polynomial for F_256)
 
@@ -160,38 +166,38 @@ The default settings use `t` as the extension field generator and FLINT's built-
 
 ### Dixon with Ideal Reduction
 ```bash
-./dixon --ideal "ideal_generators" "polynomials" "eliminate_vars" field_size
+./drsolve --ideal "ideal_generators" "polynomials" "eliminate_vars" field_size
 ```
 Example:
 ```bash
-./dixon --ideal "a2^3=2*a1+1, a3^3=a1*a2+3" "a1^2+a2^2+a3^2-10, a3^3-a1*a2-3" "a3" 257
+./drsolve --ideal "a2^3=2*a1+1, a3^3=a1*a2+3" "a1^2+a2^2+a3^2-10, a3^3-a1*a2-3" "a3" 257
 ```
 
 ### Field-equation reduction mode 
 After each multiplication, reduces x^q -> x for every variable.
 ```bash
-./dixon --field-equation "polynomials" "eliminate_vars" field_size
-./dixon --field-eqution -r "[d1,d2,...,dn]" field_size
+./drsolve --field-equation "polynomials" "eliminate_vars" field_size
+./drsolve --field-eqution -r "[d1,d2,...,dn]" field_size
 ```
 Example:
 ```bash
-./dixon --field-eqution "x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1" "x0,x1" 2
-./dixon --field-eqution -r [3]*5 2
+./drsolve --field-eqution "x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1" "x0,x1" 2
+./drsolve --field-eqution -r [3]*5 2
 ```
 
 ---
 
 ### Silent Mode
 ```bash
-./dixon --silent [--solve|--comp|-c] <arguments>
+./drsolve --silent [--solve|--comp|-c] <arguments>
 ```
 No console output is produced; the solution/report file is still generated.
 
 ### Method Selection
 ```bash
-./dixon --method <num> --threads <num> <args>
+./drsolve --method <num> --threads <num> <args>
 ```
-Available methods: 0. Recursive; 1. Kronecker; 2. Interpolation
+Available methods: 0. Recursive; 1. Kronecker+HNF; 2. Interpolation; 3. sparse interpolation
 
 **Note:** Only the `Interpolation` method supports multi-threading. The default method (PML library or our custom Mulders-Storjohann implementation) does not support parallel acceleration.
 
@@ -201,8 +207,8 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 ### Basic Usage
 ```bash
-./dixon --random "[d1,d2,...,dn]" field_size
-./dixon -r       "[d]*n"          field_size
+./drsolve --random "[d1,d2,...,dn]" field_size
+./drsolve -r       "[d]*n"          field_size
 ```
 
 - `[d1,d2,...,dn]`: degree list (comma-separated) for n polynomials
@@ -212,39 +218,39 @@ Generate random polynomial systems with specified degrees for testing and benchm
 ### Combine with Compute Flags
 ```bash
 # Random + Dixon elimination
-./dixon -r --solve "[d1,...,dn]" field_size
+./drsolve -r --solve "[d1,...,dn]" field_size
 
 # Random + complexity analysis
-./dixon -r --comp  "[d]*n" field_size
-./dixon -r -c --omega 2.373 "[4]*5" 257   # custom omega
+./drsolve -r --comp  "[d]*n" field_size
+./drsolve -r -c --omega 2.373 "[4]*5" 257   # custom omega
 
 # Random + Dixon with ideal reduction
-./dixon -r "[d1,d2,d3]" "ideal_generators" field_size
+./drsolve -r "[d1,d2,d3]" "ideal_generators" field_size
 ```
 
 ### Examples
 ```bash
 # 3 polynomials (deg 3,3,2) in GF(257)
-./dixon --random "[3,3,2]" 257
+./drsolve --random "[3,3,2]" 257
 
 # Solve 3 quadratic system in GF(257)
-./dixon -r --solve "[2]*3" 257
+./drsolve -r --solve "[2]*3" 257
 
 # Complexity analysis of 4 quartic polynomials
-./dixon -r --comp --omega 2.373 "[4]*4" 257
+./drsolve -r --comp --omega 2.373 "[4]*4" 257
 ```
 
 ---
 
 ## SageMath Interface
 
-`dixon_sage_interface.sage` is a thin wrapper that lets you call DixonRes directly from a SageMath session.
+`dixon_sage_interface.sage` is a thin wrapper that lets you call drsolve directly from a SageMath session.
 
 ### Quick start
 
 ```python
 load("dixon_sage_interface.sage")
-set_dixon_path("./dixon")   # set once per session
+set_dixon_path("./drsolve")   # set once per session
 
 R.<x, y, z> = GF(257)[]
 F = [x + y + z - 3, x*y + y*z + z*x - 3, x*y*z - 1]
@@ -266,7 +272,7 @@ res2 = DixonResultant([res1, y*z-1], [y])
 | `DixonSolve(F, ...)` | Solve an n×n system, enumerate all solutions. | List of `{var: val}` dicts; `[]`; or `"infinite"` |
 | `DixonComplexity(F, elim_vars, ...)` | Estimate complexity without any polynomial arithmetic. | Dict with `complexity_log2`, `bezout_bound`, `matrix_size`, … |
 | `DixonIdeal(F, ideal_gens, elim_vars, ...)` | Dixon resultant with triangular ideal reduction. `ideal_gens`: list of strings like `"a^3=2*b+1"`. | String or `None` |
-| `set_dixon_path(p)` / `get_dixon_path()` | Set / get the default path to the `dixon` binary. | — |
+| `set_dixon_path(p)` / `get_dixon_path()` | Set / get the default path to the `drsolve` binary. | — |
 | `ToDixon(...)` / `ToDixonSolver(...)` | Write an input file without running the binary. | — |
 
 `field_size` accepts an integer, `"p^k"` string, `GF(...)` object, or `0` for ℚ; inferred from the polynomial ring if omitted. All main functions also accept `debug=True` and `timeout` (seconds).
@@ -317,4 +323,4 @@ and the resultant, solutions, or complexity report.
 ---
 
 ## License
-DixonRes is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
+drsolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.

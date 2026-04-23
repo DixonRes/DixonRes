@@ -64,9 +64,9 @@ jobs:
 
       - name: Verify static linkage
         run: |
-          echo "=== ldd dixon ==="
-          ldd ./dixon || true
-          if ldd ./dixon 2>/dev/null | grep -E 'libflint|libpml'; then
+          echo "=== ldd drsolve ==="
+          ldd ./drsolve || true
+          if ldd ./drsolve 2>/dev/null | grep -E 'libflint|libpml'; then
             echo "ERROR: binary is dynamically linked against FLINT or PML"
             exit 1
           fi
@@ -76,10 +76,10 @@ jobs:
         run: |
           ARCH=$(uname -m)
           TAG="${{ github.ref_name }}"
-          strip ./dixon
-          ARTIFACT_NAME="dixon-${TAG}-linux-${ARCH}"
+          strip ./drsolve
+          ARTIFACT_NAME="drsolve-${TAG}-linux-${ARCH}"
           mkdir -p dist
-          cp ./dixon "dist/${ARTIFACT_NAME}"
+          cp ./drsolve "dist/${ARTIFACT_NAME}"
           cat > dist/build-info-linux.txt <<EOF
           Binary   : ${ARTIFACT_NAME}
           Built on : $(date -u +"%Y-%m-%d %H:%M UTC")
@@ -242,9 +242,9 @@ jobs:
 
       - name: Verify static linkage
         run: |
-          echo "=== otool -L dixon ==="
-          otool -L ./dixon
-          if otool -L ./dixon | grep -E 'libflint|libpml'; then
+          echo "=== otool -L drsolve ==="
+          otool -L ./drsolve
+          if otool -L ./drsolve | grep -E 'libflint|libpml'; then
             echo "ERROR: binary is dynamically linked against FLINT or PML"
             exit 1
           fi
@@ -255,10 +255,10 @@ jobs:
           MACOS_VER=$(sw_vers -productVersion | cut -d. -f1-2)
           ARCH=$(uname -m)
           TAG="${{ github.ref_name }}"
-          strip ./dixon
-          ARTIFACT_NAME="dixon-${TAG}-macos${MACOS_VER}-${ARCH}"
+          strip ./drsolve
+          ARTIFACT_NAME="drsolve-${TAG}-macos${MACOS_VER}-${ARCH}"
           mkdir -p dist
-          cp ./dixon "dist/${ARTIFACT_NAME}"
+          cp ./drsolve "dist/${ARTIFACT_NAME}"
           cat > dist/build-info-macos.txt <<EOF
           Binary   : ${ARTIFACT_NAME}
           Built on : $(date -u +"%Y-%m-%d %H:%M UTC")

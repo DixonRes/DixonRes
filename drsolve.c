@@ -28,7 +28,7 @@
 #include "rational_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.1.5"
+#define PROGRAM_VERSION "0.2.0"
 
 #ifdef _WIN32
 #define DIXON_NULL_DEVICE "NUL"
@@ -93,7 +93,7 @@ static void dixon_fprint_arb_pretty(FILE *fp, const arb_t value, slong digits)
 static void print_version()
 {
     printf("===============================================\n");
-    printf("DixonRes v%s\n", PROGRAM_VERSION);
+    printf("drsolve v%s\n", PROGRAM_VERSION);
     printf("FLINT version: %s (Recommended: 3.4.0)\n", FLINT_VERSION);
 #ifdef HAVE_PML
     printf("PML support: ENABLED\n");
@@ -111,10 +111,11 @@ static void print_usage(const char *prog_name)
     printf("    -> Default output file: solution+timestamp.dat\n");
 
     printf("  Polynomial system solver:\n");
+    printf("    %s \"polynomials\" field_size\n", prog_name);
     printf("    %s --solve \"polynomials\" field_size\n", prog_name);
     printf("    %s --solve-verbose \"polynomials\" field_size\n", prog_name);
     printf("    -> Writes all solutions to solution+timestamp.dat\n");
-    printf("    -> `--solve` prints a concise summary; `--solve-verbose` keeps full solver logs\n");
+    printf("    -> `--solve` is optional here; `--solve-verbose` keeps full solver logs\n");
 
     printf("  Complexity analysis:\n");
     printf("    %s --comp \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
@@ -128,7 +129,7 @@ static void print_usage(const char *prog_name)
     printf("    %s --ideal \"ideal_generators\" \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
     printf("    %s --ideal input_file\n", prog_name);
     printf("    -> ideal_generators: comma-separated relations with '=' (e.g. \"a2^3=2*a1+1, a3^3=a1*a2+3\")\n");
-    printf("    -> In file mode: lines containing '=' are ideal generators, others are polynomials\n");
+    printf("    -> In file mode, lines after the first two lines containing '=' are ideal generators; others are polynomials\n");
     
     printf("  Field-equation reduction mode (combine with any compute flag):\n");
     printf("    %s --field-equation \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
@@ -145,6 +146,7 @@ static void print_usage(const char *prog_name)
     printf("  File input:\n");
     printf("    %s input_file\n", prog_name);
     printf("    %s --solve input_file\n", prog_name);
+    printf("    -> Without flags, auto-detects solver mode when line 1 starts with a digit; otherwise uses elimination mode\n");
     printf("    -> Output saved as input_file_solution+timestamp.dat\n");
 
     printf("  Silent mode:\n");
@@ -154,26 +156,26 @@ static void print_usage(const char *prog_name)
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
     printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
-    printf("    -> Available methods: 0.Recursive; 1.Kronecker; 2.Interpolation; 3.Huang\n");
+    printf("    -> Available methods: 0.Recursive; 1.Kronecker+HNF; 2.Interpolation; 3.Sparse interpolation\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
 
     printf("  Process count:\n");
     printf("    %s --threads <num> <args>\n", prog_name);
     printf("    -> Set number of threads for parallel computation\n");
 
-    printf("FILE FORMAT (Basic Dixon / Complexity, multiline):\n");
-    printf("  Line 1 : field size (prime or p^k; generator defaults to 't')\n");
-    printf("  Line 2+: polynomials (comma-separated, may span multiple lines)\n");
-    printf("  Last   : variables TO ELIMINATE (comma-separated)\n");
-
-    printf("FILE FORMAT (Polynomial Solver, multiline):\n");
-    printf("  Line 1 : field size\n");
-    printf("  Line 2+: polynomials (one per line or comma-separated)\n");
+    printf("FILE FORMAT (auto-detected for input_file):\n");
+    printf("  Solver mode (line 1 starts with a digit):\n");
+    printf("    Line 1 : field size\n");
+    printf("    Line 2+: polynomials (one per line or comma-separated)\n");
+    printf("  Elimination / complexity / ideal mode (otherwise):\n");
+    printf("    Line 1 : variables TO ELIMINATE (comma-separated)\n");
+    printf("    Line 2 : field size (prime or p^k; generator defaults to 't')\n");
+    printf("    Line 3+: polynomials (comma-separated, may span multiple lines)\n");
 
     printf("EXAMPLES:\n");
     printf("  %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
     printf("  %s \"x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z\" \"x,y\" 0\n", prog_name);
-    printf("  %s --solve \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
+    printf("  %s \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
     printf("  %s --comp \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
     printf("  %s --random \"[3,3,2]\" 257\n", prog_name);
     printf("  %s -r \"[3]*3\" 0\n", prog_name);
@@ -182,9 +184,10 @@ static void print_usage(const char *prog_name)
     printf("  %s --ideal \"a2^3=2*a1+1, a3^3=a1*a2+3\" \"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3\" \"a3\" 257\n", prog_name);
     printf("  %s --field-eqution \"x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1\" \"x0,x1\" 2\n", prog_name);
     printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"x\" 2^8\n", prog_name);
-    printf("  %s --solve \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
+    printf("  %s \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
     printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
     printf("  %s example.dr\n", prog_name);
+    printf("  %s example_solve.dr\n", prog_name);
 }
 
 /* =========================================================================
@@ -212,9 +215,9 @@ static const char *det_method_name_cli(int method)
 {
     switch (method) {
         case 0: return "Recursive expansion";
-        case 1: return "Kronecker substitution";
+        case 1: return "Kronecker+HNF";
         case 2: return "Interpolation";
-        case 3: return "Huang interpolation";
+        case 3: return "sparse interpolation";
         default: return "Default";
     }
 }
@@ -880,7 +883,7 @@ static int generate_random_poly_strings(
 }
 
 /* =========================================================================
- * File reading helpers (unchanged from original)
+ * File reading helpers
  * ========================================================================= */
 static char *read_entire_line(FILE *fp)
 {
@@ -907,25 +910,35 @@ static char *read_entire_line(FILE *fp)
     return line;
 }
 
-static int read_multiline_file(FILE *fp, char **field_str, char **polys_str,
-                               char **vars_str, char **ideal_str,
-                               char **allvars_str)
+static void free_input_lines(char **lines, int line_count)
 {
-    char **lines   = NULL;
-    int   line_count = 0, line_capacity = 10;
-    lines = malloc(line_capacity * sizeof(char *));
+    if (!lines) return;
+    for (int i = 0; i < line_count; i++) free(lines[i]);
+    free(lines);
+}
+
+static int collect_input_lines(FILE *fp, char ***lines_out, int *line_count_out)
+{
+    char **lines = NULL;
+    int line_count = 0, line_capacity = 10;
+
+    lines = malloc((size_t) line_capacity * sizeof(char *));
     if (!lines) return 0;
 
     char *line;
     while ((line = read_entire_line(fp)) != NULL) {
         char *trimmed = trim(line);
-        if (strlen(trimmed) == 0 || trimmed[0] == '#') { free(line); continue; }
+        if (strlen(trimmed) == 0 || trimmed[0] == '#') {
+            free(line);
+            continue;
+        }
         if (line_count >= line_capacity) {
             line_capacity *= 2;
-            char **nl = realloc(lines, line_capacity * sizeof(char *));
+            char **nl = realloc(lines, (size_t) line_capacity * sizeof(char *));
             if (!nl) {
-                for (int i = 0; i < line_count; i++) free(lines[i]);
-                free(lines); free(line); return 0;
+                free_input_lines(lines, line_count);
+                free(line);
+                return 0;
             }
             lines = nl;
         }
@@ -933,90 +946,23 @@ static int read_multiline_file(FILE *fp, char **field_str, char **polys_str,
         free(line);
     }
 
-    if (line_count < 3) {
-        fprintf(stderr, "Error: File must contain at least 3 non-empty lines\n");
-        fprintf(stderr, "  Line 1: field size\n");
-        fprintf(stderr, "  Lines 2 to n-1: polynomials\n");
-        fprintf(stderr, "  Line n: variables to ELIMINATE\n");
-        for (int i = 0; i < line_count; i++) free(lines[i]);
-        free(lines);
-        return 0;
-    }
-
-    *field_str = lines[0];
-    *vars_str  = lines[line_count - 1];
-
-    size_t total_len = 0;
-    for (int i = 1; i < line_count - 1; i++)
-        total_len += strlen(lines[i]) + 2;
-
-    char *poly_buffer = malloc(total_len + 1);
-    if (!poly_buffer) {
-        for (int i = 0; i < line_count; i++) free(lines[i]);
-        free(lines);
-        return 0;
-    }
-    poly_buffer[0] = '\0';
-    for (int i = 1; i < line_count - 1; i++) {
-        if (i > 1) strcat(poly_buffer, " ");
-        strcat(poly_buffer, lines[i]);
-    }
-    *polys_str = poly_buffer;
-
-    for (int i = 1; i < line_count - 1; i++) free(lines[i]);
-    free(lines);
-
-    *ideal_str    = NULL;
-    *allvars_str  = NULL;
+    *lines_out = lines;
+    *line_count_out = line_count;
     return 1;
 }
 
-static int read_solver_file(FILE *fp, char **field_str, char **polys_str)
+static char *join_polynomial_lines(char **lines, int start, int end)
 {
-    char **lines   = NULL;
-    int   line_count = 0, line_capacity = 10;
-    lines = malloc(line_capacity * sizeof(char *));
-    if (!lines) return 0;
-
-    char *line;
-    while ((line = read_entire_line(fp)) != NULL) {
-        char *trimmed = trim(line);
-        if (strlen(trimmed) == 0 || trimmed[0] == '#') { free(line); continue; }
-        if (line_count >= line_capacity) {
-            line_capacity *= 2;
-            char **nl = realloc(lines, line_capacity * sizeof(char *));
-            if (!nl) {
-                for (int i = 0; i < line_count; i++) free(lines[i]);
-                free(lines); free(line); return 0;
-            }
-            lines = nl;
-        }
-        lines[line_count++] = strdup(trimmed);
-        free(line);
-    }
-
-    if (line_count < 2) {
-        fprintf(stderr, "Error: Solver file must contain at least 2 non-empty lines\n");
-        for (int i = 0; i < line_count; i++) free(lines[i]);
-        free(lines);
-        return 0;
-    }
-
-    *field_str = lines[0];
-
     size_t total_len = 0;
-    for (int i = 1; i < line_count; i++)
+    for (int i = start; i < end; i++)
         total_len += strlen(lines[i]) + 3;
 
     char *poly_buffer = malloc(total_len + 1);
-    if (!poly_buffer) {
-        for (int i = 0; i < line_count; i++) free(lines[i]);
-        free(lines);
-        return 0;
-    }
+    if (!poly_buffer) return NULL;
+
     poly_buffer[0] = '\0';
-    for (int i = 1; i < line_count; i++) {
-        if (i > 1) {
+    for (int i = start; i < end; i++) {
+        if (i > start) {
             size_t prev_len = strlen(poly_buffer);
             int prev_comma = (prev_len > 0 &&
                 (poly_buffer[prev_len - 1] == ',' ||
@@ -1028,7 +974,70 @@ static int read_solver_file(FILE *fp, char **field_str, char **polys_str)
         }
         strcat(poly_buffer, lines[i]);
     }
-    *polys_str = poly_buffer;
+
+    return poly_buffer;
+}
+
+static int line_starts_with_digit(const char *line)
+{
+    return (line && line[0] != '\0' && isdigit((unsigned char) line[0]));
+}
+
+static int read_multiline_file(FILE *fp, char **field_str, char **polys_str,
+                               char **vars_str, char **ideal_str,
+                               char **allvars_str)
+{
+    char **lines = NULL;
+    int line_count = 0;
+
+    if (!collect_input_lines(fp, &lines, &line_count)) return 0;
+
+    if (line_count < 3) {
+        fprintf(stderr, "Error: Elimination file must contain at least 3 non-empty lines\n");
+        fprintf(stderr, "  Line 1 : variables to ELIMINATE\n");
+        fprintf(stderr, "  Line 2 : field size\n");
+        fprintf(stderr, "  Line 3+: polynomials\n");
+        free_input_lines(lines, line_count);
+        return 0;
+    }
+
+    *vars_str  = lines[0];
+    *field_str = lines[1];
+    *polys_str = join_polynomial_lines(lines, 2, line_count);
+    if (!*polys_str) {
+        free_input_lines(lines, line_count);
+        return 0;
+    }
+
+    for (int i = 2; i < line_count; i++) free(lines[i]);
+    free(lines);
+
+    *ideal_str    = NULL;
+    *allvars_str  = NULL;
+    return 1;
+}
+
+static int read_solver_file(FILE *fp, char **field_str, char **polys_str)
+{
+    char **lines = NULL;
+    int line_count = 0;
+
+    if (!collect_input_lines(fp, &lines, &line_count)) return 0;
+
+    if (line_count < 2) {
+        fprintf(stderr, "Error: Solver file must contain at least 2 non-empty lines\n");
+        fprintf(stderr, "  Line 1 : field size\n");
+        fprintf(stderr, "  Line 2+: polynomials\n");
+        free_input_lines(lines, line_count);
+        return 0;
+    }
+
+    *field_str = lines[0];
+    *polys_str = join_polynomial_lines(lines, 1, line_count);
+    if (!*polys_str) {
+        free_input_lines(lines, line_count);
+        return 0;
+    }
 
     for (int i = 1; i < line_count; i++) free(lines[i]);
     free(lines);
@@ -1037,51 +1046,32 @@ static int read_solver_file(FILE *fp, char **field_str, char **polys_str)
 
 /* =========================================================================
  * Read file for --ideal mode:
- *   Line 1 : field size
- *   Lines 2..n-1 : polys (no '=') or ideal generators (has '='), mixed
- *   Line n : variables to ELIMINATE
+ *   Line 1 : variables to ELIMINATE
+ *   Line 2 : field size
+ *   Line 3+: polys (no '=') or ideal generators (has '='), mixed
  * ========================================================================= */
 static int read_ideal_file(FILE *fp, char **field_str, char **polys_str,
                            char **vars_str, char **ideal_str)
 {
-    char **lines       = NULL;
-    int   line_count   = 0, line_capacity = 16;
-    lines = malloc(line_capacity * sizeof(char *));
-    if (!lines) return 0;
+    char **lines = NULL;
+    int line_count = 0;
 
-    char *line;
-    while ((line = read_entire_line(fp)) != NULL) {
-        char *trimmed = trim(line);
-        if (strlen(trimmed) == 0 || trimmed[0] == '#') { free(line); continue; }
-        if (line_count >= line_capacity) {
-            line_capacity *= 2;
-            char **nl = realloc(lines, line_capacity * sizeof(char *));
-            if (!nl) {
-                for (int i = 0; i < line_count; i++) free(lines[i]);
-                free(lines); free(line); return 0;
-            }
-            lines = nl;
-        }
-        lines[line_count++] = strdup(trimmed);
-        free(line);
-    }
+    if (!collect_input_lines(fp, &lines, &line_count)) return 0;
 
     if (line_count < 3) {
         fprintf(stderr, "Error: --ideal file needs at least 3 non-empty lines\n");
-        fprintf(stderr, "  Line 1     : field size\n");
-        fprintf(stderr, "  Lines 2..n-1: polynomials and/or ideal generators (lines with '=' are ideal)\n");
-        fprintf(stderr, "  Line n     : variables to ELIMINATE\n");
-        for (int i = 0; i < line_count; i++) free(lines[i]);
-        free(lines);
+        fprintf(stderr, "  Line 1 : variables to ELIMINATE\n");
+        fprintf(stderr, "  Line 2 : field size\n");
+        fprintf(stderr, "  Line 3+: polynomials and/or ideal generators (lines with '=' are ideal)\n");
+        free_input_lines(lines, line_count);
         return 0;
     }
 
-    *field_str = lines[0];
-    *vars_str  = lines[line_count - 1];
+    *vars_str  = lines[0];
+    *field_str = lines[1];
 
-    /* Separate middle lines into polys and ideal generators */
     size_t poly_len  = 0, ideal_len = 0;
-    for (int i = 1; i < line_count - 1; i++) {
+    for (int i = 2; i < line_count; i++) {
         if (strchr(lines[i], '='))  ideal_len += strlen(lines[i]) + 3;
         else                         poly_len  += strlen(lines[i]) + 3;
     }
@@ -1098,7 +1088,7 @@ static int read_ideal_file(FILE *fp, char **field_str, char **polys_str,
     ideal_buf[0] = '\0';
 
     int poly_first = 1, ideal_first = 1;
-    for (int i = 1; i < line_count - 1; i++) {
+    for (int i = 2; i < line_count; i++) {
         if (strchr(lines[i], '=')) {
             if (!ideal_first) strcat(ideal_buf, ", ");
             strcat(ideal_buf, lines[i]);
@@ -1114,6 +1104,62 @@ static int read_ideal_file(FILE *fp, char **field_str, char **polys_str,
     *polys_str = poly_buf;
     *ideal_str = (ideal_len > 0) ? ideal_buf : (free(ideal_buf), NULL);
 
+    free(lines);
+    return 1;
+}
+
+static int read_auto_input_file(FILE *fp, int *solve_mode_out,
+                                char **field_str, char **polys_str,
+                                char **vars_str, char **ideal_str,
+                                char **allvars_str)
+{
+    char **lines = NULL;
+    int line_count = 0;
+
+    if (!collect_input_lines(fp, &lines, &line_count)) return 0;
+    if (line_count < 2) {
+        fprintf(stderr, "Error: Input file must contain at least 2 non-empty lines\n");
+        fprintf(stderr, "  Solver mode      : line 1 = field size, line 2+ = polynomials\n");
+        fprintf(stderr, "  Elimination mode : line 1 = elimination vars, line 2 = field size, line 3+ = polynomials\n");
+        free_input_lines(lines, line_count);
+        return 0;
+    }
+
+    *ideal_str = NULL;
+    *allvars_str = NULL;
+
+    if (line_starts_with_digit(lines[0])) {
+        *solve_mode_out = 1;
+        *vars_str = NULL;
+        *field_str = lines[0];
+        *polys_str = join_polynomial_lines(lines, 1, line_count);
+        if (!*polys_str) {
+            free_input_lines(lines, line_count);
+            return 0;
+        }
+        for (int i = 1; i < line_count; i++) free(lines[i]);
+        free(lines);
+        return 1;
+    }
+
+    if (line_count < 3) {
+        fprintf(stderr, "Error: Elimination file must contain at least 3 non-empty lines\n");
+        fprintf(stderr, "  Line 1 : variables to ELIMINATE\n");
+        fprintf(stderr, "  Line 2 : field size\n");
+        fprintf(stderr, "  Line 3+: polynomials\n");
+        free_input_lines(lines, line_count);
+        return 0;
+    }
+
+    *solve_mode_out = 0;
+    *vars_str = lines[0];
+    *field_str = lines[1];
+    *polys_str = join_polynomial_lines(lines, 2, line_count);
+    if (!*polys_str) {
+        free_input_lines(lines, line_count);
+        return 0;
+    }
+    for (int i = 2; i < line_count; i++) free(lines[i]);
     free(lines);
     return 1;
 }
@@ -2118,7 +2164,7 @@ int main(int argc, char *argv[])
         }
 
     } else {
-        /* Basic Dixon, or auto-detect solve mode if only two args */
+        /* Basic Dixon, or auto-detect solve/file mode when flags are omitted */
         if (effective_argc == 3) {
             /* Auto-detect solve mode: only polynomials and field size */
             solve_mode = 1;
@@ -2127,6 +2173,7 @@ int main(int argc, char *argv[])
             output_filename = generate_timestamped_filename("solution");
         } else if (effective_argc == 2) {
             FILE *fp = fopen(effective_argv[1], "r");
+            int detected_solve_mode = 0;
             if (!fp) {
                 if (!silent_mode)
                     fprintf(stderr, "Error: Cannot open file '%s'\n",
@@ -2139,12 +2186,16 @@ int main(int argc, char *argv[])
             input_filename  = strdup(effective_argv[1]);
             output_filename = generate_tagged_filename(input_filename, "_solution");
 
-            if (!read_multiline_file(fp, &field_str, &polys_str,
-                                     &vars_str, &ideal_str, &allvars_str)) {
+            if (!read_auto_input_file(fp, &detected_solve_mode, &field_str, &polys_str,
+                                      &vars_str, &ideal_str, &allvars_str)) {
                 fclose(fp); return 1;
             }
             fclose(fp);
+            solve_mode = detected_solve_mode;
             need_free = 1;
+
+            if (!silent_mode)
+                printf("Detected file mode: %s\n", solve_mode ? "solver" : "elimination");
 
         } else if (effective_argc == 4 || effective_argc == 5) {
             polys_str = effective_argv[1];
@@ -2228,7 +2279,7 @@ int main(int argc, char *argv[])
     }
     if (large_prime_mode) {
         if (solve_mode) {
-            fprintf(stderr, "Error: large prime fields beyond the nmod limit currently support Dixon resultant only; --solve is not implemented.\n");
+            fprintf(stderr, "Error: large prime fields beyond the nmod limit currently support Dixon resultant only; solver mode is not implemented.\n");
             goto cleanup_fail;
         }
         if (ideal_str) {
