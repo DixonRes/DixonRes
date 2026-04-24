@@ -36,7 +36,7 @@ Optional:
 
 ## Build
 ```bash
-git clone https://github.com/drsolve/drsolve.git drsolve && cd drsolve
+git clone https://github.com/drsolve/drsolve.git && cd drsolve
 ./configure
 make
 make check                         # optional
