@@ -1,7 +1,7 @@
-# drsolve: Dixon Resultant & Polynomial System Solver
+# DRsolve: Dixon Resultant & Polynomial System Solver
 A C implementation for computing Dixon resultants and solving polynomial systems over finite fields and the rationals ℚ, based on the FLINT and PML libraries.
 
-Website: <https://dixonres.github.io>
+Website: <https://drsolve.github.io>
 
 ## Features
 - Dixon resultant computation for variable elimination
@@ -36,14 +36,14 @@ Optional:
 
 ## Build
 ```bash
-git clone https://github.com/DixonRes/DixonRes.git drsolve && cd drsolve
+git clone https://github.com/drsolve/drsolve.git drsolve && cd drsolve
 ./configure
 make
 make check                         # optional
 make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
-We also provide a Windows GUI at [DixonRes-Windows](https://github.com/DixonRes/DixonRes-Windows) or [DixonRes-Cross](https://github.com/DixonRes/DixonRes-Cross).
+We also provide a Windows GUI at [drsolve-win](https://github.com/drsolve/drsolve-win) or [drsolve-cross](https://github.com/drsolve/drsolve-cross).
 
 ---
 
@@ -315,4 +315,4 @@ and the resultant, solutions, or complexity report.
 ---
 
 ## License
-drsolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
+DRsolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
