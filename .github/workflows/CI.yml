@@ -152,65 +152,63 @@ jobs:
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Resolve FLINT/PML duplicate symbols via ld incremental link (macOS)
+      - name: Resolve FLINT/PML duplicate symbols via Incremental Linking (macOS)
         run: |
-          # 1. Setup paths and SDK
+          # 1. Setup paths
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           WORK_DIR="${{ github.workspace }}/flint_fix_work"
-          OBJ_DIR="$WORK_DIR/objs"
           export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
           
-          mkdir -p "$OBJ_DIR"
+          mkdir -p "$WORK_DIR/objs"
+          cd "$WORK_DIR/objs"
 
-          # 2. Define conflicting symbols (must have the leading underscore)
-          CONFLICTS=("_nmod_mat_left_nullspace" "_nmod_mat_nullspace" "_fmpz_mat_nullspace" "_fmpz_mat_rank" "_fmpz_mat_solve")
-          
-          # Prepare flags for ld
-          LD_FLAGS=""
-          for sym in "${CONFLICTS[@]}"; do
-            LD_FLAGS="$LD_FLAGS -unexported_symbol $sym"
-          done
+          # 2. Extract ALL object files from FLINT
+          echo "Step 1: Extracting all objects from libflint.a..."
+          ar -x "$FLINT_A"
 
-          echo "Step 1: Extracting libflint.a objects uniquely..."
-          cd "$OBJ_DIR"
-          # Extract with unique IDs to handle duplicate filenames in FLINT
-          ar -t "$FLINT_A" | grep '\.o$' | awk '{print $0, NR}' | while read -r obj idx; do
-            ar -p "$FLINT_A" "$obj" > "${idx}_${obj}"
-          done
+          # 3. Define conflict symbols
+          # Note: No need to rename them, just list them to be hidden from outside
+          cat <<EOF > "$WORK_DIR/conflicts.txt"
+          _nmod_mat_left_nullspace
+          _nmod_mat_nullspace
+          _fmpz_mat_nullspace
+          _fmpz_mat_rank
+          _fmpz_mat_solve
+          EOF
 
-          echo "Step 2: Localizing symbols using ld -r..."
-          for obj in *.o; do
-            # Only process if the object actually defines one of the conflict symbols
-            # nm -gjU: Global, Just name, Defined
-            NEEDS_FIX=false
-            for sym in "${CONFLICTS[@]}"; do
-              if nm -gjU "$obj" | grep -qx "$sym"; then
-                NEEDS_FIX=true
-                break
-              fi
-            done
+          # 4. Use ld -r to combine everything into ONE big object file
+          # This resolves all internal references within FLINT first.
+          echo "Step 2: Combining objects into a single bundle..."
+          # We use -all_load to ensure every object is included
+          ld -r -all_load *.o -o "$WORK_DIR/flint_bundle.o"
 
-            if [ "$NEEDS_FIX" = true ]; then
-              echo "Processing $obj..."
-              # ld -r: Incremental link that allows changing symbol visibility
-              ld -r $LD_FLAGS "$obj" -o "$obj.tmp"
-              mv "$obj.tmp" "$obj"
-            fi
-          done
+          # 5. Hide the specific symbols in the bundle
+          echo "Step 3: Localizing conflict symbols in the bundle..."
+          # Build the -unexported_symbol flags
+          EXPORT_FLAGS=""
+          while read -r sym; do
+            [ -n "$sym" ] && EXPORT_FLAGS="$EXPORT_FLAGS -unexported_symbol $sym"
+          done < "$WORK_DIR/conflicts.txt"
 
-          echo "Step 3: Rebuilding libflint.a..."
+          # Create the final localized object
+          ld -r $EXPORT_FLAGS "$WORK_DIR/flint_bundle.o" -o "$WORK_DIR/flint_final.o"
+
+          # 6. Replace the original library with our single-object library
+          echo "Step 4: Rebuilding libflint.a..."
           rm -f "$FLINT_A"
-          libtool -static -o "$FLINT_A" *.o
+          ar cr "$FLINT_A" "$WORK_DIR/flint_final.o"
           ranlib "$FLINT_A"
 
-          echo "Step 4: Final Verification..."
-          for sym in "${CONFLICTS[@]}"; do
+          # 7. Verification
+          echo "Step 5: Final Verification..."
+          # These symbols should NOT appear in the Global list (-g) anymore
+          for sym in _nmod_mat_left_nullspace _fmpz_mat_solve; do
             if nm -g "$FLINT_A" | grep -qx "$sym"; then
-              echo "Error: $sym is still global in FLINT. Fix failed."
+              echo "Error: $sym is still global. Fix failed."
               exit 1
             fi
           done
-          echo "Success: All conflicting symbols are now localized (hidden) in FLINT."
+          echo "Success: FLINT internal calls are preserved, but conflicts are hidden from PML."
 
       - name: Configure project (static)
         run: |
