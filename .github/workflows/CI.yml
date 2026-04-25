@@ -253,7 +253,7 @@ jobs:
       - name: Build
         run: |
           export LDFLAGS="-L$INSTALL_PREFIX/lib -Wl,-no_compact_unwind"
-          make -j$(sysctl -n hw.ncpu)
+          make static-all -j$(sysctl -n hw.ncpu)
 
       - name: Run tests
         run: make check
