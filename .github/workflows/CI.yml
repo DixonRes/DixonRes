@@ -152,7 +152,7 @@ jobs:
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Resolve FLINT/PML duplicate symbols via Native Linker (macOS)
+      - name: Resolve FLINT/PML duplicate symbols (macOS Precise Fix)
         run: |
           # 1. Setup paths
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
@@ -166,7 +166,8 @@ jobs:
           echo "Step 1: Extracting libflint.a..."
           ar -x "$FLINT_A"
 
-          # 3. Define conflict symbols
+          # 3. Define EXACT conflict symbols
+          # We only want to hide these specific names
           cat <<EOF > "$WORK_DIR/conflicts.txt"
           _nmod_mat_left_nullspace
           _nmod_mat_nullspace
@@ -176,33 +177,39 @@ jobs:
           EOF
 
           # 4. Incremental Link and Hide symbols
-          echo "Step 2: Merging objects and hiding symbols using native ld..."
-          # Prepare unexported symbol flags
+          echo "Step 2: Merging objects and hiding EXACT symbols..."
           HIDE_FLAGS=""
           while read -r sym; do
             [ -n "$sym" ] && HIDE_FLAGS="$HIDE_FLAGS -Wl,-unexported_symbol,$sym"
           done < "$WORK_DIR/conflicts.txt"
 
-          # We use cc as a driver for ld to handle SDK paths correctly.
-          # -r: incremental link (produces one big .o)
-          # -nostdlib: don't link system libs into this object
-          # -Wl,-no_compact_unwind: strip the problematic unwind section to avoid alignment errors
+          # Use cc as a driver. -Wl,-no_compact_unwind prevents the alignment error.
           cc -r -nostdlib $HIDE_FLAGS *.o -o "$WORK_DIR/flint_fixed.o" -Wl,-no_compact_unwind
 
-          # 5. Rebuild the archive with only the fixed object
+          # 5. Rebuild the archive
           echo "Step 3: Creating fixed libflint.a..."
           rm -f "$FLINT_A"
           ar cr "$FLINT_A" "$WORK_DIR/flint_fixed.o"
           ranlib "$FLINT_A"
 
-          # 6. Verification
-          echo "Step 4: Verification..."
-          # These should no longer be 'T' (Global)
-          if nm -g "$FLINT_A" | grep -E "(_nmod_mat_left_nullspace|_fmpz_mat_solve)"; then
-             echo "Error: Conflict symbols are still global."
-             exit 1
+          # 6. Verification (Precise Match)
+          echo "Step 4: Precise Verification..."
+          FAIL=0
+          while read -r sym; do
+            # grep -w ensures we only match the whole word, e.g., _fmpz_mat_solve 
+            # and NOT _fmpz_mat_solve_dixon
+            if nm -g "$FLINT_A" | grep -w "$sym" | grep -v " U "; then
+               echo "Error: Conflict symbol $sym is still global!"
+               FAIL=1
+            else
+               echo "Success: $sym is now hidden or private."
+            fi
+          done < "$WORK_DIR/conflicts.txt"
+
+          if [ $FAIL -eq 1 ]; then
+            exit 1
           fi
-          echo "Success: FLINT is now cleaned of PML conflicts without corruption."
+          echo "All targeted conflict symbols resolved successfully."
           
       - name: Configure project (static)
         run: |
