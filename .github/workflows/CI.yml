@@ -136,9 +136,9 @@ jobs:
           echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig:$BREW/lib/pkgconfig"   >> $GITHUB_ENV
           mkdir -p "$INSTALL_PREFIX"
 
-      - name: Cache FLINT static install
+      - name: Restore FLINT static install cache
         id: flint-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
           key: macos-flint-3.5-static-${{ runner.arch }}-v1
@@ -158,6 +158,13 @@ jobs:
             --with-mpfr="$BREW"
           make -j$(sysctl -n hw.ncpu)
           make install
+
+      - name: Save FLINT static install cache
+        if: steps.flint-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.INSTALL_PREFIX }}
+          key: macos-flint-3.5-static-${{ runner.arch }}-v1
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
@@ -249,6 +256,12 @@ jobs:
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
             --flint-lib="$INSTALL_PREFIX/lib"
+
+      - name: Adjust macOS static link settings
+        run: |
+          perl -0pi -e 's/^LTO_CFLAGS = .*$/LTO_CFLAGS = /m; s/^LTO_LDFLAGS = .*$/LTO_LDFLAGS = /m; s#^FLINT_STATIC_LIBS = .*$#FLINT_STATIC_LIBS = -Wl,-load_hidden,'"$INSTALL_PREFIX"'/lib/libflint.a#m' config.mk
+          echo "=== config.mk overrides ==="
+          grep -E '^(LTO_CFLAGS|LTO_LDFLAGS|FLINT_STATIC_LIBS) =' config.mk
 
       - name: Build
         run: |
