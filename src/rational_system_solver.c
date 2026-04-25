@@ -2749,11 +2749,6 @@ int rational_solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                 poly_strings, num_polys, sorted_vars, num_vars,
                 base_roots, num_roots, sols
             );
-            
-            for (slong i = 0; i < num_roots; i++) {
-                fmpq_clear(base_roots[i]);
-            }
-            free(base_roots);
             success = 1;
         } else {
             printf("No rational roots found for the resultant.\n");
@@ -2769,6 +2764,13 @@ int rational_solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                                                                   real_base_roots[i], sols);
                 }
             }
+        }
+
+        if (base_roots) {
+            for (slong i = 0; i < num_roots; i++) {
+                fmpq_clear(base_roots[i]);
+            }
+            free(base_roots);
         }
 
         rational_clear_real_root_array(real_base_roots, num_real_roots);
