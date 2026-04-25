@@ -11,7 +11,7 @@ jobs:
   # Linux: static build + test + artifact
   # ──────────────────────────────────────────────────────────────
   build-linux-static:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       INSTALL_PREFIX: ${{ github.workspace }}/deps-static
 
@@ -46,14 +46,15 @@ jobs:
           make -j$(nproc)
           make install
 
-      # Linux: Use ld's --allow-multiple-definition flag
+      # Linux GNU ld: --allow-multiple-definition handles FLINT/PML
+      # duplicate symbols at link time; no archive pre-processing needed.
+
       - name: Configure project (static)
         run: |
           ./configure \
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib" \
-            --extra-ldflags="-Wl,--allow-multiple-definition"
+            --flint-lib="$INSTALL_PREFIX/lib"
 
       - name: Build
         run: make -j$(nproc)
@@ -149,72 +150,70 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           make install
 
-      # macOS workaround: Create linker wrapper that filters duplicate symbol errors
-      # Apple's ld doesn't support --allow-multiple-definition like GNU ld
-      # This wrapper filters out duplicate symbol errors but passes all other errors
-      - name: Create linker wrapper to filter duplicate symbol errors (macOS)
+      # macOS: localize conflicting FLINT symbols with nmedit
+      # (Apple ld lacks --allow-multiple-definition)
+      - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS)
         run: |
-          # Create a wrapper script that intercepts ld calls
-          sudo tee /usr/local/bin/ld-wrapper > /dev/null << 'EOF'
-          #!/bin/bash
-          # Wrapper for macOS linker to ignore duplicate symbol errors
-          # This allows static linking when both FLINT and PML define the same symbols
+          FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
+          PML_A="$INSTALL_PREFIX/lib/libpml.a"
+          WORK_DIR=$(mktemp -d)
           
-          # Call the real linker with all arguments
-          output=$(/usr/bin/ld "$@" 2>&1)
-          status=$?
-          
-          # Filter out duplicate symbol errors but preserve other errors/warnings
-          # Check if the error is only about duplicate symbols
-          if echo "$output" | grep -q "duplicate symbol"; then
-            # Filter out duplicate symbol lines and check if anything else remains
-            filtered_output=$(echo "$output" | grep -v "duplicate symbol" | grep -v "^ld: warning:" | grep -v "^[[:space:]]*$")
-            
-            if [ -n "$filtered_output" ]; then
-              # There are non-duplicate errors, show them
-              echo "$filtered_output" >&2
-              exit $status
-            else
-              # Only duplicate symbol errors, treat as success
-              echo "Note: Duplicate symbol errors ignored (expected due to FLINT/PML overlap)" >&2
-              exit 0
-            fi
-          else
-            # No duplicate symbols, pass through output and status
-            if [ -n "$output" ]; then
-              echo "$output" >&2
-            fi
-            exit $status
-          fi
-          EOF
-          
-          # Make the wrapper executable
-          sudo chmod +x /usr/local/bin/ld-wrapper
-          
-          # Tell the build system to use our wrapper instead of the real ld
-          # Also set LIBRARY_PATH to ensure our wrapper is found first
-          echo "LD=/usr/local/bin/ld-wrapper" >> $GITHUB_ENV
-          echo "CMAKE_LD=/usr/local/bin/ld-wrapper" >> $GITHUB_ENV
-          
-          # Verify the wrapper works
-          echo "Linker wrapper created successfully at /usr/local/bin/ld-wrapper"
+          echo "Step 1: Extracting PML symbols..."
+          # Get all global defined symbols from PML (including underscores)
+          nm -gj "$PML_A" | sort -u > pml_symbols.txt
 
-      - name: Configure project (static) with macOS workaround
+          echo "Step 2: Extracting libflint.a objects uniquely..."
+          mkdir -p "$WORK_DIR/objs"
+          cd "$WORK_DIR/objs"
+          # Use ar -t to get the list of filenames and rename with index to prevent overwriting (avoid collisions with identical .o names)
+          ar -t "$FLINT_A" | awk '{print $0, NR}' | while read -r obj idx; do
+            ar -p "$FLINT_A" "$obj" > "${idx}_${obj}"
+          done
+
+          echo "Step 3: Processing objects with nmedit..."
+          for obj in *.o; do
+            # Get the global symbols from this object file
+            nm -gj "$obj" | sort -u > obj_symbols.txt
+            
+            # Find symbols that conflict with PML
+            comm -12 ../pml_symbols.txt obj_symbols.txt > conflicts.txt
+            
+            if [ -s conflicts.txt ]; then
+              echo "Localizing symbols in $obj: $(cat conflicts.txt | tr '\n' ' ')"
+              
+              # Build 'keep' list: keep symbols that are not conflicting as global
+              comm -23 obj_symbols.txt conflicts.txt > keep_symbols.txt
+              
+              if [ -s keep_symbols.txt ]; then
+                # Keep only symbols in keep_symbols.txt as global, turn the rest into private extern
+                nmedit -s keep_symbols.txt "$obj"
+              else
+                # If all symbols conflict, turn all into private
+                nmedit -p "$obj"
+              fi
+            fi
+          done
+
+          echo "Step 4: Rebuilding libflint.a..."
+          # Use libtool instead of ar, this is the recommended way to handle static libraries on macOS
+          libtool -static -o "$FLINT_A" *.o
+          
+          echo "Localization complete. Verifying..."
+          # Verify that the problematic symbol is no longer global T (should become non-global t)
+          if nm -g "$FLINT_A" | grep -q "_nmod_mat_left_nullspace$"; then
+             echo "Error: Symbol _nmod_mat_left_nullspace is still global!"
+             exit 1
+          fi
+
+      - name: Configure project (static)
         run: |
-          # Configure with extra linker flags that work with our wrapper
-          # Note: --allow-multiple-definition is ignored by wrapper but kept for compatibility
           ./configure \
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib" \
-            --extra-ldflags="-Wl,-undefined,dynamic_lookup"
+            --flint-lib="$INSTALL_PREFIX/lib"
 
       - name: Build
-        run: |
-          # Ensure our linker wrapper is used
-          export LD=/usr/local/bin/ld-wrapper
-          export CMAKE_LD=/usr/local/bin/ld-wrapper
-          make -j$(sysctl -n hw.ncpu)
+        run: make -j$(sysctl -n hw.ncpu)
 
       - name: Run tests
         run: make check
