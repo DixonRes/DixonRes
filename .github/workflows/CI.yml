@@ -152,61 +152,60 @@ jobs:
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Resolve FLINT/PML duplicate symbols via Renaming (macOS)
+      - name: Resolve FLINT/PML duplicate symbols via llvm-objcopy (macOS)
         run: |
           # 1. Setup paths
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           WORK_DIR="${{ github.workspace }}/flint_fix_work"
           OBJ_DIR="$WORK_DIR/objs"
+          RENAME_MAP="$WORK_DIR/rename_map.txt"
           
           mkdir -p "$OBJ_DIR"
 
-          # 2. Define the symbols that conflict with PML
-          # We will RENAME these in FLINT so they don't collide with your local PML
-          cat <<EOF > "$WORK_DIR/conflicts.txt"
-          _nmod_mat_left_nullspace
-          _nmod_mat_nullspace
-          _fmpz_mat_nullspace
-          _fmpz_mat_rank
-          _fmpz_mat_solve
+          # 2. Create the rename map
+          # Format: <old_symbol> <new_symbol>
+          # We append _FLINT_INTERNAL to the conflicting symbols
+          cat <<EOF > "$RENAME_MAP"
+          _nmod_mat_left_nullspace _nmod_mat_left_nullspace_FLINT_INTERNAL
+          _nmod_mat_nullspace _nmod_mat_nullspace_FLINT_INTERNAL
+          _fmpz_mat_nullspace _fmpz_mat_nullspace_FLINT_INTERNAL
+          _fmpz_mat_rank _fmpz_mat_rank_FLINT_INTERNAL
+          _fmpz_mat_solve _fmpz_mat_solve_FLINT_INTERNAL
           EOF
 
-          echo "Step 1: Extracting libflint.a objects..."
+          echo "Step 1: Extracting libflint.a objects uniquely..."
           cd "$OBJ_DIR"
+          # Extract objects with unique names (e.g., 1_merged.o, 2_merged.o)
           ar -t "$FLINT_A" | grep '\.o$' | awk '{print $0, NR}' | while read -r obj idx; do
             ar -p "$FLINT_A" "$obj" > "${idx}_${obj}"
           done
 
-          echo "Step 2: Renaming conflicting symbols in object files..."
-          # We create a map for nmedit: <old_name> <new_name>
-          awk '{print $1 " " $1 "_FLINT_INTERNAL"}' "$WORK_DIR/conflicts.txt" > "$WORK_DIR/rename_map.txt"
-
+          echo "Step 2: Renaming symbols using llvm-objcopy..."
+          # xcrun allows us to use the LLVM tools provided by Xcode
           for obj in *.o; do
-            # Check if this object contains any of the conflicting symbols
+            # Only process files that actually contain our target symbols to save time
             # nm -gjU: Global, Just name, Defined
-            if nm -gjU "$obj" | grep -Fxf "$WORK_DIR/conflicts.txt" > /dev/null; then
-              echo "Renaming symbols in $obj..."
-              # nmedit -i: Rename symbols according to the map file
-              nmedit -i "$WORK_DIR/rename_map.txt" "$obj"
+            if nm -gjU "$obj" | grep -E "(_nmod_mat|_fmpz_mat)" > /dev/null; then
+              echo "Processing $obj..."
+              xcrun llvm-objcopy --redefine-syms="$RENAME_MAP" "$obj"
             fi
           done
 
           echo "Step 3: Rebuilding libflint.a..."
           rm -f "$FLINT_A"
-          # Use libtool to combine objects and ranlib to update the index
           libtool -static -o "$FLINT_A" *.o
           ranlib "$FLINT_A"
 
           echo "Step 4: Final Verification..."
-          # Use a more robust check that doesn't trigger Broken Pipe
-          TOTAL_CONFLICTS=$(nm -gj "$FLINT_A" | grep -Fxf "$WORK_DIR/conflicts.txt" | wc -l | xargs)
+          # Check if the original symbol still exists in the global scope
+          # We expect 0 hits now.
+          CONFLICT_COUNT=$(nm -gj "$FLINT_A" | grep -E '^(_nmod_mat_left_nullspace|_nmod_mat_nullspace|_fmpz_mat_nullspace|_fmpz_mat_rank|_fmpz_mat_solve)$' | wc -l | xargs)
           
-          if [ "$TOTAL_CONFLICTS" -ne "0" ]; then
-             echo "Error: $TOTAL_CONFLICTS conflicting symbols still exist in FLINT."
-             nm -gj "$FLINT_A" | grep -Fxf "$WORK_DIR/conflicts.txt"
+          if [ "$CONFLICT_COUNT" -ne "0" ]; then
+             echo "Error: $CONFLICT_COUNT conflict symbols still remain in FLINT."
              exit 1
           else
-             echo "Success: All conflicting symbols renamed/hidden in FLINT."
+             echo "Success: Conflicting symbols renamed. FLINT is now safe to link with PML."
           fi
 
       - name: Configure project (static)
