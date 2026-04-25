@@ -216,8 +216,7 @@ jobs:
           ./configure \
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib" \
-            LDFLAGS="-Wl,-no_compact_unwind"
+            --flint-lib="$INSTALL_PREFIX/lib"
 
       - name: Build
         run: make -j$(sysctl -n hw.ncpu)
