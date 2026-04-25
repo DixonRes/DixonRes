@@ -136,7 +136,15 @@ jobs:
           echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig:$BREW/lib/pkgconfig"   >> $GITHUB_ENV
           mkdir -p "$INSTALL_PREFIX"
 
+      - name: Cache FLINT static install
+        id: flint-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.INSTALL_PREFIX }}
+          key: macos-flint-3.5-static-${{ runner.arch }}-v1
+
       - name: Build FLINT (static) - version 3.5.0
+        if: steps.flint-cache.outputs.cache-hit != 'true'
         run: |
           BREW=$(brew --prefix)
           git clone --depth=1 --branch flint-3.5 https://github.com/flintlib/flint.git
@@ -190,7 +198,7 @@ jobs:
             if [ -s .obj-hide-symbols.txt ]; then
               echo "  Patching $obj"
               sed 's/^/    - /' .obj-hide-symbols.txt
-              nmedit -p -s .obj-hide-symbols.txt "$obj"
+              nmedit -p -R .obj-hide-symbols.txt "$obj"
               patched_obj=1
             fi
           done
