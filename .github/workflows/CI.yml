@@ -169,43 +169,41 @@ jobs:
           _fmpz_mat_solve
           EOF
 
-          echo "Step 1: Finding FLINT archive members that define conflicting symbols..."
-          rm -f flint_members.txt
-          for sym in \
-            _nmod_mat_left_nullspace \
-            _nmod_mat_nullspace \
-            _fmpz_mat_nullspace \
-            _fmpz_mat_rank \
-            _fmpz_mat_solve; do
-            nm -A "$FLINT_A" | grep -w "$sym" | grep -v ' U ' \
-              | sed -n 's|^[^(]*(\([^)]*\)).*$|\1|p' >> flint_members.txt || true
-          done
-          sort -u flint_members.txt -o flint_members.txt
-          if [ ! -s flint_members.txt ]; then
-            echo "Error: no conflicting FLINT archive members were found."
-            exit 1
-          fi
-          echo "Archive members to patch:"
-          cat flint_members.txt
-
-          echo "Step 2: Changing symbol visibility in matching object files..."
+          echo "Step 1: Extracting FLINT archive members..."
+          rm -rf flint-obj-patch
           mkdir -p flint-obj-patch
           cd flint-obj-patch
-          while IFS= read -r member; do
-            echo "  Patching $member"
-            rm -f "$member"
-            ar -x "$FLINT_A" "$member"
-            nmedit -p -s ../hide_symbols.txt "$member"
-            ar -d "$FLINT_A" "$member"
-            ar -r "$FLINT_A" "$member"
-            rm -f "$member"
-          done < ../flint_members.txt
+          ar -x "$FLINT_A"
+
+          echo "Step 2: Changing symbol visibility in extracted object files..."
+          found_obj=0
+          patched_obj=0
+          for obj in *.o; do
+            [ -e "$obj" ] || continue
+            found_obj=1
+            if nm "$obj" | grep -E -w '(_nmod_mat_left_nullspace|_nmod_mat_nullspace|_fmpz_mat_nullspace|_fmpz_mat_rank|_fmpz_mat_solve)' | grep -v ' U ' > /dev/null; then
+              echo "  Patching $obj"
+              nmedit -p -s ../hide_symbols.txt "$obj"
+              patched_obj=1
+            fi
+          done
+          if [ "$found_obj" -eq 0 ]; then
+            echo "Error: failed to extract object files from FLINT archive."
+            exit 1
+          fi
+          if [ "$patched_obj" -eq 0 ]; then
+            echo "Warning: no extracted FLINT object file matched the conflict list before patching."
+          fi
+
+          echo "Step 3: Rebuilding libflint.a from patched object files..."
+          rm -f "$FLINT_A"
+          libtool -static -o "$FLINT_A" *.o
           cd ..
 
-          echo "Step 3: Re-indexing the library..."
+          echo "Step 4: Re-indexing the library..."
           ranlib "$FLINT_A"
 
-          echo "Step 4: Verification..."
+          echo "Step 5: Verification..."
           # On Mach-O, `nmedit -p` turns symbols into "private external".
           # `nm -g` still lists private externs, so use `nm -m` and only fail
           # if a symbol remains plain external (non-private).
