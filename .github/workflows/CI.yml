@@ -162,7 +162,7 @@ jobs:
           
           mkdir -p "$OBJ_DIR"
 
-          # 2. Define the symbols to hide
+          # 2. Define the exact symbols that conflict with PML
           cat <<EOF > "$CONFLICTS_FILE"
           _nmod_mat_left_nullspace
           _nmod_mat_nullspace
@@ -173,35 +173,36 @@ jobs:
 
           echo "Step 1: Extracting libflint.a objects uniquely..."
           cd "$OBJ_DIR"
-          # Extract with unique IDs to handle multiple files with the same name
+          # Extract objects with unique names to handle FLINT's duplicate filenames (e.g., merged.o)
           ar -t "$FLINT_A" | grep '\.o$' | awk '{print $0, NR}' | while read -r obj idx; do
             ar -p "$FLINT_A" "$obj" > "${idx}_${obj}"
           done
 
           echo "Step 2: Localizing conflicting symbols..."
           for obj in *.o; do
-            # IMPORTANT: We must only consider symbols DEFINED in this object file.
-            # 'nm -g' without '-j' allows us to filter out '(undefined)' entries.
-            nm -g "$obj" 2>/dev/null | grep -v "(undefined)" | awk '{print $NF}' | sort -u > all_defined_globals.txt
+            # -g: Global symbols
+            # -j: Just the names
+            # -U: Only symbols DEFINED in this object (crucial to avoid nmedit errors)
+            nm -gjU "$obj" | sort -u > defined_globals.txt
             
-            # Check if any defined global symbols are in our conflicts list
-            FOUND_CONFLICTS=$(grep -Fxf "$CONFLICTS_FILE" all_defined_globals.txt || true)
+            # Identify if this object defines any of our target conflict symbols
+            FOUND_CONFLICTS=$(grep -Fxf "$CONFLICTS_FILE" defined_globals.txt || true)
             
             if [ -n "$FOUND_CONFLICTS" ]; then
-              echo "Processing $obj - Hiding symbols: $(echo $FOUND_CONFLICTS | tr '\n' ' ')"
+              echo "Processing $obj - Found conflicts: $(echo $FOUND_CONFLICTS | tr '\n' ' ')"
               
-              # Generate 'keep' list: Defined Globals MINUS Conflicts
-              comm -23 all_defined_globals.txt <(sort -u "$CONFLICTS_FILE") > keep_syms.txt
+              # 'Keep' list = All defined globals MINUS the conflict symbols
+              comm -23 defined_globals.txt <(sort -u "$CONFLICTS_FILE") > keep_syms.txt
               
               if [ -s keep_syms.txt ]; then
-                # nmedit -s will now only receive symbols that it can actually find in the file
+                # nmedit -s: only keep listed symbols as global; others become private extern
                 nmedit -s keep_syms.txt "$obj"
               else
-                # If all defined globals in this file are conflicts, hide everything
+                # If ALL globals in this file are conflicts, make the whole object private
                 nmedit -p "$obj"
               fi
             fi
-            rm -f all_defined_globals.txt keep_syms.txt
+            rm -f defined_globals.txt keep_syms.txt
           done
 
           echo "Step 3: Rebuilding libflint.a..."
@@ -209,11 +210,12 @@ jobs:
           libtool -static -o "$FLINT_A" *.o
 
           echo "Step 4: Verification..."
+          # The symbol should no longer appear in the global symbol table (-g)
           if nm -g "$FLINT_A" | grep -q "_nmod_mat_left_nullspace$"; then
              echo "Error: _nmod_mat_left_nullspace is still global. Fix failed."
              exit 1
           else
-             echo "Success: Conflicting symbols are now localized/hidden in FLINT."
+             echo "Success: Conflicting symbols are now private in FLINT."
           fi
 
       - name: Configure project (static)
