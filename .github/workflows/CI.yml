@@ -177,15 +177,27 @@ jobs:
           ranlib "$FLINT_A"
 
           echo "Step 3: Verification..."
-          # After nmedit -p, symbols should no longer appear as Global (T/D/B)
-          # but as non-global/private. We check with nm -g (only globals).
-          for sym in _nmod_mat_left_nullspace _fmpz_mat_solve; do
-            if nm -g "$FLINT_A" | grep -w "$sym" | grep -v " U " > /dev/null; then
-              echo "Error: $sym is still a global symbol in FLINT."
+          # On Mach-O, `nmedit -p` turns symbols into "private external".
+          # `nm -g` still lists private externs, so use `nm -m` and only fail
+          # if a symbol remains plain external (non-private).
+          for sym in \
+            _nmod_mat_left_nullspace \
+            _nmod_mat_nullspace \
+            _fmpz_mat_nullspace \
+            _fmpz_mat_rank \
+            _fmpz_mat_solve; do
+            sym_lines="$(nm -m "$FLINT_A" | grep -w "$sym" | grep -v 'undefined' || true)"
+            if [ -z "$sym_lines" ]; then
+              echo "Info: $sym not present in FLINT archive after nmedit; skipping."
+              continue
+            fi
+            if echo "$sym_lines" | grep -v 'private external' > /dev/null; then
+              echo "Error: $sym is still a non-private external symbol in FLINT."
+              echo "$sym_lines"
               exit 1
             fi
           done
-          echo "Success: Symbols are now private to FLINT. Linker will prefer PML."
+          echo "Success: Symbols are private externs in FLINT. Linker will prefer PML."
           
       - name: Configure project (static)
         run: |
