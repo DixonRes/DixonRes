@@ -152,42 +152,49 @@ jobs:
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Resolve FLINT/PML duplicate symbols via llvm-objcopy (macOS)
+      - name: Resolve FLINT/PML duplicate symbols via ld incremental link (macOS)
         run: |
-          # 1. Setup paths
+          # 1. Setup paths and SDK
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           WORK_DIR="${{ github.workspace }}/flint_fix_work"
           OBJ_DIR="$WORK_DIR/objs"
-          RENAME_MAP="$WORK_DIR/rename_map.txt"
+          export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
           
           mkdir -p "$OBJ_DIR"
 
-          # 2. Create the rename map
-          # Format: <old_symbol> <new_symbol>
-          # We append _FLINT_INTERNAL to the conflicting symbols
-          cat <<EOF > "$RENAME_MAP"
-          _nmod_mat_left_nullspace _nmod_mat_left_nullspace_FLINT_INTERNAL
-          _nmod_mat_nullspace _nmod_mat_nullspace_FLINT_INTERNAL
-          _fmpz_mat_nullspace _fmpz_mat_nullspace_FLINT_INTERNAL
-          _fmpz_mat_rank _fmpz_mat_rank_FLINT_INTERNAL
-          _fmpz_mat_solve _fmpz_mat_solve_FLINT_INTERNAL
-          EOF
+          # 2. Define conflicting symbols (must have the leading underscore)
+          CONFLICTS=("_nmod_mat_left_nullspace" "_nmod_mat_nullspace" "_fmpz_mat_nullspace" "_fmpz_mat_rank" "_fmpz_mat_solve")
+          
+          # Prepare flags for ld
+          LD_FLAGS=""
+          for sym in "${CONFLICTS[@]}"; do
+            LD_FLAGS="$LD_FLAGS -unexported_symbol $sym"
+          done
 
           echo "Step 1: Extracting libflint.a objects uniquely..."
           cd "$OBJ_DIR"
-          # Extract objects with unique names (e.g., 1_merged.o, 2_merged.o)
+          # Extract with unique IDs to handle duplicate filenames in FLINT
           ar -t "$FLINT_A" | grep '\.o$' | awk '{print $0, NR}' | while read -r obj idx; do
             ar -p "$FLINT_A" "$obj" > "${idx}_${obj}"
           done
 
-          echo "Step 2: Renaming symbols using llvm-objcopy..."
-          # xcrun allows us to use the LLVM tools provided by Xcode
+          echo "Step 2: Localizing symbols using ld -r..."
           for obj in *.o; do
-            # Only process files that actually contain our target symbols to save time
+            # Only process if the object actually defines one of the conflict symbols
             # nm -gjU: Global, Just name, Defined
-            if nm -gjU "$obj" | grep -E "(_nmod_mat|_fmpz_mat)" > /dev/null; then
+            NEEDS_FIX=false
+            for sym in "${CONFLICTS[@]}"; do
+              if nm -gjU "$obj" | grep -qx "$sym"; then
+                NEEDS_FIX=true
+                break
+              fi
+            done
+
+            if [ "$NEEDS_FIX" = true ]; then
               echo "Processing $obj..."
-              xcrun llvm-objcopy --redefine-syms="$RENAME_MAP" "$obj"
+              # ld -r: Incremental link that allows changing symbol visibility
+              ld -r $LD_FLAGS "$obj" -o "$obj.tmp"
+              mv "$obj.tmp" "$obj"
             fi
           done
 
@@ -197,16 +204,13 @@ jobs:
           ranlib "$FLINT_A"
 
           echo "Step 4: Final Verification..."
-          # Check if the original symbol still exists in the global scope
-          # We expect 0 hits now.
-          CONFLICT_COUNT=$(nm -gj "$FLINT_A" | grep -E '^(_nmod_mat_left_nullspace|_nmod_mat_nullspace|_fmpz_mat_nullspace|_fmpz_mat_rank|_fmpz_mat_solve)$' | wc -l | xargs)
-          
-          if [ "$CONFLICT_COUNT" -ne "0" ]; then
-             echo "Error: $CONFLICT_COUNT conflict symbols still remain in FLINT."
-             exit 1
-          else
-             echo "Success: Conflicting symbols renamed. FLINT is now safe to link with PML."
-          fi
+          for sym in "${CONFLICTS[@]}"; do
+            if nm -g "$FLINT_A" | grep -qx "$sym"; then
+              echo "Error: $sym is still global in FLINT. Fix failed."
+              exit 1
+            fi
+          done
+          echo "Success: All conflicting symbols are now localized (hidden) in FLINT."
 
       - name: Configure project (static)
         run: |
