@@ -166,9 +166,9 @@ jobs:
           path: ${{ env.INSTALL_PREFIX }}
           key: macos-flint-3.5-static-${{ runner.arch }}-v1
 
-      # macOS: localize conflicting FLINT symbols with nmedit
+      # macOS: localize conflicting FLINT symbols inside libflint.a
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS Native)
+      - name: Resolve FLINT/PML duplicate symbols in libflint.a
         run: |
           set -eu
 
@@ -191,7 +191,7 @@ jobs:
           cd flint-obj-patch
           ar -x "$FLINT_A"
 
-          echo "Step 2: Changing symbol visibility in extracted object files..."
+          echo "Step 2: Localizing conflicting symbols in extracted object files..."
           found_obj=0
           patched_obj=0
           for obj in *.o; do
@@ -205,7 +205,7 @@ jobs:
             if [ -s .obj-hide-symbols.txt ]; then
               echo "  Patching $obj"
               sed 's/^/    - /' .obj-hide-symbols.txt
-              nmedit -p -R .obj-hide-symbols.txt "$obj"
+              xcrun llvm-objcopy --localize-symbols=.obj-hide-symbols.txt "$obj"
               patched_obj=1
             fi
           done
@@ -226,27 +226,21 @@ jobs:
           ranlib "$FLINT_A"
 
           echo "Step 5: Verification..."
-          # On Mach-O, `nmedit -p` turns symbols into "private external".
-          # `nm -g` still lists private externs, so use `nm -m` and only fail
-          # if a symbol remains plain external (non-private).
+          # After localization, these symbols must no longer be global in FLINT.
           for sym in \
             _nmod_mat_left_nullspace \
             _nmod_mat_nullspace \
             _fmpz_mat_nullspace \
             _fmpz_mat_rank \
             _fmpz_mat_solve; do
-            sym_lines="$(nm -m "$FLINT_A" | grep -w "$sym" | grep -v 'undefined' || true)"
-            if [ -z "$sym_lines" ]; then
-              echo "Info: $sym not present in FLINT archive after nmedit; skipping."
-              continue
-            fi
-            if echo "$sym_lines" | grep -v 'private external' > /dev/null; then
-              echo "Error: $sym is still a non-private external symbol in FLINT."
+            sym_lines="$(nm -g "$FLINT_A" | grep -w "$sym" | grep -v ' U ' || true)"
+            if [ -n "$sym_lines" ]; then
+              echo "Error: $sym is still a global symbol in FLINT."
               echo "$sym_lines"
               exit 1
             fi
           done
-          echo "Success: Symbols are private externs in FLINT. Linker will prefer PML."
+          echo "Success: Conflicting FLINT symbols are no longer global."
           
       - name: Configure project (static)
         run: |
