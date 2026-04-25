@@ -181,9 +181,11 @@ jobs:
           for obj in *.o; do
             [ -e "$obj" ] || continue
             found_obj=1
-            if nm "$obj" | grep -E -w '(_nmod_mat_left_nullspace|_nmod_mat_nullspace|_fmpz_mat_nullspace|_fmpz_mat_rank|_fmpz_mat_solve)' | grep -v ' U ' > /dev/null; then
+            nm -gj "$obj" | grep -Fxf ../hide_symbols.txt > .obj-hide-symbols.txt || true
+            if [ -s .obj-hide-symbols.txt ]; then
               echo "  Patching $obj"
-              nmedit -p -s ../hide_symbols.txt "$obj"
+              cat .obj-hide-symbols.txt | sed 's/^/    - /'
+              nmedit -p -s .obj-hide-symbols.txt "$obj"
               patched_obj=1
             fi
           done
