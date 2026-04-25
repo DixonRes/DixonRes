@@ -162,7 +162,7 @@ jobs:
           
           mkdir -p "$OBJ_DIR"
 
-          # 2. Define the exact symbols to WEAKEN
+          # 2. List the conflict symbols
           cat <<EOF > "$WORK_DIR/weaken_list.txt"
           _nmod_mat_left_nullspace
           _nmod_mat_nullspace
@@ -175,28 +175,36 @@ jobs:
           cd "$OBJ_DIR"
           ar -x "$FLINT_A"
 
-          echo "Step 2: Weakening symbols in object files..."
-          # --weaken-symbol changes the symbol's priority to 'weak'.
-          # The linker will prefer your PML's strong version but FLINT's 
-          # internal relocations will still find the symbol and remain valid.
+          echo "Step 2: Weakening symbols one by one..."
+          # We loop through each symbol and then each file to ensure correct gobjcopy usage
           while read -r sym; do
             if [ -n "$sym" ]; then
-              echo "Weakening $sym..."
-              # Find files containing the symbol and weaken them
-              grep -l "$sym" *.o | xargs $OBJCOPY --weaken-symbol="$sym"
+              echo "Checking symbol: $sym"
+              # Find only the .o files that actually contain this symbol
+              # nm -gjU: Global, Just name, Defined
+              for obj in *.o; do
+                if nm -gjU "$obj" | grep -qx "$sym"; then
+                  echo "  Weakening $sym in $obj"
+                  # gobjcopy [options] input-file output-file
+                  $OBJCOPY --weaken-symbol="$sym" "$obj" "$obj.tmp" && mv "$obj.tmp" "$obj"
+                fi
+              done
             fi
           done < "$WORK_DIR/weaken_list.txt"
 
           echo "Step 3: Rebuilding libflint.a..."
           rm -f "$FLINT_A"
+          # libtool is more reliable than 'ar' for creating macOS indices
           libtool -static -o "$FLINT_A" *.o
           ranlib "$FLINT_A"
 
           echo "Step 4: Final Verification..."
-          # In 'nm' output, a weak symbol is usually marked with 'V' or 'W'
-          # Instead of 'T' (Global Text).
-          nm -g "$FLINT_A" | grep -E "(_nmod_mat_left_nullspace|_fmpz_mat_solve)" || true
-          echo "Success: Symbols weakened. Linker will now prioritize PML over FLINT."
+          # Confirm symbols are no longer 'T' (Global Text) but 'V' or 'W' (Weak)
+          # We use nm without -g to see the new status
+          for sym in _nmod_mat_left_nullspace _fmpz_mat_solve; do
+             echo "Status of $sym:"
+             nm "$FLINT_A" | grep -w "$sym" || echo "Not found (which is also okay if hidden)"
+          done
           
       - name: Configure project (static)
         run: |
