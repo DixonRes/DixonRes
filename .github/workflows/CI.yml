@@ -152,18 +152,22 @@ jobs:
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Weaken conflicting symbols in FLINT (macOS)
+      - name: Resolve FLINT/PML duplicate symbols via Native Linker (macOS)
         run: |
           # 1. Setup paths
-          OBJCOPY=$(brew --prefix binutils)/bin/gobjcopy
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           WORK_DIR="${{ github.workspace }}/flint_fix_work"
-          OBJ_DIR="$WORK_DIR/objs"
+          export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
           
-          mkdir -p "$OBJ_DIR"
+          mkdir -p "$WORK_DIR/objs"
+          cd "$WORK_DIR/objs"
 
-          # 2. List the conflict symbols
-          cat <<EOF > "$WORK_DIR/weaken_list.txt"
+          # 2. Extract objects
+          echo "Step 1: Extracting libflint.a..."
+          ar -x "$FLINT_A"
+
+          # 3. Define conflict symbols
+          cat <<EOF > "$WORK_DIR/conflicts.txt"
           _nmod_mat_left_nullspace
           _nmod_mat_nullspace
           _fmpz_mat_nullspace
@@ -171,47 +175,42 @@ jobs:
           _fmpz_mat_solve
           EOF
 
-          echo "Step 1: Extracting libflint.a objects..."
-          cd "$OBJ_DIR"
-          ar -x "$FLINT_A"
-
-          echo "Step 2: Weakening symbols one by one..."
-          # We loop through each symbol and then each file to ensure correct gobjcopy usage
+          # 4. Incremental Link and Hide symbols
+          echo "Step 2: Merging objects and hiding symbols using native ld..."
+          # Prepare unexported symbol flags
+          HIDE_FLAGS=""
           while read -r sym; do
-            if [ -n "$sym" ]; then
-              echo "Checking symbol: $sym"
-              # Find only the .o files that actually contain this symbol
-              # nm -gjU: Global, Just name, Defined
-              for obj in *.o; do
-                if nm -gjU "$obj" | grep -qx "$sym"; then
-                  echo "  Weakening $sym in $obj"
-                  # gobjcopy [options] input-file output-file
-                  $OBJCOPY --weaken-symbol="$sym" "$obj" "$obj.tmp" && mv "$obj.tmp" "$obj"
-                fi
-              done
-            fi
-          done < "$WORK_DIR/weaken_list.txt"
+            [ -n "$sym" ] && HIDE_FLAGS="$HIDE_FLAGS -Wl,-unexported_symbol,$sym"
+          done < "$WORK_DIR/conflicts.txt"
 
-          echo "Step 3: Rebuilding libflint.a..."
+          # We use cc as a driver for ld to handle SDK paths correctly.
+          # -r: incremental link (produces one big .o)
+          # -nostdlib: don't link system libs into this object
+          # -Wl,-no_compact_unwind: strip the problematic unwind section to avoid alignment errors
+          cc -r -nostdlib $HIDE_FLAGS *.o -o "$WORK_DIR/flint_fixed.o" -Wl,-no_compact_unwind
+
+          # 5. Rebuild the archive with only the fixed object
+          echo "Step 3: Creating fixed libflint.a..."
           rm -f "$FLINT_A"
-          # libtool is more reliable than 'ar' for creating macOS indices
-          libtool -static -o "$FLINT_A" *.o
+          ar cr "$FLINT_A" "$WORK_DIR/flint_fixed.o"
           ranlib "$FLINT_A"
 
-          echo "Step 4: Final Verification..."
-          # Confirm symbols are no longer 'T' (Global Text) but 'V' or 'W' (Weak)
-          # We use nm without -g to see the new status
-          for sym in _nmod_mat_left_nullspace _fmpz_mat_solve; do
-             echo "Status of $sym:"
-             nm "$FLINT_A" | grep -w "$sym" || echo "Not found (which is also okay if hidden)"
-          done
+          # 6. Verification
+          echo "Step 4: Verification..."
+          # These should no longer be 'T' (Global)
+          if nm -g "$FLINT_A" | grep -E "(_nmod_mat_left_nullspace|_fmpz_mat_solve)"; then
+             echo "Error: Conflict symbols are still global."
+             exit 1
+          fi
+          echo "Success: FLINT is now cleaned of PML conflicts without corruption."
           
       - name: Configure project (static)
         run: |
           ./configure \
             --enable-static \
             --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib"
+            --flint-lib="$INSTALL_PREFIX/lib" \
+            LDFLAGS="-Wl,-no_compact_unwind"
 
       - name: Build
         run: make -j$(sysctl -n hw.ncpu)
