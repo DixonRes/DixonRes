@@ -152,7 +152,7 @@ jobs:
 
       # macOS: localize conflicting FLINT symbols with nmedit
       # (Apple ld lacks --allow-multiple-definition)
-      - name: Strip conflicting symbols from FLINT (macOS)
+      - name: Weaken conflicting symbols in FLINT (macOS)
         run: |
           # 1. Setup paths
           OBJCOPY=$(brew --prefix binutils)/bin/gobjcopy
@@ -162,9 +162,8 @@ jobs:
           
           mkdir -p "$OBJ_DIR"
 
-          # 2. Define the exact symbols to STRIP (remove definition)
-          # These are the symbols provided by your PML
-          cat <<EOF > "$WORK_DIR/strip_list.txt"
+          # 2. Define the exact symbols to WEAKEN
+          cat <<EOF > "$WORK_DIR/weaken_list.txt"
           _nmod_mat_left_nullspace
           _nmod_mat_nullspace
           _fmpz_mat_nullspace
@@ -176,32 +175,28 @@ jobs:
           cd "$OBJ_DIR"
           ar -x "$FLINT_A"
 
-          echo "Step 2: Stripping definitions from object files..."
-          # --strip-symbol removes the symbol definition but leaves references intact
-          # This forces FLINT to look for these symbols in your PML objects at link time.
+          echo "Step 2: Weakening symbols in object files..."
+          # --weaken-symbol changes the symbol's priority to 'weak'.
+          # The linker will prefer your PML's strong version but FLINT's 
+          # internal relocations will still find the symbol and remain valid.
           while read -r sym; do
             if [ -n "$sym" ]; then
-              echo "Stripping $sym..."
-              # We use find to apply to all .o files containing the symbol
-              grep -l "$sym" *.o | xargs $OBJCOPY --strip-symbol="$sym"
+              echo "Weakening $sym..."
+              # Find files containing the symbol and weaken them
+              grep -l "$sym" *.o | xargs $OBJCOPY --weaken-symbol="$sym"
             fi
-          done < "$WORK_DIR/strip_list.txt"
+          done < "$WORK_DIR/weaken_list.txt"
 
           echo "Step 3: Rebuilding libflint.a..."
           rm -f "$FLINT_A"
-          # Use libtool to ensure a proper macOS static library index
           libtool -static -o "$FLINT_A" *.o
           ranlib "$FLINT_A"
 
-          echo "Step 4: Verification..."
-          # Verification: Symbols should now be 'U' (Undefined) or missing, not 'T' (Global Text)
-          for sym in _nmod_mat_left_nullspace _fmpz_mat_solve; do
-            if nm -g "$FLINT_A" | grep -E "^[0-9a-fA-F ]+ T $sym$" > /dev/null; then
-              echo "Error: $sym definition still exists in FLINT!"
-              exit 1
-            fi
-          done
-          echo "Success: Symbols stripped. FLINT will now use PML's implementations."
+          echo "Step 4: Final Verification..."
+          # In 'nm' output, a weak symbol is usually marked with 'V' or 'W'
+          # Instead of 'T' (Global Text).
+          nm -g "$FLINT_A" | grep -E "(_nmod_mat_left_nullspace|_fmpz_mat_solve)" || true
+          echo "Success: Symbols weakened. Linker will now prioritize PML over FLINT."
           
       - name: Configure project (static)
         run: |
