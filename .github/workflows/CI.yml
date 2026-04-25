@@ -154,67 +154,70 @@ jobs:
       # (Apple ld lacks --allow-multiple-definition)
       - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS)
         run: |
-          # 1. Define paths
+          # 1. Setup paths
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
-          WORK_DIR=$(mktemp -d)
+          WORK_DIR="${{ github.workspace }}/flint_fix_work"
+          OBJ_DIR="$WORK_DIR/objs"
+          CONFLICTS_FILE="$WORK_DIR/conflicts.txt"
           
-          # 2. List the symbols known to conflict between PML and FLINT
-          # Add any other repeating symbols to this list
-          cat <<EOF > conflicts.txt
+          mkdir -p "$OBJ_DIR"
+
+          # 2. Define the symbols that exist in both PML and FLINT
+          # These symbols will be hidden in libflint.a to allow PML's version to take precedence.
+          cat <<EOF > "$CONFLICTS_FILE"
           _nmod_mat_left_nullspace
           _nmod_mat_nullspace
           _fmpz_mat_nullspace
           _fmpz_mat_rank
+          _fmpz_mat_solve
           EOF
 
-          echo "Step 1: Extracting libflint.a objects uniquely..."
-          mkdir -p "$WORK_DIR/objs"
-          cd "$WORK_DIR/objs"
-          
-          # Extract all objects from the archive. 
-          # We use a counter (NR) to prevent overwriting files with the same name.
+          echo "Step 1: Extracting libflint.a objects uniquely to avoid name collisions..."
+          # FLINT contains multiple objects with the same name (e.g., merged.o)
+          # We use a counter to give every object a unique filename.
+          cd "$OBJ_DIR"
           ar -t "$FLINT_A" | grep '\.o$' | awk '{print $0, NR}' | while read -r obj idx; do
             ar -p "$FLINT_A" "$obj" > "${idx}_${obj}"
           done
 
-          echo "Step 2: Localizing conflicting symbols..."
-          # Move the conflicts list to the work directory
-          mv ../conflicts.txt .
-
+          echo "Step 2: Localizing conflicting symbols in each object file..."
+          # Loop through all extracted objects
           for obj in *.o; do
-            # Check if this object contains any of our conflicting symbols
+            # Check if the object contains any of the symbols in our conflicts list
             # nm -gj lists global symbol names only
-            FOUND_CONFLICTS=$(nm -gj "$obj" | grep -Fxf conflicts.txt || true)
+            FOUND_CONFLICTS=$(nm -gj "$obj" | grep -Fxf "$CONFLICTS_FILE" || true)
             
             if [ -n "$FOUND_CONFLICTS" ]; then
-              echo "Processing $obj - Hiding: $FOUND_CONFLICTS"
+              echo "Processing $obj - Hiding symbols: $(echo $FOUND_CONFLICTS | tr '\n' ' ')"
               
-              # Get all global symbols in this object
-              nm -gj "$obj" | sort -u > all_symbols.txt
+              # Get all global symbols currently in this object
+              nm -gj "$obj" | sort -u > all_syms.txt
               
-              # Create a 'keep' list (All Globals minus Conflicts)
-              # Only symbols in 'keep_symbols.txt' will remain visible to the linker.
-              comm -23 all_symbols.txt <(sort -u conflicts.txt) > keep_symbols.txt
+              # Generate 'keep' list: All Globals MINUS Conflicts
+              # nmedit -s will keep only these as global, turning others into 'private extern'
+              comm -23 all_syms.txt <(sort -u "$CONFLICTS_FILE") > keep_syms.txt
               
-              if [ -s keep_symbols.txt ]; then
-                nmedit -s keep_symbols.txt "$obj"
+              if [ -s keep_syms.txt ]; then
+                nmedit -s keep_syms.txt "$obj"
               else
-                # If everything in the object is a conflict, make the whole file private
+                # If the entire object consists of conflicting symbols, make it all private
                 nmedit -p "$obj"
               fi
+              rm -f all_syms.txt keep_syms.txt
             fi
           done
 
-          echo "Step 3: Rebuilding libflint.a without the conflicting symbols..."
-          # libtool is the standard way to handle static libraries on macOS
+          echo "Step 3: Rebuilding libflint.a using macOS libtool..."
+          # Delete the old archive first to ensure a clean state
+          rm -f "$FLINT_A"
           libtool -static -o "$FLINT_A" *.o
-          
-          echo "Step 4: Verification..."
+
+          echo "Step 4: Final Verification..."
           if nm -g "$FLINT_A" | grep -q "_nmod_mat_left_nullspace$"; then
-             echo "Error: _nmod_mat_left_nullspace is still global in FLINT!"
+             echo "Error: _nmod_mat_left_nullspace is still global. Fix failed."
              exit 1
           else
-             echo "Success: Conflicting symbols are now private in FLINT."
+             echo "Success: Conflicting symbols are now localized/hidden in FLINT."
           fi
 
       - name: Configure project (static)
