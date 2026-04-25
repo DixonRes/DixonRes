@@ -28,7 +28,6 @@ make
 make install
 ```
   
-Optional:
 - **PML** (built in)  
   <https://github.com/vneiger/pml>
 
@@ -89,7 +88,7 @@ Example:
 ```bash
 # example.dr
 x0,x1
-0
+257
 x0^3+x1^3+x2^3, x0*x1+x1*x2+x2*x1, x1*x2*x0+1
 ```
 Run:
