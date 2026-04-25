@@ -205,7 +205,8 @@ jobs:
             if [ -s .obj-hide-symbols.txt ]; then
               echo "  Patching $obj"
               sed 's/^/    - /' .obj-hide-symbols.txt
-              xcrun llvm-objcopy --localize-symbols=.obj-hide-symbols.txt "$obj"
+              ld -r -unexported_symbols_list .obj-hide-symbols.txt -o "$obj.patched" "$obj"
+              mv "$obj.patched" "$obj"
               patched_obj=1
             fi
           done
