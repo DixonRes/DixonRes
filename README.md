@@ -295,7 +295,7 @@ and the resultant, solutions, or complexity report.
 - Extension fields are slower than prime fields due to polynomial arithmetic
 - The optional PML library only accelerates well-determined systems over prime fields
 - Complexity analysis does not run any polynomial arithmetic; it parses only
-- Over Q (`field_size=0`, `--ideal`, and `--field-equation` are not supported
+- Over Q (field_size=0), `--ideal` and `--field-equation` are not supported
 
 ---
 
