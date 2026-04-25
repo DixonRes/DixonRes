@@ -141,7 +141,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
-          key: macos-flint-3.5-static-${{ runner.arch }}-v1
+          key: macos-flint-3.5-static-renamed-${{ runner.arch }}-v1
 
       - name: Build FLINT (static) - version 3.5.0
         if: steps.flint-cache.outputs.cache-hit != 'true'
@@ -149,6 +149,16 @@ jobs:
           BREW=$(brew --prefix)
           git clone --depth=1 --branch flint-3.5 https://github.com/flintlib/flint.git
           cd flint
+          # Rename the few FLINT symbols that conflict with bundled PML on macOS.
+          # This keeps FLINT internally consistent while avoiding duplicate symbols
+          # at final link time.
+          find . -type f \( -name '*.c' -o -name '*.h' \) -print0 | xargs -0 perl -pi -e '
+            s/\bnmod_mat_left_nullspace\b/flint_nmod_mat_left_nullspace/g;
+            s/\bnmod_mat_nullspace\b/flint_nmod_mat_nullspace/g;
+            s/\bfmpz_mat_nullspace\b/flint_fmpz_mat_nullspace/g;
+            s/\bfmpz_mat_rank\b/flint_fmpz_mat_rank/g;
+            s/\bfmpz_mat_solve\b/flint_fmpz_mat_solve/g;
+          '
           ./bootstrap.sh
           ./configure \
             --prefix="$INSTALL_PREFIX" \
@@ -164,70 +174,12 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
-          key: macos-flint-3.5-static-${{ runner.arch }}-v1
+          key: macos-flint-3.5-static-renamed-${{ runner.arch }}-v1
 
-      # macOS: localize conflicting FLINT symbols inside libflint.a
-      # (Apple ld lacks --allow-multiple-definition)
-      - name: Resolve FLINT/PML duplicate symbols in libflint.a
+      - name: Verify renamed FLINT symbols
         run: |
           set -eu
-
-          # 1. Paths
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
-          
-          # 2. Create the list of symbols to hide
-          # These must have the leading underscore as seen in the error message
-          cat <<EOF > hide_symbols.txt
-          _nmod_mat_left_nullspace
-          _nmod_mat_nullspace
-          _fmpz_mat_nullspace
-          _fmpz_mat_rank
-          _fmpz_mat_solve
-          EOF
-
-          echo "Step 1: Extracting FLINT archive members..."
-          rm -rf flint-obj-patch
-          mkdir -p flint-obj-patch
-          cd flint-obj-patch
-          ar -x "$FLINT_A"
-
-          echo "Step 2: Localizing conflicting symbols in extracted object files..."
-          found_obj=0
-          patched_obj=0
-          for obj in *.o; do
-            [ -e "$obj" ] || continue
-            found_obj=1
-            nm -m "$obj" \
-              | grep ' external ' \
-              | grep -v 'undefined' \
-              | sed -n 's/^.* external \(_[^[:space:]]*\)$/\1/p' \
-              | grep -Fxf ../hide_symbols.txt > .obj-hide-symbols.txt || true
-            if [ -s .obj-hide-symbols.txt ]; then
-              echo "  Patching $obj"
-              sed 's/^/    - /' .obj-hide-symbols.txt
-              ld -r -unexported_symbols_list .obj-hide-symbols.txt -o "$obj.patched" "$obj"
-              mv "$obj.patched" "$obj"
-              patched_obj=1
-            fi
-          done
-          if [ "$found_obj" -eq 0 ]; then
-            echo "Error: failed to extract object files from FLINT archive."
-            exit 1
-          fi
-          if [ "$patched_obj" -eq 0 ]; then
-            echo "Warning: no extracted FLINT object file matched the conflict list before patching."
-          fi
-
-          echo "Step 3: Rebuilding libflint.a from patched object files..."
-          rm -f "$FLINT_A"
-          libtool -static -o "$FLINT_A" *.o
-          cd ..
-
-          echo "Step 4: Re-indexing the library..."
-          ranlib "$FLINT_A"
-
-          echo "Step 5: Verification..."
-          # After localization, these symbols must no longer be global in FLINT.
           for sym in \
             _nmod_mat_left_nullspace \
             _nmod_mat_nullspace \
@@ -236,12 +188,12 @@ jobs:
             _fmpz_mat_solve; do
             sym_lines="$(nm -g "$FLINT_A" | grep -w "$sym" | grep -v ' U ' || true)"
             if [ -n "$sym_lines" ]; then
-              echo "Error: $sym is still a global symbol in FLINT."
+              echo "Error: original conflicting symbol $sym is still exported by FLINT."
               echo "$sym_lines"
               exit 1
             fi
           done
-          echo "Success: Conflicting FLINT symbols are no longer global."
+          echo "Success: FLINT no longer exports the original conflicting symbols."
           
       - name: Configure project (static)
         run: |
@@ -254,7 +206,7 @@ jobs:
 
       - name: Adjust macOS static link settings
         run: |
-          perl -0pi -e 's/^LTO_CFLAGS = .*$/LTO_CFLAGS = /m; s/^LTO_LDFLAGS = .*$/LTO_LDFLAGS = /m; s#^FLINT_STATIC_LIBS = .*$#FLINT_STATIC_LIBS = -Wl,-load_hidden,'"$INSTALL_PREFIX"'/lib/libflint.a#m' config.mk
+          perl -0pi -e 's/^LTO_CFLAGS = .*$/LTO_CFLAGS = /m; s/^LTO_LDFLAGS = .*$/LTO_LDFLAGS = /m; s#^FLINT_STATIC_LIBS = .*$#FLINT_STATIC_LIBS = '"$INSTALL_PREFIX"'/lib/libflint.a#m' config.mk
           echo "=== config.mk overrides ==="
           grep -E '^(LTO_CFLAGS|LTO_LDFLAGS|FLINT_STATIC_LIBS) =' config.mk
 
