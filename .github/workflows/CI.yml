@@ -206,9 +206,9 @@ jobs:
 
       - name: Adjust macOS static link settings
         run: |
-          perl -0pi -e 's/^LTO_CFLAGS = .*$/LTO_CFLAGS = /m; s/^LTO_LDFLAGS = .*$/LTO_LDFLAGS = /m; s#^FLINT_STATIC_LIBS = .*$#FLINT_STATIC_LIBS = '"$INSTALL_PREFIX"'/lib/libflint.a#m' config.mk
+          perl -0pi -e 's/^LTO_CFLAGS = .*$/LTO_CFLAGS = /m; s/^LTO_LDFLAGS = .*$/LTO_LDFLAGS = /m; s#^FLINT_STATIC_LIBS = .*$#FLINT_STATIC_LIBS = '"$INSTALL_PREFIX"'/lib/libflint.a#m; s#^FLINT_FLAGS = .*$#FLINT_FLAGS = -DHAVE_FLINT -Dnmod_mat_nullspace=flint_nmod_mat_nullspace -Dnmod_mat_left_nullspace=flint_nmod_mat_left_nullspace -Dfmpz_mat_nullspace=flint_fmpz_mat_nullspace -Dfmpz_mat_rank=flint_fmpz_mat_rank -Dfmpz_mat_solve=flint_fmpz_mat_solve#m' config.mk
           echo "=== config.mk overrides ==="
-          grep -E '^(LTO_CFLAGS|LTO_LDFLAGS|FLINT_STATIC_LIBS) =' config.mk
+          grep -E '^(LTO_CFLAGS|LTO_LDFLAGS|FLINT_STATIC_LIBS|FLINT_FLAGS) =' config.mk
 
       - name: Build
         run: |
