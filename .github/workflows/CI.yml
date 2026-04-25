@@ -154,6 +154,8 @@ jobs:
       # (Apple ld lacks --allow-multiple-definition)
       - name: Resolve FLINT/PML duplicate symbols via nmedit (macOS Native)
         run: |
+          set -eu
+
           # 1. Paths
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           
@@ -167,16 +169,43 @@ jobs:
           _fmpz_mat_solve
           EOF
 
-          echo "Step 1: Changing symbol visibility in libflint.a..."
-          # nmedit -p: Turn symbols into 'private extern'
-          # -s: Use the provided list of symbols
-          # This tool is part of Xcode and handles Mach-O alignment perfectly.
-          nmedit -p -s hide_symbols.txt "$FLINT_A"
+          echo "Step 1: Finding FLINT archive members that define conflicting symbols..."
+          rm -f flint_members.txt
+          for sym in \
+            _nmod_mat_left_nullspace \
+            _nmod_mat_nullspace \
+            _fmpz_mat_nullspace \
+            _fmpz_mat_rank \
+            _fmpz_mat_solve; do
+            nm -A "$FLINT_A" | grep -w "$sym" | grep -v ' U ' \
+              | sed -n 's|^[^(]*(\([^)]*\)).*$|\1|p' >> flint_members.txt || true
+          done
+          sort -u flint_members.txt -o flint_members.txt
+          if [ ! -s flint_members.txt ]; then
+            echo "Error: no conflicting FLINT archive members were found."
+            exit 1
+          fi
+          echo "Archive members to patch:"
+          cat flint_members.txt
 
-          echo "Step 2: Re-indexing the library..."
+          echo "Step 2: Changing symbol visibility in matching object files..."
+          mkdir -p flint-obj-patch
+          cd flint-obj-patch
+          while IFS= read -r member; do
+            echo "  Patching $member"
+            rm -f "$member"
+            ar -x "$FLINT_A" "$member"
+            nmedit -p -s ../hide_symbols.txt "$member"
+            ar -d "$FLINT_A" "$member"
+            ar -r "$FLINT_A" "$member"
+            rm -f "$member"
+          done < ../flint_members.txt
+          cd ..
+
+          echo "Step 3: Re-indexing the library..."
           ranlib "$FLINT_A"
 
-          echo "Step 3: Verification..."
+          echo "Step 4: Verification..."
           # On Mach-O, `nmedit -p` turns symbols into "private external".
           # `nm -g` still lists private externs, so use `nm -m` and only fail
           # if a symbol remains plain external (non-private).
