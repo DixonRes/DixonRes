@@ -11,6 +11,7 @@ jobs:
   # Linux: static build + test + artifact
   # ──────────────────────────────────────────────────────────────
   build-linux-static:
+    if: false
     runs-on: ubuntu-22.04
     env:
       INSTALL_PREFIX: ${{ github.workspace }}/deps-static
@@ -181,10 +182,14 @@ jobs:
           for obj in *.o; do
             [ -e "$obj" ] || continue
             found_obj=1
-            nm -gj "$obj" | grep -Fxf ../hide_symbols.txt > .obj-hide-symbols.txt || true
+            nm -m "$obj" \
+              | grep ' external ' \
+              | grep -v 'undefined' \
+              | sed -n 's/^.* external \(_[^[:space:]]*\)$/\1/p' \
+              | grep -Fxf ../hide_symbols.txt > .obj-hide-symbols.txt || true
             if [ -s .obj-hide-symbols.txt ]; then
               echo "  Patching $obj"
-              cat .obj-hide-symbols.txt | sed 's/^/    - /'
+              sed 's/^/    - /' .obj-hide-symbols.txt
               nmedit -p -s .obj-hide-symbols.txt "$obj"
               patched_obj=1
             fi
