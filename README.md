@@ -1,4 +1,4 @@
-# DRsolve: Dixon Resultant & Polynomial System Solver
+# DRSolve: Dixon Resultant & Polynomial System Solver
 A C implementation for computing Dixon resultants and solving polynomial systems over finite fields and the rationals ℚ, based on the FLINT and PML libraries.
 
 Website: <https://drsolve.github.io>
@@ -235,12 +235,12 @@ Generate random polynomial systems with specified degrees for testing and benchm
 
 ## SageMath Interface
 
-`dixon_sage_interface.sage` is a thin wrapper that lets you call drsolve directly from a SageMath session.
+`drsolve_sage_interface.sage` is a thin wrapper that lets you call drsolve directly from a SageMath session.
 
 ### Quick start
 
 ```python
-load("dixon_sage_interface.sage")
+load("drsolve_sage_interface.sage")
 set_dixon_path("./drsolve")   # set once per session
 
 R.<x, y, z> = GF(257)[]
@@ -314,4 +314,4 @@ and the resultant, solutions, or complexity report.
 ---
 
 ## License
-DRsolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
+DRSolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
