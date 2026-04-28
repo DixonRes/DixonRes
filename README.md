@@ -145,7 +145,7 @@ File input uses the same elimination-file format shown above:
 
 ### Extension Fields
 ```bash
-./drsolve "x + y^2 + t, x*y + t*y + 1" "x" 2^8
+./drsolve "x + y^2 + t, x*y + t*y + 1" "y" 2^8
 ```
 The default settings use `t` as the extension field generator and FLINT's built-in field polynomial.
 ```bash
@@ -306,7 +306,7 @@ and the resultant, solutions, or complexity report.
 | Dixon resultant | ✅ | ✅ | ✅ | ✅ |
 | Complexity analysis (`--comp`) | ✅ | ✅ | ✅ | ✅ |
 | Random mode (`-r`) | ✅ | ✅ | ✅ | ✅ |
-| Polynomial solver (`--solve`) | ✅ | ❌ | ✅ | ✅ |
+| Polynomial solver (`--solve`) | ✅ | ✅ | ✅ | ✅ |
 | Ideal reduction (`--ideal`) | ✅ | ❌ | ✅ | ❌ |
 | Field-equation reduction | ✅ | ❌ | ✅ | ❌ |
 | PML acceleration | ✅ | ✅ | ❌ | ✅ |
