@@ -33,6 +33,7 @@
 #include "fq_mpoly_mat_det.h"
 #include "fq_unified_interface.h"
 #include "dixon_interface_flint.h"
+#include "macaulay_flint.h"
 
 // Debug output control - set to 0 to disable all output
 #define DEBUG_OUTPUT_D 0
@@ -52,11 +53,28 @@ typedef enum {
     DET_METHOD_HUANG = 3          // sparse interpolation method
 } det_method_t;
 
+typedef enum {
+    RESULTANT_METHOD_DIXON = 0,
+    RESULTANT_METHOD_MACAULAY = 1,
+    RESULTANT_METHOD_SUBRES = 2
+} resultant_method_t;
+
 // Global method selection variables
 extern det_method_t dixon_global_method_step1;
 extern det_method_t dixon_global_method_step4;
 extern det_method_t dixon_global_method; // deprecated compatibility alias
+extern resultant_method_t g_resultant_method;
+extern int g_dixon_debug_mode;
+extern int g_dixon_show_step_timing;
 extern int g_matrix_transpose_threshold;
+
+int dixon_method_uses_parallel_timing(det_method_t method);
+int dixon_get_effective_interpolation_threads(void);
+void dixon_maybe_print_step_time(const char *step_label, double wall_elapsed);
+void dixon_maybe_print_step_method_time(const char *step_label,
+                                        det_method_t method,
+                                        double cpu_elapsed,
+                                        double wall_elapsed);
 
 // Matrix operations
 void build_fq_cancellation_matrix_mvpoly(fq_mvpoly_t ***M, fq_mvpoly_t *polys, 
@@ -160,4 +178,5 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                   slong nvars, slong npars,
                                   char **var_names, char **par_names, 
                                   const char *gen_name);
+
 #endif

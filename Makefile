@@ -111,6 +111,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon_complexity.c \
                $(SRC_DIR)/dixon_test.c \
                $(SRC_DIR)/dixon_with_ideal_reduction.c \
                $(SRC_DIR)/fq_mat_det.c \
+               $(SRC_DIR)/macaulay_flint.c \
                $(SRC_DIR)/fq_mpoly_mat_det.c \
                $(SRC_DIR)/fq_multivariate_interpolation.c \
                $(SRC_DIR)/fq_mvpoly.c \
@@ -121,6 +122,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon_complexity.c \
                $(SRC_DIR)/gf2n_mpoly.c \
                $(SRC_DIR)/gf2n_field.c \
                $(SRC_DIR)/gf2n_poly.c \
+               $(SRC_DIR)/large_prime_system_solver.c \
                $(SRC_DIR)/polynomial_system_solver.c \
                $(SRC_DIR)/resultant_with_ideal_reduction.c \
                $(SRC_DIR)/unified_mpoly_det.c \
@@ -962,7 +964,7 @@ check: $(DIXON_TARGET)
 	fi; \
 	\
 	printf "  %-60s" "Comp --omega: [4]*4 over F_65537"; \
-	if ./$(DIXON_TARGET) --comp --omega 2.373 "x^4+y^4+z^4+w^4+1, x^3*y+z+1, x+y^3+z^2+w, x*y*z*w+1" "x,y,z" 65537 >/dev/null 2>&1; then \
+	if ./$(DIXON_TARGET) --comp --omega 2.81 "x^4+y^4+z^4+w^4+1, x^3*y+z+1, x+y^3+z^2+w, x*y*z*w+1" "x,y,z" 65537 >/dev/null 2>&1; then \
 		printf "$(_GREEN)[PASS]$(_NC)\n"; PASS=$$((PASS+1)); \
 	else \
 		printf "$(_RED)[FAIL]$(_NC)\n"; FAIL=$$((FAIL+1)); \

@@ -11,6 +11,7 @@
 // Fixed string parser implementation
 
 static int g_suppress_univariate_root_reporting = 0;
+static int g_suppress_rational_root_reporting = 0;
 static const slong QQ_ROOT_SEARCH_MAX_DEGREE = 1000;
 static const slong QQ_ROOT_SEARCH_MAX_CANDIDATES = 1000000;
 
@@ -1020,10 +1021,15 @@ char* compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
         
         parse_expression(&state, &polys[i]);
     }
-    // Compute Dixon resultant with original names
+    // Compute resultant with original names
     fq_mvpoly_t dixon_result_poly;
-    fq_dixon_resultant_with_names(&dixon_result_poly, polys, nvars, state.npars,
-                                 state.var_names, state.par_names, gen_name);
+    if (g_resultant_method == RESULTANT_METHOD_MACAULAY) {
+        fq_macaulay_resultant_with_names(&dixon_result_poly, polys, nvars, state.npars,
+                                         state.var_names, state.par_names, gen_name);
+    } else {
+        fq_dixon_resultant_with_names(&dixon_result_poly, polys, nvars, state.npars,
+                                      state.var_names, state.par_names, gen_name);
+    }
 
     // Find roots with proper parameter names
     find_and_print_roots_of_univariate_resultant_with_file(&dixon_result_poly, &state, fp_file, print_to_stdout);
@@ -1299,6 +1305,7 @@ static int parse_result_string_fixed_params(const char *result_str,
                                            const fq_nmod_ctx_t ctx,
                                            fq_mvpoly_t *poly) {
     parser_state_t state = {0};
+    char *gen_name = get_generator_name(ctx);
 
     state.input = result_str;
     state.pos = 0;
@@ -1314,7 +1321,7 @@ static int parse_result_string_fixed_params(const char *result_str,
     state.ctx = ctx;
     state.current.str = NULL;
     fq_nmod_init(state.current.value, ctx);
-    state.generator_name = NULL;
+    state.generator_name = gen_name ? strdup(gen_name) : NULL;
 
     fq_mvpoly_init(poly, 0, npars, ctx);
     next_token(&state);
@@ -1328,6 +1335,8 @@ static int parse_result_string_fixed_params(const char *result_str,
     free(state.par_names);
     fq_nmod_clear(state.current.value, ctx);
     if (state.current.str) free(state.current.str);
+    if (state.generator_name) free(state.generator_name);
+    if (gen_name) free(gen_name);
 
     if (!ok) {
         fq_mvpoly_clear(poly);
@@ -1851,13 +1860,13 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
     }
     
     FILE *fp_file = NULL;
-    if (output_filename && have_best_recon && strcmp(best_result, "0") != 0) {
+    if (!g_suppress_rational_root_reporting && output_filename && have_best_recon && strcmp(best_result, "0") != 0) {
         fp_file = fopen(output_filename, "a");
         find_and_print_rational_roots_of_univariate_resultant(&best_recon, fp_file);
         if (fp_file) {
             fclose(fp_file);
         }
-    } else if (have_best_recon && strcmp(best_result, "0") != 0) {
+    } else if (!g_suppress_rational_root_reporting && have_best_recon && strcmp(best_result, "0") != 0) {
         find_and_print_rational_roots_of_univariate_resultant(&best_recon, NULL);
     }
 
@@ -1995,8 +2004,10 @@ char* dixon_str_large_prime(const char *poly_string,
     char *prime_str;
     int have_best_recon = 0;
 
+    g_suppress_rational_root_reporting = 1;
     best_result = qq_reconstruct_from_modular_dixon(poly_string, vars_string,
                                                     &best_recon, &have_best_recon);
+    g_suppress_rational_root_reporting = 0;
 
     prime_str = fmpz_get_str(NULL, 10, prime);
     printf("Final reconstruction over Q completed.\n");
@@ -2065,7 +2076,6 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     clock_t total_start = clock();
     // Get generator name
     char *gen_name = get_generator_name(ctx);
-    printf("Use FLINT's built-in resultant to compute two polynomials\n");
     char **remaining_vars = NULL;
     slong num_remaining = 0;
     
@@ -2488,7 +2498,7 @@ void append_roots_to_file_from_result(const char *result_str,
     parse_state.ctx = ctx;
     parse_state.current.str = NULL;
     fq_nmod_init(parse_state.current.value, ctx);
-    parse_state.generator_name = NULL;
+    parse_state.generator_name = gen_name ? strdup(gen_name) : NULL;
     
     next_token(&parse_state);
     parse_expression(&parse_state, &result_poly);
@@ -2521,6 +2531,9 @@ void append_roots_to_file_from_result(const char *result_str,
     fq_nmod_clear(parse_state.current.value, ctx);
     if (parse_state.current.str) {
         free(parse_state.current.str);
+    }
+    if (parse_state.generator_name) {
+        free(parse_state.generator_name);
     }
     
     free(gen_name);

@@ -24,11 +24,12 @@
 #include "unified_mpoly_resultant.h"
 #include "dixon_with_ideal_reduction.h"
 #include "dixon_complexity.h"
+#include "large_prime_system_solver.h"
 #include "polynomial_system_solver.h"
 #include "rational_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.2.0"
+#define PROGRAM_VERSION "0.2.1"
 
 #ifdef _WIN32
 #define DIXON_NULL_DEVICE "NUL"
@@ -43,7 +44,7 @@
 static void print_version()
 {
     printf("===============================================\n");
-    printf("drsolve v%s\n", PROGRAM_VERSION);
+    printf("DRSolve v%s\n", PROGRAM_VERSION);
     printf("FLINT version: %s (Recommended: 3.5.0)\n", FLINT_VERSION);
 #ifdef HAVE_PML
     printf("PML support: ENABLED\n");
@@ -74,6 +75,7 @@ static void print_usage(const char *prog_name)
     printf("    -> Prints complexity info; saves to comp+timestamp.dat\n");
     printf("    Add --omega <value> (or -w <value>) to set omega (default: %.4g)\n",
            DIXON_OMEGA);
+    printf("    Add --time to print per-step timing; add --debug for extra diagnostics\n");
 
     printf("  Dixon with ideal reduction:\n");
     printf("    %s --ideal \"ideal_generators\" \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
@@ -103,11 +105,23 @@ static void print_usage(const char *prog_name)
     printf("    %s --silent [--solve|--comp|-c] <args>\n", prog_name);
     printf("    -> No console output; solution file is still generated\n");
 
+    printf("  Diagnostics:\n");
+    printf("    %s --time <args>\n", prog_name);
+    printf("    %s --debug <args>\n", prog_name);
+    printf("    -> --time prints per-step timing; interpolation steps also show CPU/Wall/Threads\n");
+    printf("    -> --debug enables extra internal diagnostics and also turns on per-step timing\n");
+
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
     printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
     printf("    -> Available methods: 0.Recursive; 1.Kronecker+HNF; 2.Interpolation; 3.Sparse interpolation\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
+    printf("  Resultant construction:\n");
+    printf("    %s --resultant dixon|macaulay|subres <args>\n", prog_name);
+    printf("    %s --macaulay <args>\n", prog_name);
+    printf("    %s --subres <args>\n", prog_name);
+    printf("    -> --macaulay is shorthand for --resultant macaulay\n");
+    printf("    -> --subres is for exactly 2 polynomials and 1 elimination variable\n");
 
     printf("  Process count:\n");
     printf("    %s --threads <num> <args>\n", prog_name);
@@ -130,10 +144,10 @@ static void print_usage(const char *prog_name)
     printf("  %s --random \"[3,3,2]\" 257\n", prog_name);
     printf("  %s -r \"[3]*3\" 0\n", prog_name);
     printf("  %s -r --solve \"[2]*3\" 257\n", prog_name);
-    printf("  %s -r --comp --omega 2.373 \"[4]*4\" 257\n", prog_name);
+    printf("  %s -r --comp --omega 2.81 \"[4]*4\" 257\n", prog_name);
     printf("  %s --ideal \"a2^3=2*a1+1, a3^3=a1*a2+3\" \"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3\" \"a3\" 257\n", prog_name);
     printf("  %s --field-eqution \"x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1\" \"x0,x1\" 2\n", prog_name);
-    printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"x\" 2^8\n", prog_name);
+    printf("  %s --silent \"x+y^2+t, x*y+t*y+1\" \"y\" 2^8\n", prog_name);
     printf("  %s \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
     printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
     printf("  %s example.dr\n", prog_name);
@@ -248,6 +262,82 @@ static const char *det_method_name_cli(int method)
         case 3: return "sparse interpolation";
         default: return "Default";
     }
+}
+
+static const char *resultant_method_heading(resultant_method_t method)
+{
+    switch (method) {
+        case RESULTANT_METHOD_MACAULAY:
+            return "Macaulay Resultant Computation";
+        case RESULTANT_METHOD_SUBRES:
+            return "Subresultant Resultant Computation";
+        case RESULTANT_METHOD_DIXON:
+        default:
+            return "Dixon Resultant Computation";
+    }
+}
+
+static const char *resultant_method_task_label(resultant_method_t method)
+{
+    switch (method) {
+        case RESULTANT_METHOD_MACAULAY:
+            return "Macaulay resultant";
+        case RESULTANT_METHOD_SUBRES:
+            return "Subresultant resultant";
+        case RESULTANT_METHOD_DIXON:
+        default:
+            return "Dixon resultant";
+    }
+}
+
+static int validate_subres_input(const char *polys_str,
+                                 const char *vars_str,
+                                 int silent_mode)
+{
+    slong num_polys = 0, num_vars = 0;
+    char **poly_array = split_string(polys_str, &num_polys);
+    char **vars_array = split_string(vars_str, &num_vars);
+    int ok = 1;
+
+    if (num_polys != 2) {
+        if (!silent_mode) {
+            fprintf(stderr,
+                    "Error: --subres supports exactly 2 polynomials, but got %ld.\n",
+                    num_polys);
+        }
+        ok = 0;
+    }
+
+    if (ok && num_vars != 1) {
+        if (!silent_mode) {
+            fprintf(stderr,
+                    "Error: --subres requires exactly 1 elimination variable, but got %ld.\n",
+                    num_vars);
+        }
+        ok = 0;
+    }
+
+    free_split_strings(poly_array, num_polys);
+    free_split_strings(vars_array, num_vars);
+    return ok;
+}
+
+static char *compute_subres_resultant_str(const char *polys_str,
+                                          const char *vars_str,
+                                          const fq_nmod_ctx_t ctx)
+{
+    slong num_polys = 0, num_vars = 0;
+    char **poly_array = split_string(polys_str, &num_polys);
+    char **vars_array = split_string(vars_str, &num_vars);
+    char *result = NULL;
+
+    if (num_polys == 2 && num_vars == 1) {
+        result = bivariate_resultant(poly_array[0], poly_array[1], vars_array[0], ctx);
+    }
+
+    free_split_strings(poly_array, num_polys);
+    free_split_strings(vars_array, num_vars);
+    return result;
 }
 
 static int check_prime_power(const fmpz_t n, fmpz_t prime, ulong *power)
@@ -476,219 +566,6 @@ static void print_field_label(FILE *out, const fmpz_t prime, ulong power)
         }
     }
 }
-
-/* =========================================================================
- * Complexity analysis: save to file
- * ========================================================================= */
-static void save_comp_result_to_file(
-        const char   *filename,
-        const char   *polys_str,
-        const char   *vars_str,
-        const fmpz_t  prime,
-        ulong         power,
-        slong         num_polys,
-        slong         num_all_vars,
-        char        **all_vars,
-        char        **elim_var_list,
-        slong         num_elim,
-        const long   *degrees,
-        const fmpz_t  matrix_size,
-        long          bezout_bound,
-        double        complexity,
-        double        omega,
-        double        comp_time)
-{
-    FILE *fp = fopen(filename, "w");
-    if (!fp) {
-        fprintf(stderr, "Warning: Cannot create output file '%s'\n", filename);
-        return;
-    }
-
-    fprintf(fp, "Dixon Complexity Analysis\n");
-    fprintf(fp, "=========================\n");
-    fprintf(fp, "Field: ");
-    print_field_label(fp, prime, power);
-    fprintf(fp, "\n");
-    fprintf(fp, "Polynomials: %s\n", polys_str);
-    fprintf(fp, "Eliminate:   %s\n", vars_str);
-    fprintf(fp, "Computation time: %.3f seconds\n\n", comp_time);
-
-    fprintf(fp, "--- Input Summary ---\n");
-    fprintf(fp, "Equations : %ld\n", num_polys);
-    fprintf(fp, "Variables (%ld): ", num_all_vars);
-    for (slong i = 0; i < num_all_vars; i++) {
-        if (i > 0) fprintf(fp, ", ");
-        fprintf(fp, "%s", all_vars[i]);
-    }
-    fprintf(fp, "\n");
-    fprintf(fp, "Elim vars (%ld): ", num_elim);
-    for (slong i = 0; i < num_elim; i++) {
-        if (i > 0) fprintf(fp, ", ");
-        fprintf(fp, "%s", elim_var_list[i]);
-    }
-    fprintf(fp, "\n");
-
-    /* Remaining vars */
-    fprintf(fp, "Remaining vars: ");
-    int first = 1;
-    for (slong i = 0; i < num_all_vars; i++) {
-        int is_elim = 0;
-        for (slong j = 0; j < num_elim; j++)
-            if (strcmp(all_vars[i], elim_var_list[j]) == 0) { is_elim = 1; break; }
-        if (!is_elim) {
-            if (!first) fprintf(fp, ", ");
-            fprintf(fp, "%s", all_vars[i]);
-            first = 0;
-        }
-    }
-    if (first) fprintf(fp, "(none)");
-    fprintf(fp, "\n\n");
-
-    fprintf(fp, "--- Degree & Size ---\n");
-    fprintf(fp, "Degree sequence: [");
-    for (slong i = 0; i < num_polys; i++) {
-        if (i > 0) fprintf(fp, ", ");
-        fprintf(fp, "%ld", degrees[i]);
-    }
-    fprintf(fp, "]\n");
-    fprintf(fp, "Bezout bound (degree product): %ld\n", bezout_bound);
-    fprintf(fp, "Dixon matrix size: ");
-    fmpz_fprint(fp, matrix_size);
-    fprintf(fp, "\n");
-    fprintf(fp, "Resultant degree estimate (Bezout): %ld\n", bezout_bound);
-    fprintf(fp, "\n--- Complexity ---\n");
-    fprintf(fp, "Complexity (log2, omega=%.4g): %.6f\n", omega, complexity);
-
-    fclose(fp);
-}
-
-/* =========================================================================
- * Complexity analysis: run and display
- * ========================================================================= */
-static void run_complexity_analysis(
-        const char      *polys_str,
-        const char      *vars_str,
-        const fmpz_t     prime,
-        ulong            power,
-        const fq_nmod_ctx_t ctx,
-        const char      *output_filename,
-        int              silent_mode,
-        double           comp_time,
-        double           omega)
-{
-    /* ---- split polynomials and elimination variables ---- */
-    slong   num_polys;
-    char  **poly_arr = split_string(polys_str, &num_polys);
-
-    slong   num_elim;
-    char  **elim_arr = split_string(vars_str, &num_elim);
-
-    /* ---- get generator name ---- */
-    char *gen_name = (ctx == NULL) ? NULL : get_generator_name(ctx);
-
-    /* ---- collect all variables ---- */
-    char  **all_vars;
-    slong   num_all_vars;
-    collect_variables((const char **)poly_arr, num_polys,
-                      gen_name, &all_vars, &num_all_vars);
-
-    /* ---- compute degree of each polynomial ---- */
-    if (num_polys <= 0) {
-        if (!silent_mode) fprintf(stderr, "Error: no polynomials to analyze\n");
-        free_split_strings(poly_arr, num_polys);
-        free_split_strings(elim_arr, num_elim);
-        if (gen_name) free(gen_name);
-        for (slong i = 0; i < num_all_vars; i++) free(all_vars[i]);
-        free(all_vars);
-        return;
-    }
-    long *degrees = calloc((size_t)num_polys, sizeof(long));
-    for (slong i = 0; i < num_polys; i++)
-        degrees[i] = get_poly_total_degree(poly_arr[i], gen_name);
-
-    /* ---- Bezout bound = product of degrees ---- */
-    long bezout = 1;
-    for (slong i = 0; i < num_polys; i++) bezout *= degrees[i];
-
-    /* ---- Dixon matrix size via Hessenberg recurrence ---- */
-    fmpz_t matrix_size;
-    fmpz_init(matrix_size);
-    /* suppress internal prints from dixon_size */
-    {
-        fflush(stdout);
-        int orig_stdout = dup(STDOUT_FILENO);
-        int devnull     = open(DIXON_NULL_DEVICE, O_WRONLY);
-        if (devnull != -1) { dup2(devnull, STDOUT_FILENO); close(devnull); }
-        dixon_size(matrix_size, degrees, (int)num_polys, 0);
-        fflush(stdout);
-        dup2(orig_stdout, STDOUT_FILENO);
-        close(orig_stdout);
-    }
-
-    /* ---- Dixon complexity ---- */
-    double complexity = dixon_complexity(degrees, (int)num_polys,
-                                        (int)num_all_vars, omega);
-
-    /* ---- console output (concise) ---- */
-    if (!silent_mode) {
-        printf("\n=== Complexity Analysis ===\n");
-        printf("Equations: %ld  |  Variables: %ld  |  Eliminate: %ld\n",
-               num_polys, num_all_vars, num_elim);
-
-        printf("All vars : ");
-        for (slong i = 0; i < num_all_vars; i++) {
-            if (i > 0) printf(", ");
-            printf("%s", all_vars[i]);
-        }
-        printf("\n");
-
-        printf("Degrees  : [");
-        for (slong i = 0; i < num_polys; i++) {
-            if (i > 0) printf(", ");
-            printf("%ld", degrees[i]);
-        }
-        printf("]\n");
-
-        printf("Bezout bound      : %ld\n", bezout);
-
-        printf("Dixon matrix size : ");
-        fmpz_print(matrix_size);
-        printf("\n");
-
-        printf("Resultant deg est : %ld  (Bezout bound)\n", bezout);
-
-        if (isfinite(complexity))
-            printf("Complexity (log2) : %.4f  (omega=%.4g)\n",
-                   complexity, omega);
-        else
-            printf("Complexity (log2) : inf / undefined\n");
-
-        if (output_filename)
-            printf("Report saved to   : %s\n", output_filename);
-        printf("===========================\n");
-    }
-
-    /* ---- save to file ---- */
-    if (output_filename) {
-        save_comp_result_to_file(
-            output_filename, polys_str, vars_str,
-            prime, power,
-            num_polys, num_all_vars, all_vars,
-            elim_arr, num_elim,
-            degrees, matrix_size, bezout,
-            complexity, omega, comp_time);
-    }
-
-    /* ---- cleanup ---- */
-    fmpz_clear(matrix_size);
-    free(degrees);
-    for (slong i = 0; i < num_all_vars; i++) free(all_vars[i]);
-    free(all_vars);
-    if (gen_name) free(gen_name);
-    free_split_strings(poly_arr, num_polys);
-    free_split_strings(elim_arr, num_elim);
-}
-
 
 /* =========================================================================
  * Random polynomial generation helpers
@@ -1644,7 +1521,7 @@ static void save_result_to_file(const char *filename,
         return;
     }
 
-    fprintf(out_fp, "Dixon Resultant Computation\n");
+    fprintf(out_fp, "%s\n", resultant_method_heading(g_resultant_method));
     fprintf(out_fp, "==========================\n");
     fprintf(out_fp, "Field: ");
     print_field_label(out_fp, prime, power);
@@ -1918,11 +1795,14 @@ int main(int argc, char *argv[])
     int    rand_mode   = 0;   /* --random / -r */
     int    ideal_mode  = 0;   /*  --ideal flag */
     int    field_eq_mode = 0; /* --field-equation */
+    int    time_mode   = 0;   /* --time */
+    int    debug_mode  = 0;   /* --debug */
     int    arg_offset  = 0;
     double omega       = DIXON_OMEGA;   /* default, overridden by --omega */
     int    det_method_step1 = -1;  /* determinant method override for step 1 */
     int    det_method_step4 = -1;  /* determinant method override for step 4 */
     int    num_threads = -1;  /* number of threads, -1 means use default */
+    resultant_method_t resultant_method = RESULTANT_METHOD_DIXON;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--silent") == 0) {
@@ -1942,6 +1822,28 @@ int main(int argc, char *argv[])
         } else if (strcmp(argv[i], "--field-equation") == 0 ||
                    strcmp(argv[i], "--field-eqution")  == 0) {
             field_eq_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--time") == 0) {
+            time_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--debug") == 0) {
+            debug_mode = 1; arg_offset++;
+        } else if (strcmp(argv[i], "--macaulay") == 0) {
+            resultant_method = RESULTANT_METHOD_MACAULAY; arg_offset++;
+        } else if (strcmp(argv[i], "--subres") == 0) {
+            resultant_method = RESULTANT_METHOD_SUBRES; arg_offset++;
+        } else if ((strcmp(argv[i], "--resultant") == 0 ||
+                    strcmp(argv[i], "--resultant-method") == 0) && i + 1 < argc) {
+            if (strcmp(argv[i + 1], "macaulay") == 0) {
+                resultant_method = RESULTANT_METHOD_MACAULAY;
+            } else if (strcmp(argv[i + 1], "subres") == 0) {
+                resultant_method = RESULTANT_METHOD_SUBRES;
+            } else if (strcmp(argv[i + 1], "dixon") == 0) {
+                resultant_method = RESULTANT_METHOD_DIXON;
+            } else {
+                fprintf(stderr, "Warning: invalid resultant method '%s', using dixon.\n",
+                                argv[i + 1]);
+            }
+            arg_offset += 2;
+            i++;
         } else if ((strcmp(argv[i], "--omega") == 0 ||
                     strcmp(argv[i], "-w")      == 0) && i + 1 < argc) {
             char *endptr = NULL;
@@ -2277,7 +2179,7 @@ int main(int argc, char *argv[])
 
     if (!silent_mode) {
         if (!comp_mode && !solve_mode) {
-            printf("=== Dixon Resultant Computation ===\n");
+            printf("=== %s ===\n", resultant_method_heading(resultant_method));
             printf("Field: ");
             print_field_label(stdout, p_fmpz, power);
             printf("\n");
@@ -2306,10 +2208,6 @@ int main(int argc, char *argv[])
         }
     }
     if (large_prime_mode) {
-        if (solve_mode) {
-            fprintf(stderr, "Error: large prime fields beyond the nmod limit currently support Dixon resultant only; solver mode is not implemented.\n");
-            goto cleanup_fail;
-        }
         if (ideal_str) {
             fprintf(stderr, "Error: large prime fallback currently does not support --ideal.\n");
             goto cleanup_fail;
@@ -2460,12 +2358,41 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (resultant_method == RESULTANT_METHOD_SUBRES) {
+        if (comp_mode) {
+            fprintf(stderr, "Error: --subres does not support --comp.\n");
+            goto cleanup_fail;
+        }
+        if (solve_mode) {
+            fprintf(stderr, "Error: --subres does not support --solve.\n");
+            goto cleanup_fail;
+        }
+        if (ideal_str) {
+            fprintf(stderr, "Error: --subres does not support --ideal.\n");
+            goto cleanup_fail;
+        }
+        if (rational_mode) {
+            fprintf(stderr, "Error: --subres currently requires a finite field.\n");
+            goto cleanup_fail;
+        }
+        if (large_prime_mode) {
+            fprintf(stderr, "Error: --subres currently does not support large-prime fallback.\n");
+            goto cleanup_fail;
+        }
+        if (!validate_subres_input(polys_str, vars_str, silent_mode)) {
+            goto cleanup_fail;
+        }
+    }
+
     /* ======================================================
      * Set determinant method and thread count
      * ====================================================== */
     dixon_global_method_step1 = -1;
     dixon_global_method_step4 = -1;
     dixon_global_method = -1;
+    g_resultant_method = resultant_method;
+    g_dixon_show_step_timing = time_mode || debug_mode;
+    g_dixon_debug_mode = debug_mode;
     if (det_method_step1 != -1) {
         dixon_global_method_step1 = (det_method_t)det_method_step1;
         dixon_global_method = dixon_global_method_step1;
@@ -2497,6 +2424,7 @@ int main(int argc, char *argv[])
     char *result = NULL;
     polynomial_solutions_t *solutions = NULL;
     rational_solutions_t *rational_solutions = NULL;
+    large_prime_solutions_t *large_prime_solutions = NULL;
 
     if (comp_mode) {
         /* ---- Complexity analysis ---- */
@@ -2543,6 +2471,22 @@ int main(int argc, char *argv[])
             } else if (suppress_solver_stdout) {
                 restore_fd(STDOUT_FILENO, orig_stdout);
             }
+        } else if (large_prime_mode) {
+            large_prime_solver_set_realtime_progress(0);
+
+            if (suppress_solver_trace) {
+                redirect_stdio_to_devnull(&orig_stdout, &orig_stderr);
+            } else if (suppress_solver_stdout) {
+                redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
+            }
+
+            large_prime_solutions = solve_large_prime_polynomial_system_string(polys_str, p_fmpz);
+
+            if (suppress_solver_trace) {
+                restore_stdio(orig_stdout, orig_stderr);
+            } else if (suppress_solver_stdout) {
+                restore_fd(STDOUT_FILENO, orig_stdout);
+            }
         } else {
             polynomial_solver_set_realtime_progress(0);
 
@@ -2571,14 +2515,16 @@ int main(int argc, char *argv[])
         result = dixon_with_ideal_reduction_str(polys_str, vars_str, ideal_str, ctx);
 
     } else {
-        /* ---- Basic Dixon resultant ---- */
+        /* ---- Basic resultant ---- */
         if (!silent_mode) {
             int poly_count = count_comma_separated_items(polys_str);
             int var_count  = count_comma_separated_items(vars_str);
-            printf("Task: Dixon resultant  |  Equations: %d  |  Eliminate: %s\n",
+            printf("Task: %s  |  Equations: %d  |  Eliminate: %s\n",
+                   resultant_method_task_label(resultant_method),
                    poly_count, vars_str);
-            if (var_count != poly_count - 1)
-                printf("WARNING: Dixon method requires eliminating exactly %d variables "
+            if (resultant_method != RESULTANT_METHOD_SUBRES &&
+                var_count != poly_count - 1)
+                printf("WARNING: resultant mode requires eliminating exactly %d variables "
                        "for %d equations!\n", poly_count - 1, poly_count);
             printf("--------------------------------\n");
         }
@@ -2605,7 +2551,11 @@ int main(int argc, char *argv[])
         } else if (large_prime_mode) {
             result = dixon_str_large_prime(polys_str, vars_str, p_fmpz);
         } else {
-            result = dixon_str(polys_str, vars_str, ctx);
+            if (resultant_method == RESULTANT_METHOD_SUBRES) {
+                result = compute_subres_resultant_str(polys_str, vars_str, ctx);
+            } else {
+                result = dixon_str(polys_str, vars_str, ctx);
+            }
         }
 
         if (silent_mode && orig_stdout != -1) {
@@ -2663,6 +2613,25 @@ int main(int argc, char *argv[])
                 if (!silent_mode)
                     fprintf(stderr, "\nError: Rational polynomial system solving failed\n");
             }
+        } else if (large_prime_mode) {
+            if (large_prime_solutions) {
+                if (!silent_mode) {
+                    print_large_prime_solutions(large_prime_solutions);
+                }
+
+                if (output_filename) {
+                    save_large_prime_solver_result_to_file(output_filename, polys_str,
+                                                           p_fmpz, large_prime_solutions,
+                                                           cpu_time, wall_time, total_threads);
+                    if (!silent_mode)
+                        printf("Result saved to: %s\n", output_filename);
+                }
+                large_prime_solutions_clear(large_prime_solutions);
+                free(large_prime_solutions);
+            } else {
+                if (!silent_mode)
+                    fprintf(stderr, "\nError: Large-prime polynomial system solving failed\n");
+            }
         } else {
             if (solutions) {
                 if (!silent_mode) {
@@ -2694,9 +2663,20 @@ int main(int argc, char *argv[])
                 
                 FILE *fp_append = fopen(output_filename, "a");
                 if (fp_append) {
-                    append_roots_to_file_from_result(result, polys_str, vars_str, ctx, fp_append);
+                    if (large_prime_mode) {
+                        large_prime_print_roots_from_resultant_string(result, polys_str, vars_str,
+                                                                      p_fmpz, fp_append, !silent_mode);
+                    } else {
+                        append_roots_to_file_from_result(result, polys_str, vars_str, ctx, fp_append);
+                    }
                     fclose(fp_append);
+                } else if (large_prime_mode && !silent_mode) {
+                    large_prime_print_roots_from_resultant_string(result, polys_str, vars_str,
+                                                                  p_fmpz, NULL, 1);
                 }
+            } else if (large_prime_mode) {
+                large_prime_print_roots_from_resultant_string(result, polys_str, vars_str,
+                                                              p_fmpz, NULL, !silent_mode);
             } else if (output_filename && rational_mode) {
                 if (!silent_mode)
                     printf("\nResult saved to: %s\n", output_filename);
